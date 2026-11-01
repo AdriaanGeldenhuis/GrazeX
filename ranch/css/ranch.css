@@ -49,3 +49,4 @@
 @media (min-width: 720px) { .ranch-gallery { grid-template-columns: repeat(3, 1fr); } }
 .ranch-gallery figure { margin: 0; border-radius: 18px; }
 .ranch-gallery figcaption { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 14px; background: linear-gradient(transparent, rgba(0, 0, 0, .8)); font-size: 13px; }
+@media (min-width: 1024px) { .cart-page { grid-template-columns: minmax(0, 1fr) 380px; } }

@@ -22,19 +22,19 @@ date_default_timezone_set(GX_TIMEZONE);
 mb_internal_encoding('UTF-8');
 
 // ---------------------------------------------------------------------
-// Environment
+// Environment — .env.php, config/.env.php, .env, config/.env or config/env.php (see includes/env.php)
 // ---------------------------------------------------------------------
-$envFile = GX_ROOT . '/config/env.php';
-if (!is_file($envFile)) {
+require GX_ROOT . '/includes/env.php';
+[$GLOBALS['GX_ENV'], $GLOBALS['GX_ENV_REPORT']] = gx_env_load();
+if (!$GLOBALS['GX_ENV_REPORT'] && PHP_SAPI !== 'cli') {
     http_response_code(503);
     header('Content-Type: text/html; charset=utf-8');
-    echo '<!doctype html><meta charset="utf-8"><title>GrazeX — setup needed</title>'
-       . '<body style="background:#050606;color:#f4f4ef;font-family:system-ui;padding:40px">'
-       . '<h1>GrazeX is almost ready</h1><p>Copy <code>config/env.example.php</code> to '
-       . '<code>config/env.php</code> on the server and fill in the database details.</p></body>';
+    echo '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GrazeX — setup needed</title>'
+       . '<body style="background:#050606;color:#f4f4ef;font-family:system-ui;padding:40px;line-height:1.6">'
+       . '<h1 style="color:#ff7a00">GrazeX is almost ready</h1><p>No settings file was found. Create <code>.env.php</code> (or <code>.env</code>) in the website root '
+       . 'with the database details — see <code>.env.example</code> — then refresh.</p></body>';
     exit;
 }
-$GLOBALS['GX_ENV'] = require $envFile;
 
 function env(string $key, mixed $default = null): mixed
 {
@@ -45,7 +45,7 @@ function env(string $key, mixed $default = null): mixed
         }
         $value = $value[$part];
     }
-    return $value;
+    return $value ?? $default;
 }
 
 define('GX_DEBUG', (bool) env('app_debug', false));
@@ -97,33 +97,72 @@ set_error_handler(static function (int $severity, string $message, string $file,
     if (!(error_reporting() & $severity)) {
         return false;
     }
+    // Deprecations (e.g. after a PHP upgrade) must never take the site down — log them once and carry on.
+    if ($severity === E_DEPRECATED || $severity === E_USER_DEPRECATED) {
+        static $seen = [];
+        $key = $file . ':' . $line;
+        if (!isset($seen[$key]) && !str_contains($file, '/vendor/')) {
+            $seen[$key] = true;
+            gx_log('deprecated', $message, ['file' => $file, 'line' => $line]);
+            if (defined('GX_TESTING')) {
+                $GLOBALS['GX_DEPRECATIONS'][] = $message . ' (' . basename($file) . ':' . $line . ')';
+            }
+        }
+        return true;
+    }
+    // In production a warning/notice is logged and the page keeps working; debug and tests stay strict.
+    if (!GX_DEBUG && !defined('GX_TESTING') && in_array($severity, [E_WARNING, E_NOTICE, E_USER_WARNING, E_USER_NOTICE], true)) {
+        gx_log('warning', $message, ['file' => $file, 'line' => $line, 'uri' => $_SERVER['REQUEST_URI'] ?? 'cli']);
+        return true;
+    }
     throw new ErrorException($message, 0, $severity, $file, $line);
 });
 
+/** Is this a "database not reachable / not set up" problem (as opposed to a bug)? */
+function gx_is_db_setup_error(Throwable $e): bool
+{
+    if (!$e instanceof PDOException) {
+        return false;
+    }
+    $code = (int) ($e->errorInfo[1] ?? 0) ?: (int) $e->getCode();
+    return in_array($code, [1044, 1045, 1049, 1146, 2002, 2003, 2005, 2006, 2013], true)
+        || str_contains($e->getMessage(), 'getaddrinfo') || str_contains($e->getMessage(), 'Connection refused');
+}
+
 set_exception_handler(static function (Throwable $e): void {
-    gx_log('error', $e->getMessage(), ['file' => $e->getFile(), 'line' => $e->getLine(),
+    $ref = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+    $dbSetup = gx_is_db_setup_error($e);
+    gx_log('error', $e->getMessage(), ['ref' => $ref, 'type' => get_class($e), 'file' => $e->getFile(), 'line' => $e->getLine(),
         'uri' => $_SERVER['REQUEST_URI'] ?? 'cli', 'trace' => GX_DEBUG ? $e->getTraceAsString() : null]);
     if (GX_IS_CLI) {
         fwrite(STDERR, $e->getMessage() . "\n");
         exit(1);
     }
     if (!headers_sent()) {
-        http_response_code(500);
+        http_response_code($dbSetup ? 503 : 500);
+        header('Cache-Control: no-store');
     }
     $wantsJson = defined('GX_IS_API') || str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json');
+    $msg = $dbSetup ? 'We are busy setting things up. Please try again shortly.' : 'Something went wrong. Please try again.';
     if ($wantsJson) {
         if (!headers_sent()) {
             header('Content-Type: application/json; charset=utf-8');
         }
-        echo json_encode(['ok' => false, 'error' => GX_DEBUG ? $e->getMessage() : 'Something went wrong. Please try again.']);
-    } else {
-        echo '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-           . '<title>Something went wrong — GrazeX</title>'
-           . '<body style="background:#050606;color:#f4f4ef;font-family:system-ui;padding:40px;line-height:1.6">'
-           . '<h1 style="color:#ff7a00">Something went wrong</h1><p>Please try again in a moment.</p>'
-           . (GX_DEBUG ? '<pre style="white-space:pre-wrap;color:#9ea59f">' . htmlspecialchars((string) $e) . '</pre>' : '')
-           . '<p><a style="color:#ff9f1a" href="/">Back to GrazeX</a></p></body>';
+        echo json_encode(['ok' => false, 'error' => GX_DEBUG ? $e->getMessage() : $msg . ' (ref ' . $ref . ')', 'ref' => $ref]);
+        exit;
     }
+    $title = $dbSetup ? 'Back <span style="color:#ff7a00">soon.</span>' : 'Something went <span style="color:#ff7a00">wrong.</span>';
+    $text = $dbSetup ? 'We are busy with a quick update. Please try again in a few minutes.' : 'Please try again in a moment. If it keeps happening, let us know.';
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+       . '<title>GrazeX</title><link rel="icon" href="/assets/img/brand/favicon.svg"></head>'
+       . '<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#050606;color:#f4f4ef;font-family:Inter,system-ui,sans-serif;padding:24px;text-align:center">'
+       . '<main style="max-width:560px"><img src="/assets/img/brand/ranch-logo-480.webp" alt="GrazeX" width="260" height="130" style="max-width:70vw;height:auto">'
+       . '<h1 style="font-size:clamp(34px,7vw,56px);line-height:1;margin:18px 0 12px;text-transform:uppercase;letter-spacing:-.01em">' . $title . '</h1>'
+       . '<p style="color:#a7aea8;font-size:17px;line-height:1.6">' . $text . '</p>'
+       . '<p style="margin:26px 0"><a href="/" style="display:inline-block;padding:14px 22px;border-radius:14px;background:linear-gradient(90deg,#ff7a00,#ff9f1a);color:#141414;font-weight:800;text-decoration:none">Back to GrazeX</a></p>'
+       . '<p style="color:#7f8781;font-size:12px">Reference ' . $ref . '</p>'
+       . (GX_DEBUG ? '<pre style="text-align:left;white-space:pre-wrap;color:#9ea59f;font-size:12px">' . htmlspecialchars((string) $e) . '</pre>' : '')
+       . '</main></body></html>';
     exit;
 });
 
@@ -172,8 +211,17 @@ if (!GX_IS_CLI) {
         require GX_ROOT . '/includes/layout/maintenance.php';
         exit;
     }
-    // Release stock from unpaid orders whose hold has expired (Xneelo cron runs only every 2 hours)
+    // Release stock from unpaid orders whose hold has expired (Xneelo cron runs only every 2 hours).
+    // Runs AFTER the page has been sent, so no visitor ever waits for it.
     if (!defined('GX_NO_SESSION')) {
-        OrderService::maybeExpire();
+        register_shutdown_function(static function (): void {
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_write_close();
+            }
+            if (function_exists('fastcgi_finish_request')) {
+                @fastcgi_finish_request();
+            }
+            OrderService::maybeExpire();
+        });
     }
 }

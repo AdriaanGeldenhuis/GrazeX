@@ -28,3 +28,6 @@
 .dc-card.ok { border-color: rgba(134, 213, 26, .45); background: rgba(134, 213, 26, .07); }
 .dc-card.no { border-color: rgba(255, 176, 32, .45); background: rgba(255, 176, 32, .06); }
 .dc-card ul { list-style: none; display: grid; gap: 4px; margin-top: 8px; color: #d6dbd7; font-size: 14px; }
+.calc { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .calc { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); } }
+@media (min-width: 1024px) { .cart-page { grid-template-columns: minmax(0, 1fr) 380px; } }

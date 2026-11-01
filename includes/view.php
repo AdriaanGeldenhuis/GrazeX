@@ -33,7 +33,11 @@ function media_img(?int $mediaId, string $alt = '', string $sizes = '(min-width:
                 . ' alt="' . e($alt) . '"' . ($lazy ? ' loading="lazy" decoding="async"' : ' fetchpriority="high"') . '>';
         }
     }
-    return '<div class="media-placeholder" role="img" aria-label="' . e($alt) . '"><svg class="icon"><use href="#i-' . e($placeholderIcon) . '"/></svg></div>';
+    // Branded placeholder until a photo is uploaded: division logo watermark + subtle label
+    $brand = in_array($placeholderIcon, ['sheep'], true) ? 'ranch' : 'feeds';
+    return '<div class="media-placeholder mp-' . $brand . '" role="img" aria-label="' . e($alt) . '">'
+        . '<img class="mp-logo" src="/assets/img/brand/' . $brand . '-logo-480.webp" alt="" width="480" height="240" loading="lazy" decoding="async">'
+        . '<span class="mp-label"><svg class="icon icon-sm"><use href="#i-' . e($placeholderIcon) . '"/></svg>Photo coming soon</span></div>';
 }
 
 /** Stock badge for feeds. */

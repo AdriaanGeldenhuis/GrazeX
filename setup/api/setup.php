@@ -20,7 +20,7 @@ $data = validate_or_fail(input_all(), [
 ]);
 
 $expected = (string) env('setup_token', '');
-if ($expected === '' || str_starts_with($expected, 'CHANGE-ME') || !hash_equals($expected, (string) $data['setup_token'])) {
+if (gx_env_placeholder($expected) || strlen($expected) < 12 || !hash_equals($expected, (string) $data['setup_token'])) {
     json_error('That setup token is not correct.', 422, ['setup_token' => 'That setup token is not correct.']);
 }
 

@@ -37,7 +37,7 @@ ErrorDocument 404 /404.php
 </IfModule>
 
 # Fallback when mod_rewrite is unavailable
-<FilesMatch "^(env\.php|env\.example\.php|composer\.(json|lock))$">
+<FilesMatch "^(\.env.*|env\.php|env\.example\.php|composer\.(json|lock))$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>

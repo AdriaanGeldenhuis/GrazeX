@@ -11,12 +11,10 @@ function session_start_secure(): void
     if (session_status() === PHP_SESSION_ACTIVE) {
         return;
     }
+    // Note: session.sid_length / sid_bits_per_character / use_only_cookies / use_trans_sid are NOT set here —
+    // they are deprecated from PHP 8.4 and PHP's defaults are already secure (cookie-only, 32-char ids).
     ini_set('session.use_strict_mode', '1');
-    ini_set('session.use_only_cookies', '1');
-    ini_set('session.use_trans_sid', '0');
     ini_set('session.cookie_httponly', '1');
-    ini_set('session.sid_length', '48');
-    ini_set('session.sid_bits_per_character', '6');
     ini_set('session.gc_maxlifetime', '86400');
     ini_set('session.gc_probability', '1');
     ini_set('session.gc_divisor', '100');

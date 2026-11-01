@@ -1,24 +1,26 @@
 <?php
 /**
  * One-time setup wizard: checks the server, then creates the OWNER admin account.
- * Locks itself as soon as an owner exists. Requires the setup_token from config/env.php.
+ * Locks itself as soon as an owner exists. Requires SETUP_TOKEN from your settings file (.env.php / .env / config/env.php).
  */
 declare(strict_types=1);
 
 define('GX_SKIP_MAINTENANCE', true);
 require __DIR__ . '/../includes/bootstrap.php';
 
-$dbOk = false;
+$db = gx_db_diagnose();
+$dbOk = $db['ok'];
 $ownerExists = false;
-$dbError = '';
-try {
-    $dbOk = (int) db_val('SELECT COUNT(*) FROM divisions') >= 2;
+if ($dbOk) {
     $ownerExists = (int) db_val("SELECT COUNT(*) FROM admin_users a JOIN roles r ON r.id = a.role_id WHERE r.slug = 'owner'") > 0;
-} catch (Throwable $e) {
-    $dbError = 'Database not ready — import database/install.sql in phpMyAdmin first.';
 }
+$report = $GLOBALS['GX_ENV_REPORT'] ?? [];
+$used = array_keys(array_filter($report, static fn($r) => $r['status'] === 'used'));
+$appKey = (string) env('app_key', '');
+$token = (string) env('setup_token', '');
 
 $checks = [
+    ['Settings file found', (bool) $used, $used ? 'Using ' . implode(' + ', $used) : 'Create .env.php (or .env) in the website root — see .env.example'],
     ['PHP 8.2 or newer', version_compare(PHP_VERSION, '8.2.0', '>='), 'Running ' . PHP_VERSION],
     ['PDO MySQL extension', extension_loaded('pdo_mysql'), ''],
     ['GD image library with WebP', function_exists('imagewebp'), 'Needed to convert uploads to .webp'],
@@ -29,10 +31,16 @@ $checks = [
     ['storage/ is writable', is_writable(GX_ROOT . '/storage'), ''],
     ['uploads/ is writable', is_writable(GX_ROOT . '/uploads'), ''],
     ['Composer libraries installed', is_file(GX_ROOT . '/vendor/autoload.php'), 'Installed automatically by the deploy (PDFs + email)'],
-    ['Database imported', $dbOk, $dbError],
-    ['app_key changed in env.php', !str_starts_with((string) env('app_key', ''), 'CHANGE-ME') && strlen((string) env('app_key', '')) >= 32, ''],
-    ['setup_token changed in env.php', !str_starts_with((string) env('setup_token', ''), 'CHANGE-ME') && strlen((string) env('setup_token', '')) >= 12, 'At least 12 characters'],
+    ['Database', $dbOk, $db['message']],
+    ['APP_KEY set (32+ random characters)', $keyOk = (!gx_env_placeholder($appKey) && strlen($appKey) >= 32), $keyOk ? '' : 'Add APP_KEY: 64 random letters/numbers (e.g. from random.org/strings)'],
+    ['SETUP_TOKEN set (12+ characters)', $tokOk = (!gx_env_placeholder($token) && strlen($token) >= 12), $tokOk ? '' : 'Add SETUP_TOKEN: any long secret word — you type it below once'],
+    ['APP_URL set', !gx_env_placeholder(env('app_url')), (string) env('app_url', 'e.g. https://grazex.co.za')],
 ];
+foreach ($report as $file => $r) {
+    if ($r['status'] === 'error') {
+        $checks[] = [$file . ' could not be read', false, (string) $r['error']];
+    }
+}
 $allOk = !in_array(false, array_column($checks, 1), true);
 
 $page = [
@@ -79,7 +87,7 @@ require GX_ROOT . '/includes/layout/head.php';
       <h2 class="h3 mb-2">2. Create the owner account</h2>
       <form id="setup-form" data-api="/setup/api/setup.php" novalidate>
         <div class="field">
-          <label for="setup_token">Setup token <span class="opt">(from config/env.php)</span></label>
+          <label for="setup_token">Setup token <span class="opt">(SETUP_TOKEN in your settings file)</span></label>
           <input class="input" id="setup_token" name="setup_token" type="password" autocomplete="off" required>
         </div>
         <div class="grid-2">

@@ -50,3 +50,6 @@
   .co-summary { order: -1; }
   .co-lines { max-height: 160px; }
 }
+.co-grid, .co-main { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .co-grid { grid-template-columns: minmax(0, 1fr) 400px; } }
+.co-main > *, .co-section { min-width: 0; }

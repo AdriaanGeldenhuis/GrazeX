@@ -181,3 +181,7 @@ details.faq .faq-body { padding: 0 20px 18px; color: var(--muted); }
 .feature-band { display: grid; gap: 16px; padding: 28px; border-radius: var(--radius-xl); border: 1px solid var(--line-strong);
   background: radial-gradient(circle at 85% 20%, var(--accent-soft), transparent 50%), linear-gradient(130deg, #131814, #0b0d0c); }
 @media (min-width: 900px) { .feature-band { grid-template-columns: 1.1fr .9fr; align-items: center; padding: 48px; } }
+.l-media .media-placeholder .mp-label { display: none; }
+.cart-page { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .cart-page { grid-template-columns: minmax(0, 1fr) 380px; } }
+.detail > * { min-width: 0; }

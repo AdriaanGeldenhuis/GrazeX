@@ -50,6 +50,9 @@ jobs:
             --exclude='.gitignore' \
             --exclude='config/env.php' \
             --exclude='.env' \
+            --exclude='.env.php' \
+            --exclude='config/.env' \
+            --exclude='config/.env.php' \
             --exclude='uploads/' \
             --exclude='storage/' \
             --exclude='database/' \
