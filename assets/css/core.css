@@ -349,7 +349,7 @@ body.has-announce.is-scrolled .site-nav, .is-scrolled .site-nav { top: 10px; }
 
 /* ---------- Toasts ---------- */
 .toast-stack { position: fixed; z-index: 200; left: 50%; bottom: 18px; transform: translateX(-50%); display: grid; gap: 10px; width: min(440px, calc(100% - 24px)); pointer-events: none; }
-@media (min-width: 720px) { .toast-stack { left: auto; right: 24px; transform: none; bottom: 24px; } }
+@media (min-width: 720px) { .toast-stack { left: auto; right: 24px; transform: none; bottom: 24px; } body:has(.drawer.is-open) .toast-stack { right: 464px; } }
 .toast { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 16px; background: #151916; border: 1px solid var(--line-strong);
   box-shadow: var(--shadow-lg); font-size: 15px; font-weight: 600; animation: toastIn .35s var(--ease); }
 .toast.is-leaving { animation: toastOut .3s var(--ease) forwards; }

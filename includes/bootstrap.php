@@ -144,6 +144,7 @@ spl_autoload_register(static function (string $class): void {
 require GX_ROOT . '/includes/helpers.php';
 require GX_ROOT . '/includes/db.php';
 require GX_ROOT . '/includes/settings.php';
+require GX_ROOT . '/includes/view.php';
 require GX_ROOT . '/includes/i18n.php';
 require GX_ROOT . '/includes/validator.php';
 require GX_ROOT . '/includes/rate_limit.php';

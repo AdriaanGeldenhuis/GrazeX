@@ -62,7 +62,9 @@
       if (res.status === 419) setTimeout(() => location.reload(), 1800);
       throw e;
     }
-    return data.data || {};
+    const out = data.data || {};
+    if (data.message && out.message === undefined) out.message = data.message;
+    return out;
   };
 
   // ---------- Toasts ----------

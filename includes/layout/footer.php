@@ -5,24 +5,24 @@
  */
 defined('GX_ROOT') || exit;
 
-$footerMenu = [];
+$gxFooterMenu = [];
 try {
-    $footerMenu = db_all("SELECT label, url FROM menu_items WHERE location = 'footer' AND is_active = 1 ORDER BY sort_order, id");
+    $gxFooterMenu = db_all("SELECT label, url FROM menu_items WHERE location = 'footer' AND is_active = 1 ORDER BY sort_order, id");
 } catch (Throwable $e) {
     gx_log('warning', 'Footer menu unavailable: ' . $e->getMessage());
 }
-$divs = [];
+$gxDivs = [];
 try {
-    $divs = db_all('SELECT name, legal_name, registration_no, vat_registered, vat_no FROM divisions WHERE is_active = 1 ORDER BY id');
+    $gxDivs = db_all('SELECT name, legal_name, registration_no, vat_registered, vat_no FROM divisions WHERE is_active = 1 ORDER BY id');
 } catch (Throwable $e) {
     // ignore
 }
-$wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
-$phone = setting('contact_phone');
-$email = setting('contact_email');
-$address = setting('physical_address');
-$mapUrl = setting('map_url');
-$flashes = function_exists('flashes') && session_status() === PHP_SESSION_ACTIVE ? flashes() : [];
+$gxWa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
+$gxPhone = setting('contact_phone');
+$gxEmail = setting('contact_email');
+$gxAddress = setting('physical_address');
+$gxMapUrl = setting('map_url');
+$gxFlashes = function_exists('flashes') && session_status() === PHP_SESSION_ACTIVE ? flashes() : [];
 ?>
 <?php if (empty($page['hide_footer'])): ?>
 <footer class="site-footer" role="contentinfo">
@@ -36,8 +36,8 @@ $flashes = function_exists('flashes') && session_status() === PHP_SESSION_ACTIVE
           <a href="/ranch/" aria-label="GrazeX Ranch"><img src="/assets/img/brand/ranch-logo-480.webp" alt="GrazeX Ranch" width="120" height="60" loading="lazy"></a>
         </div>
         <div class="social">
-          <?php foreach (['social_facebook' => 'Facebook', 'social_instagram' => 'Instagram', 'social_tiktok' => 'TikTok'] as $k => $label): ?>
-            <?php if ($u = setting($k)): ?><a class="chip" href="<?= e($u) ?>" target="_blank" rel="noopener"><?= e($label) ?></a><?php endif; ?>
+          <?php foreach (['social_facebook' => 'Facebook', 'social_instagram' => 'Instagram', 'social_tiktok' => 'TikTok'] as $gxK => $gxLabel): ?>
+            <?php if ($gxU = setting($gxK)): ?><a class="chip" href="<?= e($gxU) ?>" target="_blank" rel="noopener"><?= e($gxLabel) ?></a><?php endif; ?>
           <?php endforeach; ?>
         </div>
       </div>
@@ -54,27 +54,27 @@ $flashes = function_exists('flashes') && session_status() === PHP_SESSION_ACTIVE
       <div>
         <h4><?= e(t('footer.info')) ?></h4>
         <ul>
-          <?php foreach ($footerMenu as $m): ?>
-            <li><a href="<?= e($m['url']) ?>"><?= e($m['label']) ?></a></li>
+          <?php foreach ($gxFooterMenu as $gxM): ?>
+            <li><a href="<?= e($gxM['url']) ?>"><?= e($gxM['label']) ?></a></li>
           <?php endforeach; ?>
         </ul>
       </div>
       <div>
         <h4><?= e(t('footer.visit')) ?></h4>
         <ul>
-          <?php if ($address): ?><li class="muted small"><?= nl2br(e($address)) ?></li><?php endif; ?>
-          <?php if ($h = setting('business_hours')): ?><li class="muted small"><?= e($h) ?></li><?php endif; ?>
-          <?php if ($phone): ?><li><a href="tel:<?= e(preg_replace('/[^\d+]/', '', $phone)) ?>"><?= e($phone) ?></a></li><?php endif; ?>
-          <?php if ($email): ?><li><a href="mailto:<?= e($email) ?>"><?= e($email) ?></a></li><?php endif; ?>
-          <?php if ($mapUrl): ?><li><a href="<?= e($mapUrl) ?>" target="_blank" rel="noopener"><?= e(t('common.directions')) ?> ↗</a></li><?php endif; ?>
+          <?php if ($gxAddress): ?><li class="muted small"><?= nl2br(e($gxAddress)) ?></li><?php endif; ?>
+          <?php if ($gxH = setting('business_hours')): ?><li class="muted small"><?= e($gxH) ?></li><?php endif; ?>
+          <?php if ($gxPhone): ?><li><a href="tel:<?= e(preg_replace('/[^\d+]/', '', $gxPhone)) ?>"><?= e($gxPhone) ?></a></li><?php endif; ?>
+          <?php if ($gxEmail): ?><li><a href="mailto:<?= e($gxEmail) ?>"><?= e($gxEmail) ?></a></li><?php endif; ?>
+          <?php if ($gxMapUrl): ?><li><a href="<?= e($gxMapUrl) ?>" target="_blank" rel="noopener"><?= e(t('common.directions')) ?> ↗</a></li><?php endif; ?>
         </ul>
       </div>
     </div>
     <div class="footer-bottom">
       <span>GrazeX © <?= date('Y') ?> · <?= e(t('footer.rights')) ?></span>
       <span>
-        <?php foreach ($divs as $i => $d): ?>
-          <?= $i ? ' · ' : '' ?><?= e($d['legal_name'] ?: $d['name']) ?><?= $d['registration_no'] ? ' (Reg ' . e($d['registration_no']) . ')' : '' ?><?= $d['vat_registered'] && $d['vat_no'] ? ' · VAT ' . e($d['vat_no']) : '' ?>
+        <?php foreach ($gxDivs as $gxI => $gxD): ?>
+          <?= $gxI ? ' · ' : '' ?><?= e($gxD['legal_name'] ?: $gxD['name']) ?><?= $gxD['registration_no'] ? ' (Reg ' . e($gxD['registration_no']) . ')' : '' ?><?= $gxD['vat_registered'] && $gxD['vat_no'] ? ' · VAT ' . e($gxD['vat_no']) : '' ?>
         <?php endforeach; ?>
       </span>
       <span><?= e(t('footer.divisions')) ?></span>
@@ -83,13 +83,13 @@ $flashes = function_exists('flashes') && session_status() === PHP_SESSION_ACTIVE
 </footer>
 <?php endif; ?>
 
-<?php if ($wa && empty($page['hide_fab'])): ?>
-<a class="fab-whatsapp" href="<?= e($wa) ?>" target="_blank" rel="noopener" aria-label="<?= e(t('common.whatsapp')) ?>"><svg aria-hidden="true"><use href="#i-whatsapp"/></svg></a>
+<?php if ($gxWa && empty($page['hide_fab'])): ?>
+<a class="fab-whatsapp" href="<?= e($gxWa) ?>" target="_blank" rel="noopener" aria-label="<?= e(t('common.whatsapp')) ?>"><svg aria-hidden="true"><use href="#i-whatsapp"/></svg></a>
 <?php endif; ?>
 
 <div class="toast-stack" role="status" aria-live="polite"></div>
-<?php if ($flashes): ?>
-<script type="application/json" id="gx-flash"><?= json_encode($flashes, JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) ?></script>
+<?php if ($gxFlashes): ?>
+<script type="application/json" id="gx-flash"><?= json_encode($gxFlashes, JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) ?></script>
 <?php endif; ?>
 </body>
 </html>

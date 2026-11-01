@@ -5,13 +5,13 @@
  */
 defined('GX_ROOT') || exit;
 
-$div = $page['division'] ?? 'gateway';
-$current = $page['nav_current'] ?? '';
-$cartDiv = in_array($div, ['feeds', 'ranch'], true) ? $div : null;
-$cartCount = ($cartDiv && class_exists('CartService')) ? CartService::count($cartDiv) : 0;
-$customer = current_customer();
+$gxDiv = $page['division'] ?? 'gateway';
+$gxCurrent = $page['nav_current'] ?? '';
+$gxCartDiv = in_array($gxDiv, ['feeds', 'ranch'], true) ? $gxDiv : null;
+$gxCartCount = ($gxCartDiv && class_exists('CartService')) ? CartService::count($gxCartDiv) : 0;
+$gxCustomer = current_customer();
 
-$links = match ($div) {
+$gxLinks = match ($gxDiv) {
     'feeds' => [
         ['shop', '/feeds/shop.php', t('nav.shop')],
         ['specials', '/feeds/specials.php', t('nav.specials')],
@@ -31,32 +31,32 @@ $links = match ($div) {
         ['contact', '/pages/contact.php', t('nav.contact')],
     ],
 };
-$homeHref = $cartDiv ? '/' . $cartDiv . '/' : '/';
-$waLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
+$gxHomeHref = $gxCartDiv ? '/' . $gxCartDiv . '/' : '/';
+$gxWaLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
 ?>
 <header class="site-nav glass" role="banner">
-  <a class="brand" href="<?= e($homeHref) ?>" aria-label="GrazeX <?= $cartDiv ? e(ucfirst($cartDiv)) : '' ?> home">
+  <a class="brand" href="<?= e($gxHomeHref) ?>" aria-label="GrazeX <?= $gxCartDiv ? e(ucfirst($gxCartDiv)) : '' ?> home">
     <span>Graze<b>X</b></span>
-    <?php if ($cartDiv): ?><span class="brand-div"><?= e(strtoupper($cartDiv)) ?></span><?php endif; ?>
+    <?php if ($gxCartDiv): ?><span class="brand-div"><?= e(strtoupper($gxCartDiv)) ?></span><?php endif; ?>
   </a>
 
   <nav class="nav-links" aria-label="Main">
-    <?php foreach ($links as [$key, $href, $label]): ?>
-      <a href="<?= e($href) ?>"<?= $current === $key ? ' aria-current="page"' : '' ?>><?= e($label) ?></a>
+    <?php foreach ($gxLinks as [$gxKey, $gxHref, $gxLabel]): ?>
+      <a href="<?= e($gxHref) ?>"<?= $gxCurrent === $gxKey ? ' aria-current="page"' : '' ?>><?= e($gxLabel) ?></a>
     <?php endforeach; ?>
   </nav>
 
   <div class="nav-actions">
-    <?php if ($div === 'feeds'): ?>
+    <?php if ($gxDiv === 'feeds'): ?>
       <a class="nav-icon-btn" href="/feeds/shop.php#search" aria-label="<?= e(t('common.search')) ?>"><svg class="icon"><use href="#i-search"/></svg></a>
     <?php endif; ?>
-    <a class="nav-icon-btn" href="/account/" aria-label="<?= e($customer ? t('nav.account') : t('nav.login')) ?>">
+    <a class="nav-icon-btn" href="/account/" aria-label="<?= e($gxCustomer ? t('nav.account') : t('nav.login')) ?>">
       <svg class="icon"><use href="#i-user"/></svg>
     </a>
-    <?php if ($cartDiv): ?>
-      <a class="nav-icon-btn" href="/<?= e($cartDiv) ?>/cart.php" data-drawer-open="cart-drawer" aria-label="<?= e(t('nav.cart')) ?>">
+    <?php if ($gxCartDiv): ?>
+      <a class="nav-icon-btn" href="/<?= e($gxCartDiv) ?>/cart.php" data-drawer-open="cart-drawer" aria-label="<?= e(t('nav.cart')) ?>">
         <svg class="icon"><use href="#i-cart"/></svg>
-        <span class="cart-count<?= $cartCount ? ' has-items' : '' ?>" data-cart-count><?= (int) $cartCount ?></span>
+        <span class="cart-count<?= $gxCartCount ? ' has-items' : '' ?>" data-cart-count><?= (int) $gxCartCount ?></span>
       </a>
     <?php else: ?>
       <a class="btn btn-primary btn-sm hide-mobile" href="/feeds/shop.php" data-magnetic><?= e(t('gateway.shop_feeds')) ?></a>
@@ -73,18 +73,18 @@ $waLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
     <button class="nav-icon-btn" type="button" data-menu-close aria-label="<?= e(t('nav.close')) ?>"><svg class="icon"><use href="#i-close"/></svg></button>
   </div>
   <nav aria-label="Mobile">
-    <?php if ($div !== 'gateway'): ?><a href="/"><?= e(t('nav.home')) ?></a><?php endif; ?>
-    <?php foreach ($links as [$key, $href, $label]): ?>
-      <a href="<?= e($href) ?>"<?= $current === $key ? ' aria-current="page"' : '' ?>><?= e($label) ?></a>
+    <?php if ($gxDiv !== 'gateway'): ?><a href="/"><?= e(t('nav.home')) ?></a><?php endif; ?>
+    <?php foreach ($gxLinks as [$gxKey, $gxHref, $gxLabel]): ?>
+      <a href="<?= e($gxHref) ?>"<?= $gxCurrent === $gxKey ? ' aria-current="page"' : '' ?>><?= e($gxLabel) ?></a>
     <?php endforeach; ?>
-    <a href="/account/"><?= e($customer ? t('nav.account') : t('nav.login')) ?></a>
+    <a href="/account/"><?= e($gxCustomer ? t('nav.account') : t('nav.login')) ?></a>
   </nav>
   <div class="sheet-foot">
-    <?php if ($waLink): ?>
-      <a class="btn btn-whatsapp btn-block" href="<?= e($waLink) ?>" target="_blank" rel="noopener"><svg class="icon icon-fill"><use href="#i-whatsapp"/></svg><?= e(t('common.whatsapp')) ?></a>
+    <?php if ($gxWaLink): ?>
+      <a class="btn btn-whatsapp btn-block" href="<?= e($gxWaLink) ?>" target="_blank" rel="noopener"><svg class="icon icon-fill"><use href="#i-whatsapp"/></svg><?= e(t('common.whatsapp')) ?></a>
     <?php endif; ?>
-    <?php if ($p = setting('contact_phone')): ?>
-      <a class="btn btn-block" href="tel:<?= e(preg_replace('/[^\d+]/', '', $p)) ?>"><svg class="icon"><use href="#i-phone"/></svg><?= e($p) ?></a>
+    <?php if ($gxP = setting('contact_phone')): ?>
+      <a class="btn btn-block" href="tel:<?= e(preg_replace('/[^\d+]/', '', $gxP)) ?>"><svg class="icon"><use href="#i-phone"/></svg><?= e($gxP) ?></a>
     <?php endif; ?>
   </div>
 </div>
