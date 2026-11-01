@@ -43,12 +43,18 @@ function db(): PDO
             }
             break;
         } catch (PDOException $e) {
-            $first ??= $e;
             $code = (int) ($e->errorInfo[1] ?? 0) ?: (int) $e->getCode();
-            if (!in_array($code, [2002, 2003, 2005, 2006], true)) {
-                throw $e; // wrong password / database name etc. — trying other hosts will not help
-            }
+            // Keep MySQL's own words for /setup/ (the DB username is masked there)
+            $GLOBALS['GX_DB_ATTEMPTS'][$h] = ['code' => $code, 'msg' => preg_replace('/^SQLSTATE\[\w+\]\s*(\[\d+\]\s*)?/', '', $e->getMessage())];
             $pdo = null;
+            if (!in_array($code, [2002, 2003, 2005, 2006], true)) {
+                $first = $e; // a real answer from MySQL (password, access, name) beats "unreachable"
+                if ($h === $host) {
+                    throw $e; // the configured server answered — trying other hosts will not help
+                }
+                continue;
+            }
+            $first ??= $e;
         }
     }
     if (!$pdo instanceof PDO) {
