@@ -1,0 +1,62 @@
+# =====================================================================
+# GrazeX — Apache rules (Xneelo). Do NOT add php_value lines here
+# (they cause a 500 error on Xneelo); PHP settings live in code.
+# =====================================================================
+
+Options -Indexes
+DirectoryIndex index.php
+ErrorDocument 404 /404.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Force HTTPS (skipped on localhost)
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)(:\d+)?$ [NC]
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # Never serve internal folders
+  RewriteRule ^(config|includes|templates|storage|database|cron|vendor|tests)(/|$) - [F,L,NC]
+
+  # Never serve dotfiles (except .well-known for SSL validation)
+  RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+  # Never execute scripts inside uploads/ (uploads/ is not deployed, so its own .htaccess may be missing)
+  RewriteRule ^uploads/.*\.(php\d?|phtml|phar|pl|py|cgi|sh|shtml|htaccess)$ - [F,L,NC]
+
+  # Never serve source / config files
+  RewriteRule (^|/)(composer\.(json|lock)|package(-lock)?\.json|README.*)$ - [F,L,NC]
+  RewriteRule \.(sql|md|log|lock|ya?ml|ini|dist|sh|bak|swp)$ - [F,L,NC]
+</IfModule>
+
+# Fallback when mod_rewrite is unavailable
+<FilesMatch "^(env\.php|env\.example\.php|composer\.(json|lock))$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  <FilesMatch "\.(css|js|woff2|webp|png|jpg|jpeg|svg|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "^(sw\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
+  AddType font/woff2 .woff2
+  AddType image/webp .webp
+</IfModule>
+
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml application/manifest+json
+</IfModule>

@@ -15,6 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup PHP + Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          tools: composer:v2
+          coverage: none
+
+      - name: Install PHP libraries (PDF + email)
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
       - name: Setup SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -41,4 +51,9 @@ jobs:
             --exclude='config/env.php' \
             --exclude='.env' \
             --exclude='uploads/' \
+            --exclude='storage/' \
+            --exclude='database/' \
+            --exclude='tests/' \
+            --exclude='composer.json' \
+            --exclude='composer.lock' \
             ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH"

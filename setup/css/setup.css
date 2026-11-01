@@ -1,0 +1,10 @@
+/* GrazeX setup wizard */
+.setup { padding-top: 48px; padding-bottom: 80px; }
+.setup-head { text-align: center; display: grid; justify-items: center; gap: 10px; margin-bottom: 32px; }
+.setup-head img { width: min(360px, 80vw); mix-blend-mode: screen; }
+.checks { list-style: none; display: grid; gap: 8px; }
+.checks li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, .025); font-size: 15px; }
+.checks .ck { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; font-size: 13px; flex: none; }
+.checks .ok .ck { background: var(--green); color: #0d1408; }
+.checks .fail .ck { background: var(--danger); color: #1a0705; }
+.es-icon { width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 20px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
