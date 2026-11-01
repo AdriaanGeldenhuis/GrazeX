@@ -10,6 +10,16 @@ require_once GX_ROOT . '/includes/admin_form.php';
 api_post();
 require_admin_api('settings.manage');
 
+if (input('action') === 'yoco_webhook') {
+    try {
+        $r = YocoService::registerWebhook();
+    } catch (Throwable $e) {
+        json_error('Could not connect to Yoco: ' . $e->getMessage(), 409);
+    }
+    audit('yoco.webhook_registered', null, null, $r);
+    json_ok([], $r['already'] ? 'Yoco webhook was already connected (' . $r['mode'] . ' mode).' : 'Yoco webhook connected (' . $r['mode'] . ' mode) — card payments now confirm automatically.');
+}
+
 if (input('action') === 'division') {
     $code = (string) input('code');
     if (!isset(GX_DIVISIONS[$code])) {

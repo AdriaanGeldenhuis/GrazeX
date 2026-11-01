@@ -79,6 +79,12 @@ admin_start('Settings', 'settings', ['perm' => 'settings.manage']);
         <?= af_textarea('s[meta_description]', 'Default description for Google', $v('meta_description'), ['span' => true, 'rows' => 2]) ?>
       <?php elseif ($tab === 'orders'): ?>
         <?= af_check('s[payment_yoco_enabled]', 'Card payments (Yoco)', $v('payment_yoco_enabled') === '1', ['hint' => YocoService::configured() ? 'Yoco keys are set (' . YocoService::mode() . ' mode).' : 'Add Yoco keys in config/env.php to activate.']) ?>
+        <?php if (YocoService::configured()): $wh = setting('yoco_' . YocoService::mode() . '_webhook_connected_at'); ?>
+          <div class="field"><span class="label">Yoco payment confirmations (webhook)</span>
+            <div class="row"><?= YocoService::webhookSecret(YocoService::mode()) !== '' ? '<span class="badge badge-success">Connected' . ($wh ? ' ' . e(fmt_date($wh)) : '') . '</span>' : '<span class="badge badge-warning">Not connected</span>' ?>
+            <button class="btn btn-sm" type="button" data-admin-act="/admin/api/settings.php" data-payload='{"action":"yoco_webhook"}'>Connect Yoco webhook</button></div>
+            <span class="hint">Do this once in test mode and again after switching to live mode.</span></div>
+        <?php endif; ?>
         <?= af_check('s[payment_eft_enabled]', 'EFT with proof of payment', $v('payment_eft_enabled') === '1') ?>
         <?= af_check('s[payment_cash_enabled]', 'Pay on collection (cash / card)', $v('payment_cash_enabled') === '1') ?>
         <?= af_text('s[eft_hold_hours]', 'Hours an unpaid EFT order keeps its stock', $v('eft_hold_hours'), ['type' => 'number', 'min' => 1]) ?>

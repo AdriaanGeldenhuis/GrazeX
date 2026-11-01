@@ -124,7 +124,7 @@ final class YocoService
         }
         $signed = $id . '.' . $timestamp . '.' . $rawBody;
         foreach (['live', 'test'] as $mode) {
-            $secret = (string) env('yoco.' . $mode . '_webhook_secret', '');
+            $secret = self::webhookSecret($mode);
             if ($secret === '') {
                 continue;
             }
@@ -141,6 +141,39 @@ final class YocoService
             }
         }
         return null;
+    }
+
+    /** Webhook secret for a mode: config/env.php first, else the encrypted one saved by "Connect Yoco webhook". */
+    public static function webhookSecret(string $mode): string
+    {
+        $secret = (string) env('yoco.' . $mode . '_webhook_secret', '');
+        return $secret !== '' ? $secret : (string) secret_decrypt(setting('yoco_' . $mode . '_webhook_secret_enc'));
+    }
+
+    /** Register our webhook URL with Yoco for the current mode and store the signing secret (encrypted). */
+    public static function registerWebhook(): array
+    {
+        $mode = self::mode();
+        $url = app_url('/payments/api/yoco-webhook.php');
+        if (!str_starts_with($url, 'https://')) {
+            throw new DomainException('The site must run on https:// before Yoco can send payment confirmations.');
+        }
+        $existing = self::request('GET', '/api/webhooks', null);
+        foreach ((array) ($existing['subscriptions'] ?? []) as $sub) {
+            if (($sub['url'] ?? '') === $url && self::webhookSecret($mode) !== '') {
+                return ['mode' => $mode, 'url' => $url, 'already' => true];
+            }
+            if (($sub['url'] ?? '') === $url && !empty($sub['id'])) {
+                self::request('DELETE', '/api/webhooks/' . rawurlencode((string) $sub['id']), null);
+            }
+        }
+        $res = self::request('POST', '/api/webhooks', ['name' => 'GrazeX website', 'url' => $url]);
+        if (empty($res['secret'])) {
+            throw new RuntimeException('Yoco did not return a webhook secret.');
+        }
+        setting_set('yoco_' . $mode . '_webhook_secret_enc', secret_encrypt((string) $res['secret']));
+        setting_set('yoco_' . $mode . '_webhook_connected_at', now());
+        return ['mode' => $mode, 'url' => $url, 'already' => false];
     }
 
     private static function request(string $method, string $path, ?array $body, ?string $idempotencyKey = null, ?string $mode = null): array

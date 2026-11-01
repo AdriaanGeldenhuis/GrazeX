@@ -37,6 +37,10 @@ foreach ($pretty as $re => [$target, $param]) {
     }
 }
 
+if ($uri === '/robots.txt' || $uri === '/sitemap.xml') {
+    require $root . ($uri === '/robots.txt' ? '/robots.php' : '/sitemap.php');
+    return true;
+}
 $path = $root . $uri;
 if (is_dir($path)) {
     $path = rtrim($path, '/') . '/index.php';

@@ -15,6 +15,13 @@ ErrorDocument 404 /404.php
   RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)(:\d+)?$ [NC]
   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
+  # robots.txt and sitemap.xml are generated
+  RewriteRule ^robots\.txt$ robots.php [L]
+  RewriteRule ^sitemap\.xml$ sitemap.php [L]
+
+  # Pretty URL for information pages
+  RewriteRule ^pages/([a-z0-9-]+)/?$ pages/page.php?slug=$1 [L,QSA]
+
   # Never serve internal folders
   RewriteRule ^(config|includes|templates|storage|database|cron|vendor|tests)(/|$) - [F,L,NC]
 

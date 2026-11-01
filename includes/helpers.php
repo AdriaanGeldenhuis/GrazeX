@@ -362,3 +362,26 @@ function audit(string $action, ?string $entityType = null, ?int $entityId = null
         gx_log('warning', 'Audit write failed: ' . $e->getMessage());
     }
 }
+
+// ---------------------------------------------------------------------
+// Secrets at rest (encrypted with app_key — a leaked database alone does not expose them)
+// ---------------------------------------------------------------------
+function secret_encrypt(string $plain): string
+{
+    $key = hash('sha256', (string) env('app_key', ''), true);
+    $iv = random_bytes(12);
+    $tag = '';
+    $cipher = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    return base64_encode($iv . $tag . $cipher);
+}
+
+function secret_decrypt(?string $stored): ?string
+{
+    $raw = base64_decode((string) $stored, true);
+    if ($raw === false || strlen($raw) < 29) {
+        return null;
+    }
+    $key = hash('sha256', (string) env('app_key', ''), true);
+    $plain = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
+    return $plain === false ? null : $plain;
+}
