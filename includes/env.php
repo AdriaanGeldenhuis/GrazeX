@@ -264,6 +264,13 @@ function gx_db_diagnose(): array
             in_array($code, [2002, 2003, 2005, 2006], true) => 'Cannot reach the database server "' . $cfg['host'] . '" (also tried localhost) — use the exact host shown in konsoleH → Manage MySQL (error ' . $code . ').',
             default => 'Could not connect to the database (error ' . $code . ').',
         };
+        $attempts = $GLOBALS['GX_DB_ATTEMPTS'] ?? [];
+        if (count($attempts) > 1) {
+            $words = [1045 => 'password refused', 1044 => 'no access to this database', 1049 => 'database not found'];
+            $msg .= ' Tried: ' . implode(' · ', array_map(
+                static fn($h, $c) => $h . ' → ' . ($words[$c] ?? (in_array($c, [2002, 2003, 2005, 2006], true) ? 'unreachable' : 'error')) . ' (' . $c . ')',
+                array_keys($attempts), $attempts));
+        }
         return ['ok' => false, 'state' => 'connect', 'message' => $msg];
     }
     $tables = (int) $pdo->query('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()')->fetchColumn();
