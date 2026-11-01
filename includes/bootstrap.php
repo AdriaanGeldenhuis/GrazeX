@@ -153,6 +153,7 @@ require GX_ROOT . '/includes/csrf.php';
 require GX_ROOT . '/includes/auth.php';
 require GX_ROOT . '/includes/admin_auth.php';
 require GX_ROOT . '/includes/uploads.php';
+require GX_ROOT . '/includes/totp.php';
 
 // ---------------------------------------------------------------------
 // Request setup

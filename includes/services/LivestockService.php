@@ -140,4 +140,32 @@ final class LivestockService
         }
         return (int) ($min ?? $max) . ' months';
     }
+
+    /** Email everyone whose alert matches a newly published lot. Returns the number queued. */
+    public static function notifySubscribers(int $lotId): int
+    {
+        $l = db_one('SELECT l.*, b.name AS breed_name FROM lots l JOIN breeds b ON b.id = l.breed_id WHERE l.id = ?', [$lotId]);
+        if (!$l || !in_array($l['status'], ['available', 'coming_soon'], true)) {
+            throw new DomainException('Only available or coming-soon lots can be announced.');
+        }
+        $subs = db_all('SELECT * FROM livestock_alerts WHERE is_active = 1 AND (breed_id IS NULL OR breed_id = ?) AND (category_id IS NULL OR category_id = ?)
+                        AND (last_notified_at IS NULL OR last_notified_at < NOW() - INTERVAL 6 HOUR)', [$l['breed_id'], $l['category_id']]);
+        $sent = [];
+        $url = app_url('/ranch/lot.php?slug=' . rawurlencode($l['slug']));
+        foreach ($subs as $s) {
+            if (isset($sent[$s['email']])) {
+                continue;
+            }
+            $sent[$s['email']] = true;
+            NotificationService::email('livestock_alert', $s['email'], null, ['lot_title' => $l['title'], 'link' => $url],
+                division_id('ranch'), [], ['label' => 'View the lot', 'url' => $url], false);
+            // Unsubscribe line (POPIA): appended to the queued email
+            $qid = (int) db_val('SELECT MAX(id) FROM email_queue WHERE to_email = ?', [$s['email']]);
+            $unsub = app_url('/ranch/api/alerts.php?unsubscribe=' . $s['unsubscribe_token']);
+            db_exec('UPDATE email_queue SET body_html = REPLACE(body_html, \'</body>\', ?) WHERE id = ?',
+                ['<p style="text-align:center;font-size:12px;color:#7f8781;font-family:Arial">Don\'t want these alerts? <a href="' . e($unsub) . '" style="color:#9ea59f">Unsubscribe</a></p></body>', $qid]);
+            db_exec('UPDATE livestock_alerts SET last_notified_at = NOW() WHERE id = ?', [$s['id']]);
+        }
+        return count($sent);
+    }
 }

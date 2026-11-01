@@ -610,6 +610,7 @@ final class OrderService
             setting_set('last_expiry_run', (string) time());
             self::expireDue();
             self::sendReminders();
+            MailService::processQueue(10);
         } catch (Throwable $e) {
             gx_log('error', 'Expiry run failed: ' . $e->getMessage());
         }
