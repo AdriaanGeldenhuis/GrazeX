@@ -265,10 +265,10 @@ function gx_db_diagnose(): array
             default => 'Could not connect to the database (error ' . $code . ').',
         };
         $attempts = $GLOBALS['GX_DB_ATTEMPTS'] ?? [];
-        if (count($attempts) > 1) {
-            $words = [1045 => 'password refused', 1044 => 'no access to this database', 1049 => 'database not found'];
+        if ($attempts) {
+            $user = (string) ($cfg['user'] ?? '');
             $msg .= ' Tried: ' . implode(' · ', array_map(
-                static fn($h, $c) => $h . ' → ' . ($words[$c] ?? (in_array($c, [2002, 2003, 2005, 2006], true) ? 'unreachable' : 'error')) . ' (' . $c . ')',
+                static fn($h, $a) => $h . ' → ' . ($user !== '' ? str_replace($user, '***', (string) $a['msg']) : (string) $a['msg']),
                 array_keys($attempts), $attempts));
         }
         return ['ok' => false, 'state' => 'connect', 'message' => $msg];
