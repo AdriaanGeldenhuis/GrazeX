@@ -1,6 +1,9 @@
 # Secrets — never commit
 config/env.php
 .env
+.env.php
+config/.env
+config/.env.php
 
 # Composer (installed in CI during deploy)
 vendor/

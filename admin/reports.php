@@ -23,9 +23,9 @@ if ($export !== '') {
         header('Content-Disposition: attachment; filename="grazex-' . $name . '-' . date('Ymd') . '.csv"');
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF"); // Excel-friendly UTF-8
-        fputcsv($out, $head);
+        fputcsv($out, $head, ',', '"', '');
         foreach ($rows as $r) {
-            fputcsv($out, array_map(static fn($v) => is_string($v) && preg_match('/^[=+\-@]/', $v) ? "'" . $v : $v, array_values($r)));
+            fputcsv($out, array_map(static fn($v) => is_string($v) && preg_match('/^[=+\-@]/', $v) ? "'" . $v : $v, array_values($r)), ',', '"', '');
         }
         exit;
     };

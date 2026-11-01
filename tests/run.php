@@ -231,6 +231,9 @@ if (PdfService::available()) {
     echo "  (skipped — run composer install)\n";
 }
 
+section('PHP compatibility');
+check('no PHP deprecation notices from GrazeX code', empty($GLOBALS['GX_DEPRECATIONS']), implode('; ', array_slice($GLOBALS['GX_DEPRECATIONS'] ?? [], 0, 3)));
+
 echo "\n" . ($fail ? "\033[31m{$fail} failed\033[0m, " : '') . "\033[32m{$pass} passed\033[0m\n";
 $admin->exec("DROP DATABASE IF EXISTS `{$testDb}`");
 exit($fail ? 1 : 0);

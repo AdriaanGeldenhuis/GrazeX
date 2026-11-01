@@ -37,17 +37,18 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
 
 ## Opstel op Xneelo (eerste keer)
 
-1. **PHP-weergawe:** konsoleH → *PHP Config* → kies **PHP 8.4** (8.3 werk ook).
+1. **PHP-weergawe:** konsoleH → *PHP Config* → PHP **8.3** of nuwer (8.3, 8.4 en 8.5 word ondersteun).
 2. **Databasis:** *Manage MySQL* → *Add*. Skryf die naam, gebruiker, wagwoord en host neer. Die host lyk soos `sqlNN.jnbN.host-h.net`.
 3. **SQL:** phpMyAdmin → kies die databasis → *SQL*-oortjie → plak die hele `database/install.sql` → *Go*.
    - Wil jy eers met voorbeeldprodukte en -lotte speel? Plak daarna ook `database/demo.sql`. Verwyder dit voor jy live gaan.
 4. **Deploy:** merge na `main` en GitHub stuur alles na Xneelo (met PHPMailer en Dompdf).
-5. **`config/env.php`:** kopieer `config/env.example.php` na `config/env.php` op die bediener (via SFTP of die File Manager) en vul dit in:
-   - `app_url` (bv. `https://www.grazex.co.za`)
-   - `app_key`: 64 lukrake hex-karakters. Genereer dit met `php -r "echo bin2hex(random_bytes(32));"`
-   - `setup_token`: enige lang geheime woord
-   - `db` en `mail` (SMTP: `smtp.jou-domein` poort 465 SSL; die gebruikersnaam is die volle e-posadres)
-   - `yoco`: begin met `mode => 'test'` en jou `sk_test_…`-sleutel
+5. **Instellings-lêer:** maak **`.env.php`** of **`.env`** in die website-root (`public_html`). Die app lees enige van hierdie lêers:
+   - `.env.php` — PHP: `define('DB_HOST', '…');`, of `$host = '…';`, of `return ['DB_HOST' => '…'];`
+   - `.env` — `KEY=VALUE`-reëls (sien **`.env.example`** vir al die sleutels)
+   - `config/env.php` — die oorspronklike GrazeX-formaat
+   - **Benodig:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, `APP_URL`, `APP_KEY` (64 lukrake karakters), `SETUP_TOKEN`
+   - **Opsioneel:** `MAIL_*` (SMTP: `smtp.jou-domein`, poort 465 SSL, gebruikersnaam = volle e-posadres), `YOCO_MODE`, `YOCO_TEST_SECRET_KEY`, `YOCO_LIVE_SECRET_KEY`
+   - Lêers wat met 'n punt begin, word deur `.htaccess` van die web af geblokkeer, en die deploy oorskryf hulle nooit nie.
 6. **Eienaar-rekening:** gaan na `https://jou-domein/setup/`. Die bladsy toets die bediener, en dan skep jy die eienaar met die `setup_token`. Die bladsy sluit homself daarna.
 7. **Admin → Settings:**
    - Vul by *GrazeX Feeds business* en *GrazeX Ranch business* die regsnaam, reg.-nr, BTW, adres en **bankbesonderhede** in.
@@ -64,8 +65,17 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
 11. **E-pos-aflewering:** maak seker die domein het SPF (`include:spf.host-h.net`), DKIM (Xneelo) en 'n DMARC-rekord.
 12. **SSL:** Let's Encrypt is by Xneelo ingesluit, en `.htaccess` dwing HTTPS af.
 
+### Kry jy 'n fout?
+- Maak **`https://jou-domein/setup/`** oop. Dit sê in gewone taal wat skort, byvoorbeeld:
+  - "settings file not found"
+  - "database is empty — paste install.sql"
+  - "the database refused the username or password"
+  - "APP_KEY missing"
+- Elke foutbladsy wys 'n **Reference**-kode. Dieselfde kode staan in `storage/logs/app-DATUM.log` saam met die presiese fout.
+- As die databasis nie bereikbaar of nog leeg is nie, sien besoekers 'n vriendelike "Back soon"-bladsy in plaas van 'n fout.
+
 ### Voor jy live gaan
-- [ ] `app_debug => false` in `env.php`
+- [ ] `APP_DEBUG=false` (of `app_debug => false`)
 - [ ] Demo-data verwyder (of produkte/lotte vervang met jou eie)
 - [ ] Terms, Privacy en Returns deur jou **prokureur** nagegaan (Admin → Lists & setup → Pages)
 - [ ] BTW-status en die nulkoers-instelling deur jou **rekenmeester** bevestig

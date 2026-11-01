@@ -63,3 +63,6 @@
 .doc-list small { margin-left: auto; color: var(--muted); font-weight: 600; }
 .addr-grid { display: grid; gap: 12px; }
 @media (min-width: 760px) { .addr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.acc-layout, .acc-main, .od-grid { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .acc-layout { grid-template-columns: 230px minmax(0, 1fr); } }
+@media (min-width: 1100px) { .od-grid { grid-template-columns: minmax(0, 1fr) 340px; } }
