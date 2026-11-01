@@ -38,7 +38,7 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
 ## Opstel op Xneelo (eerste keer)
 
 1. **PHP-weergawe:** konsoleH → *PHP Config* → PHP **8.3** of nuwer (8.3, 8.4 en 8.5 word ondersteun).
-2. **Databasis:** *Manage MySQL* → *Add*. Skryf die naam, gebruiker, wagwoord en host neer. Die host lyk soos `sqlNN.jnbN.host-h.net`.
+2. **Databasis:** *Manage MySQL* → *Add*. Skryf die naam, gebruiker, wagwoord en host neer. Die host lyk soos `sqlNN.jnbN.host-h.net`. Op 'n **managed server** (`dediNNN.cpt1.host-h.net`) gebruik `DB_HOST=localhost`. As die bedienernaam nie bereikbaar is nie, probeer die app self `localhost`.
 3. **SQL:** phpMyAdmin → kies die databasis → *SQL*-oortjie → plak die hele `database/install.sql` → *Go*.
    - Wil jy eers met voorbeeldprodukte en -lotte speel? Plak daarna ook `database/demo.sql`. Verwyder dit voor jy live gaan.
 4. **Deploy:** merge na `main` en GitHub stuur alles na Xneelo (met PHPMailer en Dompdf).
@@ -46,7 +46,9 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
    - `.env.php` — PHP: `define('DB_HOST', '…');`, of `$host = '…';`, of `return ['DB_HOST' => '…'];`
    - `.env` — `KEY=VALUE`-reëls (sien **`.env.example`** vir al die sleutels)
    - `config/env.php` — die oorspronklike GrazeX-formaat
-   - **Benodig:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, `APP_URL`, `APP_KEY` (64 lukrake karakters), `SETUP_TOKEN`
+   - **Benodig:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, `APP_URL`, `APP_KEY`, `SETUP_TOKEN`
+   - **`APP_KEY`** is die site se geheime sleutel (dit teken wagwoord-herstel-skakels en enkripteer die Yoco-webhook-geheim). Maak een met random.org/strings: lengte 64, syfers + letters. Stel dit een keer en verander dit nooit weer nie.
+   - **`SETUP_TOKEN`** is 'n eenmalige wagwoord wat jy self kies (12+ karakters). Jy tik dit net een keer op `/setup/` om die eienaar-rekening te skep.
    - **Opsioneel:** `MAIL_*` (SMTP: `smtp.jou-domein`, poort 465 SSL, gebruikersnaam = volle e-posadres), `YOCO_MODE`, `YOCO_TEST_SECRET_KEY`, `YOCO_LIVE_SECRET_KEY`
    - Lêers wat met 'n punt begin, word deur `.htaccess` van die web af geblokkeer, en die deploy oorskryf hulle nooit nie.
 6. **Eienaar-rekening:** gaan na `https://jou-domein/setup/`. Die bladsy toets die bediener, en dan skep jy die eienaar met die `setup_token`. Die bladsy sluit homself daarna.

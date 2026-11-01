@@ -12,14 +12,48 @@ function db(): PDO
     if ($pdo instanceof PDO) {
         return $pdo;
     }
-    $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
-        env('db.host', 'localhost'), (int) env('db.port', 3306), env('db.name', ''));
-    $pdo = new PDO($dsn, (string) env('db.user', ''), (string) env('db.pass', ''), [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-        PDO::ATTR_STRINGIFY_FETCHES  => false,
-    ]);
+    $host = trim((string) env('db.host', 'localhost'));
+    $hosts = [$host];
+    // On an Xneelo managed server MySQL runs on the same machine: if the server name is
+    // unreachable from PHP, fall back to the local connection automatically.
+    $memo = GX_ROOT . '/storage/cache/db-host-' . substr(hash('sha256', $host), 0, 12) . '.txt';
+    if (!in_array(strtolower($host), ['localhost', '127.0.0.1'], true)) {
+        $remembered = @is_file($memo) ? trim((string) @file_get_contents($memo)) : '';
+        $hosts = in_array($remembered, ['localhost', '127.0.0.1'], true)
+            ? [$remembered, $host, $remembered === 'localhost' ? '127.0.0.1' : 'localhost']
+            : [$host, 'localhost', '127.0.0.1'];
+    }
+    $first = null;
+    foreach ($hosts as $h) {
+        $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $h, (int) env('db.port', 3306), env('db.name', ''));
+        try {
+            $pdo = new PDO($dsn, (string) env('db.user', ''), (string) env('db.pass', ''), [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES   => false,
+                PDO::ATTR_STRINGIFY_FETCHES  => false,
+                PDO::ATTR_TIMEOUT            => 4,
+            ]);
+            $GLOBALS['GX_DB_HOST_USED'] = $h;
+            if ($h !== $host && !@is_file($memo)) {
+                @mkdir(dirname($memo), 0775, true);
+                @file_put_contents($memo, $h);
+            } elseif ($h === $host && @is_file($memo)) {
+                @unlink($memo);
+            }
+            break;
+        } catch (PDOException $e) {
+            $first ??= $e;
+            $code = (int) ($e->errorInfo[1] ?? 0) ?: (int) $e->getCode();
+            if (!in_array($code, [2002, 2003, 2005, 2006], true)) {
+                throw $e; // wrong password / database name etc. — trying other hosts will not help
+            }
+            $pdo = null;
+        }
+    }
+    if (!$pdo instanceof PDO) {
+        throw $first;
+    }
     // Keep MySQL and PHP on the same clock (SAST has no daylight saving)
     $pdo->exec("SET time_zone = '+02:00', SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
     return $pdo;

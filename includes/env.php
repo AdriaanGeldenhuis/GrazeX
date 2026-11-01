@@ -261,14 +261,14 @@ function gx_db_diagnose(): array
             $code === 1045 => 'The database refused the username or password (DB_USER / DB_PASS).',
             $code === 1044 => 'This database user has no access to database "' . $cfg['name'] . '" — give the user access in Manage MySQL.',
             $code === 1049 => 'No database called "' . $cfg['name'] . '" exists on that server — check DB_NAME.',
-            in_array($code, [2002, 2003, 2005, 2006], true) => 'Cannot reach the database server "' . $cfg['host'] . '" — check DB_HOST (on Xneelo it looks like sqlNN.jnbN.host-h.net or dediNNN.cpt1.host-h.net).',
+            in_array($code, [2002, 2003, 2005, 2006], true) => 'Cannot reach the database server "' . $cfg['host'] . '" (also tried localhost) — use the exact host shown in konsoleH → Manage MySQL (error ' . $code . ').',
             default => 'Could not connect to the database (error ' . $code . ').',
         };
         return ['ok' => false, 'state' => 'connect', 'message' => $msg];
     }
     $tables = (int) $pdo->query('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()')->fetchColumn();
     if ($tables === 0) {
-        return ['ok' => false, 'state' => 'empty', 'message' => 'Connected — but the database is empty. Paste database/install.sql into phpMyAdmin (SQL tab) and click Go.'];
+        return ['ok' => false, 'state' => 'empty', 'message' => 'Connected' . (strcasecmp((string) ($GLOBALS['GX_DB_HOST_USED'] ?? $cfg['host']), (string) $cfg['host']) !== 0 ? ' via "' . $GLOBALS['GX_DB_HOST_USED'] . '"' : '') . ' — but the database is empty. Paste database/install.sql into phpMyAdmin (SQL tab) and click Go.'];
     }
     $hasCore = (int) $pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('divisions','settings','orders','products','lots')")->fetchColumn();
     if ($hasCore < 5) {
@@ -277,5 +277,7 @@ function gx_db_diagnose(): array
     if ((int) $pdo->query('SELECT COUNT(*) FROM divisions')->fetchColumn() < 2) {
         return ['ok' => false, 'state' => 'seed', 'message' => 'Connected — tables exist but the starter data is missing. Re-import database/install.sql into an empty database.'];
     }
-    return ['ok' => true, 'state' => 'ok', 'message' => 'Connected — ' . $tables . ' tables.'];
+    $via = (string) ($GLOBALS['GX_DB_HOST_USED'] ?? $cfg['host']);
+    $note = strcasecmp($via, (string) $cfg['host']) !== 0 ? ' Connected via "' . $via . '" — you can set DB_HOST=' . $via . ' in your settings file.' : '';
+    return ['ok' => true, 'state' => 'ok', 'message' => 'Connected — ' . $tables . ' tables.' . $note];
 }
