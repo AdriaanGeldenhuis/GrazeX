@@ -152,6 +152,7 @@ require GX_ROOT . '/includes/session.php';
 require GX_ROOT . '/includes/csrf.php';
 require GX_ROOT . '/includes/auth.php';
 require GX_ROOT . '/includes/admin_auth.php';
+require GX_ROOT . '/includes/uploads.php';
 
 // ---------------------------------------------------------------------
 // Request setup
@@ -169,5 +170,9 @@ if (!GX_IS_CLI) {
         }
         require GX_ROOT . '/includes/layout/maintenance.php';
         exit;
+    }
+    // Release stock from unpaid orders whose hold has expired (Xneelo cron runs only every 2 hours)
+    if (!defined('GX_NO_SESSION')) {
+        OrderService::maybeExpire();
     }
 }

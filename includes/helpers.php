@@ -314,15 +314,14 @@ function send_security_headers(): void
 // ---------------------------------------------------------------------
 function division(string|int $codeOrId): ?array
 {
-    static $cache = [];
+    $GLOBALS['GX_DIV_CACHE'] ??= [];
     $key = (string) $codeOrId;
-    if (!array_key_exists($key, $cache)) {
-        $row = is_int($codeOrId) || ctype_digit($key)
+    if (!array_key_exists($key, $GLOBALS['GX_DIV_CACHE'])) {
+        $GLOBALS['GX_DIV_CACHE'][$key] = is_int($codeOrId) || ctype_digit($key)
             ? db_one('SELECT * FROM divisions WHERE id = ?', [(int) $codeOrId])
             : db_one('SELECT * FROM divisions WHERE code = ?', [$key]);
-        $cache[$key] = $row;
     }
-    return $cache[$key];
+    return $GLOBALS['GX_DIV_CACHE'][$key];
 }
 
 function division_id(string $code): int

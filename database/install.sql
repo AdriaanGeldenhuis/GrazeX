@@ -1227,6 +1227,8 @@ INSERT INTO settings (setting_key, setting_value, value_type, group_name, label)
 ('zero_rating_enabled',      '0',                              'bool',   'tax',      'Zero-rate eligible feed for verified VAT-registered farmers (confirm with accountant first)'),
 ('low_stock_email',          '',                               'string', 'notifications', 'Email for low stock & new order alerts'),
 ('email_hourly_cap',         '300',                            'int',    'notifications', 'Max emails sent per hour (Xneelo limit is 500)'),
+('ranch_brand_mark',         '',                               'string', 'ranch',    'Registered brand / tattoo mark of the ranch (printed on documents of identification)'),
+('site_language',            'en',                             'string', 'general',  'Site language (en / af)'),
 ('meta_description',         'GrazeX Ranch & Feeds — quality livestock feed and finished lambs from productive South African pasture.', 'text', 'seo', 'Default meta description');
 
 INSERT INTO roles (id, slug, name, description, is_system) VALUES

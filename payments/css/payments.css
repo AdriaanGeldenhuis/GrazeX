@@ -1,0 +1,8 @@
+/* GrazeX — payment screens */
+.pay-screen { min-height: 100svh; display: grid; place-items: center; padding: 24px var(--gutter); }
+.pay-card { width: min(460px, 100%); text-align: center; display: grid; gap: 14px; justify-items: center; }
+.pay-card > div { display: grid; gap: 14px; justify-items: center; width: 100%; }
+.pay-logo { width: 220px; height: auto; margin-bottom: 4px; }
+.pay-spinner { width: 54px; height: 54px; border-radius: 50%; border: 4px solid var(--line-strong); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+.pay-check { width: 70px; height: 70px; border-radius: 50%; display: grid; place-items: center; background: var(--green); color: #0d1408; animation: pop .5s var(--ease); }
+@keyframes pop { from { transform: scale(.4); opacity: 0; } }
