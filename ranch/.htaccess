@@ -1,0 +1,5 @@
+# Pretty URLs for GrazeX Ranch
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^lot/([a-z0-9-]+)/?$ lot.php?slug=$1 [L,QSA]
+</IfModule>

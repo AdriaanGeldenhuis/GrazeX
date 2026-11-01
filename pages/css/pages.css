@@ -1,0 +1,9 @@
+/* GrazeX — information & contact pages */
+.pg { display: grid; gap: 28px; align-items: start; padding-bottom: 40px; }
+@media (min-width: 1024px) { .pg { grid-template-columns: 1fr 300px; } .pg-side { position: sticky; top: calc(var(--nav-h) + 30px); } }
+.pg-body .prose { font-size: 17px; }
+.contact-grid { display: grid; gap: 20px; align-items: start; padding-bottom: 40px; }
+@media (min-width: 1024px) { .contact-grid { grid-template-columns: 1fr 380px; } }
+.contact-side { display: grid; gap: 14px; }
+.contact-side img { width: 140px; height: auto; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }

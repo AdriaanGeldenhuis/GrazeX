@@ -1,0 +1,30 @@
+/* =====================================================================
+   GrazeX Feeds — area styles (orange theme comes from body[data-division="feeds"])
+   ===================================================================== */
+.shop-head { margin-bottom: 28px; }
+.shop-filters { display: grid; gap: 18px; margin-bottom: 8px; }
+
+/* Cart page */
+.cart-page { display: grid; gap: 20px; align-items: start; }
+@media (min-width: 1024px) { .cart-page { grid-template-columns: 1fr 380px; } .cart-side { position: sticky; top: calc(var(--nav-h) + 30px); } }
+
+/* Calculator */
+.calc { display: grid; gap: 20px; align-items: start; }
+@media (min-width: 1024px) { .calc { grid-template-columns: 1.1fr .9fr; } .calc-result { position: sticky; top: calc(var(--nav-h) + 30px); } }
+.calc-big { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 18px; }
+.calc-big span { font-family: var(--font-display); font-size: clamp(64px, 12vw, 104px); font-weight: 800; line-height: .9; background: linear-gradient(90deg, var(--orange), var(--orange-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.calc-big small { color: var(--muted); font-weight: 700; }
+.calc-options { display: grid; gap: 10px; }
+.calc-option { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; align-items: center; padding: 16px; border-radius: 16px; border: 1px solid var(--line-strong); background: rgba(255, 255, 255, .025); }
+.calc-option.is-best { border-color: var(--accent); background: var(--accent-soft); }
+.calc-option .co-title { font-weight: 800; }
+.calc-option .co-meta { color: var(--muted); font-size: 13px; }
+.calc-option .co-price { font-weight: 800; font-size: 20px; text-align: right; }
+.calc-option .btn { grid-column: 1 / -1; }
+
+/* Delivery checker result */
+.dc-card { padding: 16px; border-radius: 16px; border: 1px solid var(--line-strong); background: rgba(255, 255, 255, .03); }
+.dc-card.ok { border-color: rgba(134, 213, 26, .45); background: rgba(134, 213, 26, .07); }
+.dc-card.no { border-color: rgba(255, 176, 32, .45); background: rgba(255, 176, 32, .06); }
+.dc-card ul { list-style: none; display: grid; gap: 4px; margin-top: 8px; color: #d6dbd7; font-size: 14px; }
