@@ -39,6 +39,8 @@ $checks = [
 foreach ($report as $file => $r) {
     if ($r['status'] === 'error') {
         $checks[] = [$file . ' could not be read', false, (string) $r['error']];
+    } elseif ($r['status'] === 'empty') {
+        $checks[] = [$file . ' found, but no settings recognised', false, 'Use names like DB_HOST, DB_NAME, DB_USER, DB_PASS, APP_KEY, SETUP_TOKEN — see .env.example'];
     }
 }
 $allOk = !in_array(false, array_column($checks, 1), true);

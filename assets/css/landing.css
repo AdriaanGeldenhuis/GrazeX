@@ -33,8 +33,9 @@
 .logo-stage { position: relative; width: min(760px, 100%); aspect-ratio: 2 / 1; transform-style: preserve-3d;
   transform: perspective(1200px) rotateY(-6deg) rotateX(3deg); mix-blend-mode: screen; transition: transform .5s var(--ease); }
 .logo-slide { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0;
-  transform: scale(.96); transition: opacity 1.1s var(--ease), transform 1.4s var(--ease); }
-.logo-slide.is-active { opacity: 1; transform: none; }
+  transform: scale(.96); transition: opacity .45s ease-in, transform .6s ease-in; }
+/* The old logo fades out first, then the new one fades in — they never overlap */
+.logo-slide.is-active { opacity: 1; transform: none; transition: opacity .9s var(--ease) .5s, transform 1.3s var(--ease) .5s; }
 
 .hero-watermark { position: absolute; left: -2vw; bottom: -1vw; z-index: -1; font-family: var(--font-display); font-style: italic; font-weight: 800;
   font-size: 26vw; line-height: .8; letter-spacing: -.02em; color: transparent; -webkit-text-stroke: 1px rgba(255, 255, 255, .04); white-space: nowrap; pointer-events: none; user-select: none; }
