@@ -308,6 +308,12 @@ body.has-announce.is-scrolled .site-nav, .is-scrolled .site-nav { top: 10px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 800; font-style: italic; font-size: 26px;
   letter-spacing: .01em; text-transform: uppercase; line-height: 1; }
 .brand b { color: var(--orange); }
+.brand-logo { display: block; height: 24px; width: auto; max-width: 56vw; filter: drop-shadow(0 2px 10px rgba(255, 122, 0, .25)); }
+/* On phones the logo gets the room: search and account live in the menu, the division badge returns from 480px */
+@media (max-width: 639px) { .nav-actions .nav-secondary { display: none; } }
+@media (max-width: 479px) { .site-nav .brand .brand-div { display: none; } .site-nav .brand-logo { height: 22px; } }
+@media (min-width: 640px) { .brand-logo { height: 30px; } }
+@media (min-width: 1024px) { .brand-logo { height: 34px; } }
 .brand .brand-div { font-style: normal; font-size: 12px; font-family: var(--font-body); letter-spacing: .2em; padding: 5px 9px; border-radius: 8px;
   border: 1px solid var(--accent-line); color: var(--accent-2); background: var(--accent-soft); }
 .nav-links { display: none; gap: 4px; margin-left: auto; align-items: center; }

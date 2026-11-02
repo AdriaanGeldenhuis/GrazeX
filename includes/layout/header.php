@@ -36,7 +36,7 @@ $gxWaLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
 ?>
 <header class="site-nav glass" role="banner">
   <a class="brand" href="<?= e($gxHomeHref) ?>" aria-label="GrazeX <?= $gxCartDiv ? e(ucfirst($gxCartDiv)) : '' ?> home">
-    <span>Graze<b>X</b></span>
+    <img class="brand-logo" src="/assets/img/brand/wordmark-640.webp" srcset="/assets/img/brand/wordmark-640.webp 640w, /assets/img/brand/wordmark-1200.webp 1258w" sizes="260px" width="1258" height="138" alt="GrazeX">
     <?php if ($gxCartDiv): ?><span class="brand-div"><?= e(strtoupper($gxCartDiv)) ?></span><?php endif; ?>
   </a>
 
@@ -48,9 +48,9 @@ $gxWaLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
 
   <div class="nav-actions">
     <?php if ($gxDiv === 'feeds'): ?>
-      <a class="nav-icon-btn" href="/feeds/shop.php#search" aria-label="<?= e(t('common.search')) ?>"><svg class="icon"><use href="#i-search"/></svg></a>
+      <a class="nav-icon-btn nav-secondary" href="/feeds/shop.php#search" aria-label="<?= e(t('common.search')) ?>"><svg class="icon"><use href="#i-search"/></svg></a>
     <?php endif; ?>
-    <a class="nav-icon-btn" href="/account/" aria-label="<?= e($gxCustomer ? t('nav.account') : t('nav.login')) ?>">
+    <a class="nav-icon-btn nav-secondary" href="/account/" aria-label="<?= e($gxCustomer ? t('nav.account') : t('nav.login')) ?>">
       <svg class="icon"><use href="#i-user"/></svg>
     </a>
     <?php if ($gxCartDiv): ?>
@@ -69,7 +69,7 @@ $gxWaLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
 
 <div class="menu-sheet" id="menu-sheet" aria-hidden="true">
   <div class="sheet-head">
-    <a class="brand" href="/"><span>Graze<b>X</b></span></a>
+    <a class="brand" href="/"><img class="brand-logo" src="/assets/img/brand/wordmark-640.webp" srcset="/assets/img/brand/wordmark-640.webp 640w, /assets/img/brand/wordmark-1200.webp 1258w" sizes="260px" width="1258" height="138" alt="GrazeX"></a>
     <button class="nav-icon-btn" type="button" data-menu-close aria-label="<?= e(t('nav.close')) ?>"><svg class="icon"><use href="#i-close"/></svg></button>
   </div>
   <nav aria-label="Mobile">
