@@ -5,6 +5,7 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
+require_admin('messages.manage');
 $status = in_array(query_str('status'), ['new', 'read', 'replied', 'archived'], true) ? query_str('status') : '';
 $open = query_int('id');
 $rows = db_all('SELECT e.*, l.lot_no, l.title AS lot_title FROM enquiries e LEFT JOIN lots l ON l.id = e.lot_id ' . ($status ? 'WHERE e.status = ?' : "WHERE e.status <> 'archived'") . ' ORDER BY e.id DESC LIMIT 200', $status ? [$status] : []);

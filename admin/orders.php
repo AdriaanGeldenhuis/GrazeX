@@ -38,7 +38,7 @@ $queueSql = [
 if ($f['queue']) { $where[] = $queueSql[$f['queue']]; }
 $sqlWhere = implode(' AND ', $where);
 $perPage = 25;
-$pageNo = max(1, query_int('page', 1));
+$pageNo = query_page();
 $total = (int) db_val("SELECT COUNT(*) FROM orders o WHERE {$sqlWhere}", $params);
 $orders = db_all("SELECT o.*, (SELECT COUNT(*) FROM payments p WHERE p.order_id = o.id AND p.status = 'awaiting_verification') AS pops
                   FROM orders o WHERE {$sqlWhere} ORDER BY " . ($f['queue'] === 'today' ? 'o.collection_slot_id, o.id' : 'o.placed_at DESC') . "

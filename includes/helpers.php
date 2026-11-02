@@ -40,10 +40,27 @@ function redirect(string $url, int $code = 302): never
     exit;
 }
 
+/**
+ * The setup wizard locks itself with a file (not only a database row), so it stays locked —
+ * and shows no server diagnostics — even while the database is unreachable.
+ */
+function setup_locked(): bool
+{
+    return is_file(GX_ROOT . '/storage/private/setup.lock');
+}
+
+function setup_lock_write(): void
+{
+    if (!setup_locked()) {
+        @file_put_contents(GX_ROOT . '/storage/private/setup.lock', date('c') . "\n");
+    }
+}
+
 /** Only allow same-site relative redirect targets (prevents open redirects). */
 function safe_next(?string $next, string $fallback = '/'): string
 {
-    if (!$next || !str_starts_with($next, '/') || str_starts_with($next, '//') || str_contains($next, '\\')) {
+    if (!$next || !str_starts_with($next, '/') || str_starts_with($next, '//') || str_contains($next, '\\')
+        || preg_match('/[\x00-\x20\x7F]/', $next)) {
         return $fallback;
     }
     return $next;
@@ -143,9 +160,33 @@ function uuid4(): string
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($b), 4));
 }
 
+/**
+ * The site's secret key. If the settings file has no proper APP_KEY (32+ characters), a key derived from
+ * the database credentials is used instead — never a publicly known value — and the admin shows a warning.
+ */
+function gx_app_key(): string
+{
+    $k = (string) env('app_key', '');
+    if (!gx_env_placeholder($k) && strlen($k) >= 32) {
+        return $k;
+    }
+    return hash('sha256', 'gx-fallback|' . env('db.user', '') . '|' . env('db.pass', '') . '|' . env('db.name', '') . '|' . env('db.host', ''));
+}
+
+/** Settings the owner must still add to the settings file (shown in the admin). */
+function gx_settings_problems(): array
+{
+    $missing = array_values(array_diff(gx_env_missing($GLOBALS['GX_ENV'] ?? []), ['DB_PASS']));
+    $k = (string) env('app_key', '');
+    if (!in_array('APP_KEY', $missing, true) && strlen($k) < 32) {
+        $missing[] = 'APP_KEY (must be at least 32 characters)';
+    }
+    return $missing;
+}
+
 function token_hash(string $token): string
 {
-    return hash_hmac('sha256', $token, (string) env('app_key', 'grazex'));
+    return hash_hmac('sha256', $token, gx_app_key());
 }
 
 function str_limit(?string $text, int $limit = 140): string
@@ -241,6 +282,12 @@ function query_int(string $key, int $default = 0): int
     return is_numeric($v) ? (int) $v : $default;
 }
 
+/** ?page= as a safe page number (1…10000) — huge values must never reach OFFSET arithmetic. */
+function query_page(string $key = 'page'): int
+{
+    return max(1, min(10000, query_int($key, 1)));
+}
+
 function query_str(string $key, string $default = ''): string
 {
     $v = $_GET[$key] ?? null;
@@ -286,6 +333,25 @@ function require_method(string ...$methods): void
         header('Allow: ' . implode(', ', $methods));
         json_error('Method not allowed.', 405);
     }
+}
+
+/**
+ * www.example.com ↔ example.com: GET/HEAD requests on the other variant go to the APP_URL host (one site, one
+ * session cookie, one set of search results). Never for POSTs (webhooks, forms) and never for unrelated hosts.
+ */
+function canonical_host_redirect(): ?string
+{
+    $app = parse_url((string) env('app_url', ''));
+    $want = strtolower((string) ($app['host'] ?? ''));
+    $have = strtolower((string) preg_replace('/:\d+$/', '', (string) ($_SERVER['HTTP_HOST'] ?? '')));
+    if ($want === '' || $have === '' || $want === $have || !in_array(request_method(), ['GET', 'HEAD'], true)) {
+        return null;
+    }
+    if ($have !== 'www.' . $want && 'www.' . $have !== $want) {
+        return null;
+    }
+    $origin = ($app['scheme'] ?? 'https') . '://' . $want . (isset($app['port']) ? ':' . $app['port'] : '');
+    return $origin . ($_SERVER['REQUEST_URI'] ?? '/');
 }
 
 // ---------------------------------------------------------------------
@@ -368,7 +434,7 @@ function audit(string $action, ?string $entityType = null, ?int $entityId = null
 // ---------------------------------------------------------------------
 function secret_encrypt(string $plain): string
 {
-    $key = hash('sha256', (string) env('app_key', ''), true);
+    $key = hash('sha256', gx_app_key(), true);
     $iv = random_bytes(12);
     $tag = '';
     $cipher = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
@@ -381,7 +447,12 @@ function secret_decrypt(?string $stored): ?string
     if ($raw === false || strlen($raw) < 29) {
         return null;
     }
-    $key = hash('sha256', (string) env('app_key', ''), true);
-    $plain = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
-    return $plain === false ? null : $plain;
+    // Current key first; then the raw settings value, which older versions used even when it was empty or short
+    foreach (array_unique([gx_app_key(), (string) env('app_key', '')]) as $k) {
+        $plain = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', hash('sha256', $k, true), OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
+        if ($plain !== false) {
+            return $plain;
+        }
+    }
+    return null;
 }

@@ -31,7 +31,7 @@ if (request_method() === 'GET') {
 }
 
 api_post();
-rate_limit_or_fail('cart', client_ip(), 120, 60);
+rate_limit_or_fail('cart', rate_limit_ip(), 120, 60);
 
 $action = (string) input('action', '');
 try {
@@ -49,7 +49,7 @@ try {
             CartService::remove($division, $data['item_id']);
             $respond($division, 'Removed from your cart.');
         case 'coupon':
-            rate_limit_or_fail('coupon', client_ip(), 15, 600);
+            rate_limit_or_fail('coupon', rate_limit_ip(), 15, 600);
             $data = validate_or_fail(input_all(), ['code' => 'required|max:40']);
             $summary = CartService::summary($division);
             $check = PricingService::checkCoupon($data['code'], division_id($division), $summary['subtotal'], customer_id());

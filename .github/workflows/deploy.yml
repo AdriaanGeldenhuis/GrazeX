@@ -30,16 +30,28 @@ jobs:
       - name: Install PHP libraries (PDF + email)
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
 
+      - name: Block vendor/ from the web (backup for when mod_rewrite is off)
+        run: printf '<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Deny from all\n</IfModule>\n' > vendor/.htaccess
+
       - name: Setup SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
+          # Optional: the server's host key line(s) from `ssh-keyscan -p PORT HOST` — pins the server so a
+          # look-alike cannot receive the deploy. Without it the key is fetched on every run.
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::Add the SSH_KNOWN_HOSTS secret to pin the server's host key (see README)."
+            ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Deploy via rsync
         env:
@@ -54,14 +66,35 @@ jobs:
             --exclude='.github/' \
             --exclude='.gitignore' \
             --exclude='config/env.php' \
-            --exclude='.env' \
-            --exclude='.env.php' \
-            --exclude='config/.env' \
-            --exclude='config/.env.php' \
+            --exclude='.env*' \
+            --exclude='config/.env*' \
             --exclude='uploads/' \
             --exclude='storage/' \
             --exclude='database/' \
             --exclude='tests/' \
+            --exclude='deploy/' \
+            --exclude='appfiles/' \
             --exclude='composer.json' \
             --exclude='composer.lock' \
             ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH"
+
+      - name: Remove retired files from the server (only those listed in deploy/remove-from-server.txt)
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          files=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%%#*}"
+            line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+            [ -z "$line" ] && continue
+            case "$line" in
+              /*|*..*|*\**|*\?*) echo "::error::Refusing unsafe path in deploy/remove-from-server.txt: $line"; exit 1 ;;
+            esac
+            files+=("$line")
+          done < deploy/remove-from-server.txt
+          if [ ${#files[@]} -eq 0 ]; then echo "Nothing to remove."; exit 0; fi
+          quoted=$(printf " %q" "${files[@]}")
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "cd $(printf '%q' "$DEPLOY_PATH") && rm -f --$quoted && echo Removed:$quoted"

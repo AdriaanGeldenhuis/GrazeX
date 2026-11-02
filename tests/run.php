@@ -279,6 +279,23 @@ final class TestHttp
         return [$status, json_decode((string) $raw, true) ?? ['raw' => $raw]];
     }
 
+    /** GET and return [status, lower-cased response headers]. */
+    public function headers(string $path): array
+    {
+        $ch = curl_init($this->base . $path);
+        $hdrs = [];
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_COOKIEJAR => $this->jar, CURLOPT_COOKIEFILE => $this->jar, CURLOPT_TIMEOUT => 60,
+            CURLOPT_HEADERFUNCTION => static function ($c, string $h) use (&$hdrs): int {
+                if (str_contains($h, ':')) {
+                    [$k, $v] = explode(':', $h, 2);
+                    $hdrs[strtolower(trim($k))] = trim($v);
+                }
+                return strlen($h);
+            }]);
+        curl_exec($ch);
+        return [(int) curl_getinfo($ch, CURLINFO_HTTP_CODE), $hdrs];
+    }
+
     /** Raw POST (webhooks) → [status, decoded body]. */
     public function raw(string $path, string $body, array $headers): array
     {
@@ -356,6 +373,8 @@ function yoco_pending(array $o, string $checkoutId): int
                       VALUES (?, ?, 'yoco', 'full', ?, 'pending', ?, 'test', ?)", [$o['id'], $o['division_id'], OrderService::amountDue($o), $checkoutId, $o['order_no']]);
 }
 
+// The setup lock file lives in the real storage/: remember whether it was there, restore at the end
+$setupLockExisted = setup_locked();
 // No lazy expiry from page loads during these tests (they control expiry explicitly)
 setting_set('last_expiry_run', (string) (time() + 86400));
 [$server, $base] = http_start($testDb);
@@ -607,6 +626,203 @@ $rsig = base64_encode(hash_hmac('sha256', "evt_refund_r.{$rts}.{$rbody}", base64
 $hook->raw('/payments/api/yoco-webhook.php', $rbody, ['webhook-id: evt_refund_r', 'webhook-timestamp: ' . $rts, 'webhook-signature: v1,' . $rsig]);
 check('Yoco refund webhook marks the order refunded', order_row((int) $yr['id'])['payment_status'] === 'refunded');
 
+
+section('Security: logins cannot be used to lock someone else out');
+$lockPw = 'Lock-Pass-123!';
+db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (1, ?, ?, ?, ?)', ['lock@test.local', admin_password_hash($lockPw), 'Lock Owner', 'all']);
+$attacker = new TestHttp($base);
+$attacker->page('/admin/login.php');
+for ($i = 0; $i < 7; $i++) {
+    [$st] = $attacker->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'lock@test.local', 'password' => 'wrong-' . $i], null, ['X-Test-Remote-Addr: 203.0.113.9']);
+}
+check('the attacker\'s own address gets blocked', $st === 429, (string) $st);
+$owner = new TestHttp($base);
+$owner->page('/admin/login.php');
+[$st] = $owner->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'lock@test.local', 'password' => $lockPw], null, ['X-Test-Remote-Addr: 198.51.100.7']);
+check('the owner still logs in from their own address', $st === 200, (string) $st);
+make_customer('lockme@test.local');
+$catk = new TestHttp($base);
+$catk->page('/account/login.php');
+for ($i = 0; $i < 8; $i++) {
+    $catk->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'lockme@test.local', 'password' => 'nope-' . $i], null, ['X-Test-Remote-Addr: 203.0.113.10']);
+}
+$cown = new TestHttp($base);
+$cown->page('/account/login.php');
+[$st] = $cown->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'lockme@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 198.51.100.8']);
+check('a customer still logs in after someone else hammered their account', $st === 200, (string) $st);
+check('unknown-email logins verify against a hash of the same kind as real ones',
+    password_get_info(gx_dummy_hash())['algoName'] === password_get_info(customer_password_hash('x'))['algoName']);
+$fg = new TestHttp($base);
+$fg->page('/account/forgot.php');
+$codes = [];
+for ($i = 0; $i < 4; $i++) {
+    [$codes[]] = $fg->api('POST', '/account/api/auth.php', ['action' => 'forgot', 'email' => 'nobody-' . 'x@test.local']);
+}
+check('forgot-password limit applies to unknown emails too (no account probing)', $codes === [200, 200, 200, 429], implode(',', $codes));
+
+section('Security: redirects, re-authentication and two-step verification');
+check('next=/<tab>/evil.com is not followed', safe_next("/\t/evil.com") === '/' && safe_next("/\n/evil.com") === '/' && safe_next('/account/orders.php') === '/account/orders.php');
+$pw = new TestHttp($base);
+$pw->page('/admin/login.php');
+$pw->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'lock@test.local', 'password' => $lockPw], null, ['X-Test-Remote-Addr: 198.51.100.7']);
+$pw->page('/admin/profile.php');
+$sts = [];
+for ($i = 0; $i < 6; $i++) {
+    [$sts[]] = $pw->api('POST', '/admin/api/auth.php', ['action' => 'password', 'current_password' => 'bad-' . $i, 'password' => 'New-Pass-12345!', 'password_confirm' => 'New-Pass-12345!']);
+}
+check('guessing the current password is rate limited', end($sts) === 429, implode(',', $sts));
+check('… and failed re-authentication is audited', (bool) db_val("SELECT 1 FROM audit_log WHERE action = 'admin.reauth_failed'"));
+
+$tfaPw = 'Tfa-Pass-12345!';
+$tfaId = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (1, ?, ?, ?, ?)', ['tfa@test.local', admin_password_hash($tfaPw), 'Two Step', 'all']);
+$t = new TestHttp($base);
+$t->page('/admin/login.php');
+$t->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'tfa@test.local', 'password' => $tfaPw]);
+$t->page('/admin/profile.php');
+[$st] = $t->api('POST', '/admin/api/auth.php', ['action' => '2fa_setup']);
+check('2FA setup needs the password', $st === 422, (string) $st);
+[$st, $res] = $t->api('POST', '/admin/api/auth.php', ['action' => '2fa_setup', 'password' => $tfaPw]);
+$secret = (string) ($res['data']['secret'] ?? '');
+[$st] = $t->api('POST', '/admin/api/auth.php', ['action' => '2fa_enable', 'code' => totp_code($secret)]);
+check('2FA switched on', $st === 200 && (int) db_val('SELECT totp_enabled FROM admin_users WHERE id = ?', [$tfaId]) === 1);
+check('… secret stored encrypted', str_starts_with((string) db_val('SELECT totp_secret FROM admin_users WHERE id = ?', [$tfaId]), 'enc:'));
+$profile = $t->page('/admin/profile.php');
+preg_match_all('/<li>([A-Z0-9]{4}-[A-Z0-9]{4})<\/li>/', $profile, $rc);
+check('8 recovery codes shown once on the profile page', count($rc[1]) === 8);
+check('… and not shown again', !preg_match('/<li>[A-Z0-9]{4}-[A-Z0-9]{4}<\/li>/', $t->page('/admin/profile.php')));
+$login2 = static function (string $code) use ($base, $tfaPw): int {
+    $h = new TestHttp($base);
+    $h->page('/admin/login.php');
+    $h->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'tfa@test.local', 'password' => $tfaPw]);
+    $h->page('/admin/login.php');
+    [$st] = $h->api('POST', '/admin/api/auth.php', ['action' => '2fa', 'code' => $code]);
+    return $st;
+};
+$step = intdiv(time(), 30);
+check('login with the authenticator code', $login2(totp_code($secret, $step * 30)) === 200);
+check('the same code cannot be used twice', $login2(totp_code($secret, $step * 30)) === 422);
+check('a recovery code works instead of the phone', $login2(strtolower($rc[1][0] ?? 'none')) === 200);
+check('… only once', $login2($rc[1][0] ?? 'none') === 422);
+
+section('Security: sessions');
+$sx = new TestHttp($base);
+$sx->page('/account/login.php');
+$sx->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'pay@test.local', 'password' => 'x']);
+$sx->page('/account/');
+$oldCsrf = $sx->csrf;
+[$st] = $sx->api('POST', '/account/api/auth.php', ['action' => 'logout']);
+$sx->csrf = $oldCsrf;
+[$st] = $sx->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'pay@test.local', 'password' => 'x']);
+check('after logout the old CSRF token no longer works', $st === 419, (string) $st);
+
+section('Security: admin permissions');
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 2, id FROM permissions WHERE slug = 'users.manage'");
+db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (2, ?, ?, ?, ?)', ['manager@test.local', admin_password_hash($ownerPw), 'Manager', 'all']);
+$mgr = new TestHttp($base);
+$mgr->page('/admin/login.php');
+$mgr->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'manager@test.local', 'password' => $ownerPw]);
+$mgr->page('/admin/');
+[$st] = $mgr->api('POST', '/admin/api/users.php', ['action' => 'create', 'name' => 'Sneaky', 'email' => 'sneaky@test.local', 'role_id' => 1, 'division_scope' => 'all', 'password' => 'Sneaky-Pass-123!']);
+check('a manager cannot create an owner (users API is owner-only)', $st === 403 && !db_val("SELECT 1 FROM admin_users WHERE email = 'sneaky@test.local'"), (string) $st);
+[$st] = $adm->api('POST', '/admin/api/users.php', ['action' => 'create', 'name' => 'Bad Role', 'email' => 'badrole@test.local', 'role_id' => 999, 'division_scope' => 'all', 'password' => 'Badrole-Pass-123!']);
+check('a role that does not exist is refused (no server error)', $st === 422, (string) $st);
+$staffPerm = static fn(string $slug) => db_val('SELECT id FROM permissions WHERE slug = ?', [$slug]);
+foreach (['customers.view', 'messages.manage', 'orders.manage'] as $slug) {
+    db_exec('DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = ?', [$staffPerm($slug)]);
+}
+$searchHtml = $staff->page('/admin/search.php?q=pay%40test');
+check('search does not show customers to a role without customers.view', !str_contains($searchHtml, 'pay@test.local'));
+$enq = db_insert("INSERT INTO enquiries (division_id, name, email, message, status) VALUES (1, 'Q', 'q@test.local', 'Hello', 'new')");
+[$st] = $staff->headers('/admin/messages.php?id=' . $enq);
+check('messages are not opened (or marked read) without messages.manage', $st === 403 && db_val('SELECT status FROM enquiries WHERE id = ?', [$enq]) === 'new', (string) $st);
+$doc = (int) db_val("SELECT id FROM documents WHERE division_id = 1 ORDER BY id LIMIT 1");
+[$st] = $staff->api('POST', '/admin/api/documents.php', ['action' => 'resend', 'id' => $doc]);
+check('resending a document to a customer needs orders.manage', $st === 403, (string) $st);
+[$st] = $staff->headers('/admin/reports.php?export=customers');
+check('exporting all customers needs customers.view', $st === 403, (string) $st);
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug IN ('customers.view','messages.manage','orders.manage')");
+db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (2, ?, ?, ?, ?)', ['ranchonly@test.local', admin_password_hash($ownerPw), 'Ranch Only', 'ranch']);
+$feedsNote = db_insert("INSERT INTO admin_notifications (division_id, type, title) VALUES (1, 'test', 'Feeds only note')");
+$ro = new TestHttp($base);
+$ro->page('/admin/login.php');
+$ro->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'ranchonly@test.local', 'password' => $ownerPw]);
+$ro->page('/admin/');
+$ro->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
+check('"mark all read" leaves other divisions\' notifications alone', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$feedsNote]) === 0);
+
+section('Security: input, uploads and links');
+$pub = new TestHttp($base);
+$pub->page('/pages/contact.php');
+[$st] = $pub->api('POST', '/pages/api/contact.php', ['name' => ['x'], 'email' => 'a@test.local', 'phone' => '0821234567', 'message' => 'Hello there, a question.']);
+check('a list where text is expected is a validation error, not a crash', $st === 422, (string) $st);
+[$st] = $pub->api('GET', '/feeds/api/products.php?page=99999999999999999999');
+check('a huge page number does not break the catalogue', $st === 200, (string) $st);
+[$st] = $pub->api('GET', '/ranch/api/lots.php?page=9223372036854775807');
+check('… nor the livestock board', $st === 200, (string) $st);
+// A tiny PNG whose header claims 30000 × 30000 pixels (would need >3 GB to decode)
+$bomb = (string) tempnam(sys_get_temp_dir(), 'gxbomb');
+$ihdr = 'IHDR' . pack('NN', 30000, 30000) . "\x08\x02\x00\x00\x00";
+file_put_contents($bomb, "\x89PNG\r\n\x1a\n" . pack('N', 13) . $ihdr . pack('N', crc32($ihdr)) . str_repeat("\0", 64));
+as_customer($c3);
+CartService::add('feeds', 6, 1);
+$bo = OrderService::place('feeds', ['billing_name' => 'Bomb', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+[$st, $res] = $cust->api('POST', '/account/api/pop-upload.php', ['order_no' => $bo['order_no']], ['pop' => $bomb]);
+check('an image bomb is refused before it is decoded', $st === 422 && str_contains((string) ($res['error'] ?? ''), 'too large'), $st . ' ' . json_encode($res));
+@unlink($bomb);
+$popPay = (int) db_val("SELECT id FROM payments WHERE pop_path LIKE 'storage/private/%' ORDER BY id DESC LIMIT 1");
+[$st, $hd] = $adm->headers('/admin/api/documents.php?pop=' . $popPay);
+check('uploaded files are served sandboxed (no script can run)', $st === 200 && str_contains($hd['content-security-policy'] ?? '', 'sandbox'), $st . ' ' . json_encode($hd));
+check('markdown never links to //other-site', !str_contains(markdown('[x](//evil.com)'), 'href') && str_contains(markdown('[x](/feeds/)'), 'href="/feeds/"'));
+[$st] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['announcement_link' => 'javascript:alert(1)']]);
+check('announcement link must be https:// or a page on this site', $st === 422, (string) $st);
+[$st] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['announcement_link' => '/feeds/specials.php']]);
+check('… a page on this site is fine', $st === 200, (string) $st);
+$_SERVER['REMOTE_ADDR'] = '2001:db8:abcd:12:1111:2222:3333:4444';
+check('IPv6 visitors are rate limited per /64', rate_limit_ip() === '2001:db8:abcd:12::/64');
+$_SERVER['REMOTE_ADDR'] = '203.0.113.5';
+check('IPv4 visitors per address', rate_limit_ip() === '203.0.113.5');
+unset($_SERVER['REMOTE_ADDR']);
+
+section('Security: setup lock, secret key, canonical host');
+setup_lock_write();
+// A second server whose database does not exist (an outage): the setup page must still not show diagnostics
+[$downServer, $downBase] = http_start('gx_unreachable_test');
+$down = new TestHttp($downBase);
+$setupHtml = $down->page('/setup/');
+@proc_terminate($downServer);
+check('a locked setup page shows no server/database diagnostics, even while the database is down',
+    str_contains($setupHtml, 'Setup is complete') && !str_contains($setupHtml, 'Server check') && !str_contains($setupHtml, 'Tried'), substr(strip_tags($setupHtml), 0, 200));
+[$st] = $pub->api('POST', '/setup/api/setup.php', ['setup_token' => 'x', 'name' => 'X', 'email' => 'x@test.local', 'password' => 'Xxxxxxxx-1234', 'password_confirm' => 'Xxxxxxxx-1234']);
+check('… and refuses to create another owner', $st === 409, (string) $st);
+$keyWas = $GLOBALS['GX_ENV']['app_key'];
+$legacy = (static function (string $plain): string {
+    $key = hash('sha256', '', true);
+    $iv = random_bytes(12);
+    $tag = '';
+    $c = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    return base64_encode($iv . $tag . $c);
+})('whsec_old');
+$GLOBALS['GX_ENV']['app_key'] = '';
+check('without APP_KEY tokens are never signed with a publicly known key', token_hash('t') !== hash_hmac('sha256', 't', 'grazex') && token_hash('t') !== hash_hmac('sha256', 't', ''));
+check('… and the admin is told what is missing', in_array('APP_KEY', gx_settings_problems(), true));
+check('… and secrets saved by the old version can still be read', secret_decrypt($legacy) === 'whsec_old');
+$GLOBALS['GX_ENV']['app_key'] = $keyWas;
+check('secrets round-trip with the real key', secret_decrypt(secret_encrypt('abc')) === 'abc');
+$GLOBALS['GX_ENV']['app_url'] = 'https://grazex.example';
+$_SERVER['HTTP_HOST'] = 'www.grazex.example';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['REQUEST_URI'] = '/feeds/shop.php?x=1';
+check('www → the APP_URL host (one site, one session)', canonical_host_redirect() === 'https://grazex.example/feeds/shop.php?x=1');
+$_SERVER['REQUEST_METHOD'] = 'POST';
+check('… never for POSTs (webhooks, forms)', canonical_host_redirect() === null);
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['HTTP_HOST'] = 'evil.example';
+check('… and never to/for unrelated hosts', canonical_host_redirect() === null);
+$_SERVER['HTTP_HOST'] = 'grazex.example';
+check('… and not when already on the right host', canonical_host_redirect() === null);
+unset($_SERVER['HTTP_HOST'], $_SERVER['REQUEST_METHOD']);
+$_SERVER['REQUEST_URI'] = '/tests';
+
 section('PDF rendering');
 if (PdfService::available()) {
     foreach (db_all('SELECT id, doc_type FROM documents GROUP BY doc_type') as $d) {
@@ -625,6 +841,9 @@ section('PHP compatibility');
 check('no PHP deprecation notices from GrazeX code', empty($GLOBALS['GX_DEPRECATIONS']), implode('; ', array_slice($GLOBALS['GX_DEPRECATIONS'] ?? [], 0, 3)));
 
 echo "\n" . ($fail ? "\033[31m{$fail} failed\033[0m, " : '') . "\033[32m{$pass} passed\033[0m\n";
+if (!$setupLockExisted) {
+    @unlink(GX_ROOT . '/storage/private/setup.lock');
+}
 foreach (db_col("SELECT pop_path FROM payments WHERE pop_path LIKE 'storage/private/%'") as $f) {
     @unlink(GX_ROOT . '/' . $f);
 }

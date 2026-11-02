@@ -6,7 +6,7 @@ define('GX_IS_API', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 api_post();
-rate_limit_or_fail('contact', client_ip(), 5, 900);
+rate_limit_or_fail('contact', rate_limit_ip(), 5, 900);
 if (trim((string) input('website', '')) !== '') {
     json_ok([], 'Thanks — we will be in touch.');
 }

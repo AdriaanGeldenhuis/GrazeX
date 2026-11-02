@@ -35,6 +35,14 @@ function current_customer(bool $refresh = false): ?array
     return $cache;
 }
 
+/** A fixed hash with the same algorithm and cost as real ones, verified for unknown emails (equal timing). */
+function gx_dummy_hash(): string
+{
+    return defined('PASSWORD_ARGON2ID')
+        ? '$argon2id$v=19$m=65536,t=4,p=1$ZVIzUy5GNzdZeUFjNUIxYg$0duCByE55EhAxSNpoZrgJi5w9SU5wLSbjTh/BAsBD6E'
+        : '$2y$12$1ojWDKw9oci1XNKmhkw.KuoRuNLD8sMTXBWOkbQtXAABwDj8A.JOe';
+}
+
 function customer_password_hash(string $password): string
 {
     return defined('PASSWORD_ARGON2ID')
@@ -88,7 +96,7 @@ function require_customer_api(): array
 function attempt_customer_login(string $email, string $password): ?array
 {
     $row = db_one('SELECT * FROM customers WHERE email = ?', [mb_strtolower(trim($email))]);
-    $hash = $row['password_hash'] ?? '$2y$12$JiwPOQdSNkjju0hlMtB8f.uGaZYGpNx.vwceGuUaCYUgQB1xEerim';
+    $hash = $row['password_hash'] ?? gx_dummy_hash();
     $ok = password_verify($password, $hash);
     if (!$row || !$ok || $row['status'] !== 'active') {
         return null;

@@ -13,7 +13,7 @@ require __DIR__ . '/../../includes/bootstrap.php';
 if (request_method() === 'POST') {
     define('GX_IS_API', true);
     api_post();
-    require_admin_api('documents.view');
+    require_admin_api('orders.manage'); // emails the customer, so more than view rights
     $doc = db_one('SELECT d.*, o.billing_email, o.billing_name, o.order_no FROM documents d JOIN orders o ON o.id = d.order_id WHERE d.id = ?', [(int) input('id')]);
     if (!$doc || !in_array((int) $doc['division_id'], admin_division_ids(), true)) {
         json_error('Document not found.', 404);
@@ -60,6 +60,6 @@ try {
 } catch (Throwable $e) {
     gx_log('error', 'Admin PDF failed', ['doc' => $doc['id'], 'error' => $e->getMessage()]);
     http_response_code(503);
-    exit('PDF could not be generated: ' . (GX_DEBUG ? e($e->getMessage()) : 'please check the server log.'));
+    exit('PDF could not be generated: ' . (GX_SHOW_ERRORS ? e($e->getMessage()) : 'please check the server log.'));
 }
 PdfService::stream($pdf['bytes'], $pdf['filename']);

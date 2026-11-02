@@ -22,7 +22,8 @@ require GX_ROOT . '/includes/layout/head.php';
       <form id="admin-login" data-step="2fa" novalidate>
         <input type="hidden" name="next" value="<?= e($next) ?>">
         <div class="field"><label for="code">6-digit code from your authenticator app</label>
-          <input class="input" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus style="font-size:24px;letter-spacing:.3em;text-align:center"></div>
+          <input class="input" id="code" name="code" autocomplete="one-time-code" maxlength="12" required autofocus style="font-size:24px;letter-spacing:.3em;text-align:center">
+          <p class="hint">Lost your phone? Type one of your recovery codes instead.</p></div>
         <button class="btn btn-primary btn-lg btn-block" type="submit">Verify</button>
         <button class="btn btn-ghost btn-block mt-1" type="button" data-cancel-2fa>Use a different account</button>
       </form>

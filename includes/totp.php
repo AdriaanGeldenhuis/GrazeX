@@ -44,19 +44,85 @@ function totp_code(string $secret, ?int $time = null): string
     return str_pad((string) $code, 6, '0', STR_PAD_LEFT);
 }
 
-/** Accept the current code and one step either side (clock drift). */
-function totp_verify(string $secret, string $code): bool
+/**
+ * Accept the current code and one step either side (clock drift).
+ * Returns the matched 30-second time step (store it to refuse the same code twice), or null.
+ */
+function totp_match(string $secret, string $code): ?int
 {
     $code = preg_replace('/\D/', '', $code) ?? '';
-    if (strlen($code) !== 6) {
-        return false;
+    if (strlen($code) !== 6 || $secret === '') {
+        return null;
     }
     foreach ([-30, 0, 30] as $drift) {
-        if (hash_equals(totp_code($secret, time() + $drift), $code)) {
-            return true;
+        $t = time() + $drift;
+        if (hash_equals(totp_code($secret, $t), $code)) {
+            return intdiv($t, 30);
         }
     }
-    return false;
+    return null;
+}
+
+function totp_verify(string $secret, string $code): bool
+{
+    return totp_match($secret, $code) !== null;
+}
+
+/** Secrets are stored encrypted with APP_KEY ("enc:…"); older plain secrets still work. */
+function totp_secret_store(string $secret): string
+{
+    return 'enc:' . secret_encrypt($secret);
+}
+
+function totp_secret_load(?string $stored): string
+{
+    $stored = (string) $stored;
+    if (str_starts_with($stored, 'enc:')) {
+        return (string) secret_decrypt(substr($stored, 4));
+    }
+    return $stored;
+}
+
+/** One-time recovery codes: returns [plain codes to show once, JSON of their hashes to store]. */
+function totp_recovery_generate(int $count = 8): array
+{
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $codes = [];
+    for ($i = 0; $i < $count; $i++) {
+        $c = '';
+        for ($j = 0; $j < 8; $j++) {
+            $c .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+        }
+        $codes[] = substr($c, 0, 4) . '-' . substr($c, 4);
+    }
+    return [$codes, json_encode(array_map(static fn($c) => token_hash(totp_recovery_normalise($c)), $codes))];
+}
+
+function totp_recovery_normalise(string $code): string
+{
+    return strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $code) ?? '');
+}
+
+/** Use (and burn) a recovery code for this admin. Safe against two requests using the same code. */
+function totp_recovery_use(int $adminId, string $code): bool
+{
+    $norm = totp_recovery_normalise($code);
+    if (strlen($norm) !== 8) {
+        return false;
+    }
+    $stored = db_val('SELECT totp_recovery FROM admin_users WHERE id = ?', [$adminId]);
+    $hashes = json_decode((string) $stored, true);
+    if (!is_array($hashes)) {
+        return false;
+    }
+    $hash = token_hash($norm);
+    $i = array_search($hash, $hashes, true);
+    if ($i === false) {
+        return false;
+    }
+    unset($hashes[$i]);
+    return db_exec('UPDATE admin_users SET totp_recovery = ? WHERE id = ? AND totp_recovery = ?',
+        [json_encode(array_values($hashes)), $adminId, $stored]) === 1;
 }
 
 function totp_uri(string $secret, string $email): string

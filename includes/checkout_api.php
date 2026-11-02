@@ -15,7 +15,7 @@ $action = (string) input('action', 'quote');
 $all = input_all();
 
 if ($action === 'quote') {
-    rate_limit_or_fail('checkout_quote', client_ip(), 120, 60);
+    rate_limit_or_fail('checkout_quote', rate_limit_ip(), 120, 60);
     $town = (string) ($all['town'] ?? '');
     if (($all['address_id'] ?? 'new') !== 'new' && ctype_digit((string) ($all['address_id'] ?? ''))) {
         $town = (string) db_val('SELECT town FROM customer_addresses WHERE id = ? AND customer_id = ?', [(int) $all['address_id'], $customer['id']]);

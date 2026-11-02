@@ -12,7 +12,7 @@ $filters = [
     'category' => preg_replace('/[^a-z0-9-]/', '', query_str('category')),
     'mode'     => in_array(query_str('mode'), ['per_head', 'per_kg'], true) ? query_str('mode') : '',
     'sort'     => array_key_exists(query_str('sort'), LivestockService::SORTS) ? query_str('sort') : 'featured',
-    'page'     => max(1, query_int('page', 1)),
+    'page'     => query_page(),
     'per_page' => 12,
 ];
 $result = LivestockService::lots($filters);

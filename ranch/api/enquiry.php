@@ -8,7 +8,7 @@ define('GX_IS_API', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 api_post();
-rate_limit_or_fail('enquiry', client_ip(), 5, 900);
+rate_limit_or_fail('enquiry', rate_limit_ip(), 5, 900);
 
 // Honeypot: bots fill hidden fields
 if (trim((string) input('website', '')) !== '') {

@@ -13,5 +13,5 @@ $q = mb_substr(query_str('q'), 0, 80);
 if (mb_strlen($q) < 2) {
     json_ok(['items' => []]);
 }
-rate_limit_or_fail('search', client_ip(), 90, 60);
+rate_limit_or_fail('search', rate_limit_ip(), 90, 60);
 json_ok(['items' => CatalogService::suggest($q, 6), 'all_url' => '/feeds/shop.php?q=' . rawurlencode($q)]);

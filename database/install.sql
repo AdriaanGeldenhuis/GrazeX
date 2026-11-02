@@ -157,7 +157,7 @@ CREATE TABLE schema_migrations (
   PRIMARY KEY (version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes');
+INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security');
 
 -- ---------------------------------------------------------------------
 -- 2. ACCOUNTS (customers + admin users are separate on purpose)
@@ -264,8 +264,10 @@ CREATE TABLE admin_users (
   name             VARCHAR(150) NOT NULL,
   phone            VARCHAR(30)  NULL,
   division_scope   ENUM('all','feeds','ranch') NOT NULL DEFAULT 'all',
-  totp_secret      VARCHAR(64)  NULL,
+  totp_secret      VARCHAR(255) NULL,
   totp_enabled     TINYINT(1)   NOT NULL DEFAULT 0,
+  totp_last_step   INT UNSIGNED NULL,
+  totp_recovery    TEXT         NULL,
   status           ENUM('active','disabled') NOT NULL DEFAULT 'active',
   session_version  INT UNSIGNED NOT NULL DEFAULT 1,
   last_login_at    DATETIME     NULL,

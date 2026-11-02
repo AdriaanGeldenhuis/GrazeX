@@ -73,7 +73,7 @@ function markdown(?string $md): string
         $s = preg_replace('/(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])/s', '<em>$1</em>', $s) ?? $s;
         $s = preg_replace_callback('/\[([^\]]+)\]\(([^)\s]+)\)/', static function ($m) {
             $url = html_entity_decode($m[2], ENT_QUOTES);
-            if (!preg_match('#^(https?://|/|mailto:|tel:)#i', $url)) {
+            if (!preg_match('#^(https?://|/(?![/\\\\])|mailto:|tel:)#i', $url)) {
                 return $m[1];
             }
             $ext = preg_match('#^https?://#i', $url) ? ' target="_blank" rel="noopener"' : '';

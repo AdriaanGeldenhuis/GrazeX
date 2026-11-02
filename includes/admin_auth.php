@@ -21,9 +21,10 @@ function current_admin(bool $refresh = false): ?array
     if (!$id || !empty($_SESSION['admin_2fa_pending'])) {
         return null;
     }
-    // Idle timeout
-    if (time() - (int) ($_SESSION['admin_seen'] ?? 0) > GX_ADMIN_IDLE_SECONDS) {
-        unset($_SESSION['admin_id'], $_SESSION['admin_sv'], $_SESSION['admin_seen']);
+    // Idle timeout, and an absolute limit however active the session is
+    if (time() - (int) ($_SESSION['admin_seen'] ?? 0) > GX_ADMIN_IDLE_SECONDS
+        || time() - (int) ($_SESSION['admin_since'] ?? 0) > GX_ADMIN_MAX_SECONDS) {
+        unset($_SESSION['admin_id'], $_SESSION['admin_sv'], $_SESSION['admin_seen'], $_SESSION['admin_since']);
         return null;
     }
     $row = db_one('SELECT a.id, a.email, a.name, a.phone, a.role_id, a.division_scope, a.totp_enabled, a.status,
@@ -64,7 +65,8 @@ function login_admin(array $admin): void
     $_SESSION['admin_id'] = (int) $admin['id'];
     $_SESSION['admin_sv'] = (int) $admin['session_version'];
     $_SESSION['admin_seen'] = time();
-    unset($_SESSION['admin_2fa_pending']);
+    $_SESSION['admin_since'] = time();
+    unset($_SESSION['admin_2fa_pending'], $_SESSION['admin_2fa_at']);
     db_exec('UPDATE admin_users SET last_login_at = NOW(), last_login_ip = ? WHERE id = ?', [client_ip(), (int) $admin['id']]);
     current_admin(true);
     audit('admin.login', 'admin_user', (int) $admin['id']);
@@ -72,7 +74,8 @@ function login_admin(array $admin): void
 
 function logout_admin(): void
 {
-    unset($_SESSION['admin_id'], $_SESSION['admin_sv'], $_SESSION['admin_seen'], $_SESSION['admin_2fa_pending']);
+    unset($_SESSION['admin_id'], $_SESSION['admin_sv'], $_SESSION['admin_seen'], $_SESSION['admin_since'], $_SESSION['admin_2fa_pending'],
+        $_SESSION['admin_2fa_at'], $_SESSION['totp_setup'], $_SESSION['totp_recovery_show']);
     session_rotate();
 }
 

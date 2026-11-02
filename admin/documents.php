@@ -13,7 +13,7 @@ $params = $ids;
 if ($type) { $where[] = 'd.doc_type = ?'; $params[] = $type; }
 if ($q !== '') { $where[] = '(d.doc_no LIKE ? OR o.order_no LIKE ? OR o.billing_name LIKE ?)'; $like = '%' . $q . '%'; array_push($params, $like, $like, $like); }
 $perPage = 40;
-$pageNo = max(1, query_int('page', 1));
+$pageNo = query_page();
 $sql = 'FROM documents d JOIN orders o ON o.id = d.order_id WHERE ' . implode(' AND ', $where);
 $total = (int) db_val("SELECT COUNT(*) {$sql}", $params);
 $docs = db_all("SELECT d.*, o.order_no, o.billing_name {$sql} ORDER BY d.id DESC LIMIT {$perPage} OFFSET " . (($pageNo - 1) * $perPage), $params);

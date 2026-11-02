@@ -61,7 +61,7 @@ final class LivestockService
             default      => "l.is_featured DESC, FIELD(l.status, 'available', 'reserved', 'coming_soon', 'sold_out'), l.available_from IS NULL, l.available_from, l.id DESC",
         };
         $perPage = max(1, min(48, (int) ($f['per_page'] ?? 12)));
-        $page = max(1, (int) ($f['page'] ?? 1));
+        $page = max(1, min(10000, (int) ($f['page'] ?? 1)));
         $sqlWhere = implode(' AND ', $where);
 
         $total = (int) db_val("SELECT COUNT(*) FROM lots l JOIN breeds b ON b.id = l.breed_id JOIN livestock_categories c ON c.id = l.category_id WHERE {$sqlWhere}", $params);

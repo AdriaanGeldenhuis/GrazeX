@@ -25,7 +25,7 @@ if (!in_array($order['status'], ['pending_payment', 'reserved', 'awaiting_collec
     $error = 'This order is ' . strtolower(OrderService::label($order['status'])[0]) . ' and can no longer be paid online.';
 } else {
     try {
-        if (!rate_limit_hit('yoco_checkout', client_ip(), 20, 600)) {
+        if (!rate_limit_hit('yoco_checkout', rate_limit_ip(), 20, 600)) {
             throw new DomainException(t('error.rate_limited'));
         }
         $payment = YocoService::checkoutForOrder($order);

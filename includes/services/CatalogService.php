@@ -64,7 +64,7 @@ final class CatalogService
         };
 
         $perPage = max(1, min(48, (int) ($f['per_page'] ?? 12)));
-        $page = max(1, (int) ($f['page'] ?? 1));
+        $page = max(1, min(10000, (int) ($f['page'] ?? 1)));
         $eff = self::EFFECTIVE_PRICE;
 
         $base = "FROM products p

@@ -18,7 +18,7 @@ if (request_method() === 'GET' && isset($_GET['unsubscribe'])) {
 }
 
 api_post();
-rate_limit_or_fail('livestock_alert', client_ip(), 10, 3600);
+rate_limit_or_fail('livestock_alert', rate_limit_ip(), 10, 3600);
 
 $data = validate_or_fail(input_all(), [
     'email'    => 'required|email|max:191',

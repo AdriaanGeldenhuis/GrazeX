@@ -6,7 +6,18 @@ require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
 $admin = admin_start('My profile', 'profile', ['js' => ['/admin/js/admin-profile.js']]);
+$recovery = $_SESSION['totp_recovery_show'] ?? null; // shown once, right after switching 2FA on
+unset($_SESSION['totp_recovery_show']);
 ?>
+<?php if (is_array($recovery) && $recovery): ?>
+<section class="card card-pad mb-3" style="border-color:var(--accent-line)">
+  <h2 class="h4 mb-1">Your recovery codes</h2>
+  <p class="muted small">If you lose your phone, each code below lets you log in once instead of the 6-digit code. Write them down or print this page now — they are not shown again.</p>
+  <ul class="recovery-codes" style="columns:2;font-family:monospace;font-size:18px;letter-spacing:.08em;line-height:1.9">
+    <?php foreach ($recovery as $rc): ?><li><?= e($rc) ?></li><?php endforeach; ?>
+  </ul>
+</section>
+<?php endif; ?>
 <div class="adm-grid-2">
   <section class="card card-pad">
     <h2 class="h4 mb-2">Change password</h2>
@@ -27,7 +38,10 @@ $admin = admin_start('My profile', 'profile', ['js' => ['/admin/js/admin-profile
         <button class="btn btn-danger btn-sm" type="submit">Switch off</button>
       </form>
     <?php else: ?>
-      <button class="btn btn-primary" type="button" data-2fa-start>Set up two-step verification</button>
+      <form data-2fa-start novalidate>
+        <?= af_text('password', 'Your password', '', ['type' => 'password', 'required' => true, 'id' => 'tfa-password', 'autocomplete' => 'current-password']) ?>
+        <button class="btn btn-primary" type="submit">Set up two-step verification</button>
+      </form>
       <div data-2fa-box hidden class="mt-2">
         <ol class="how-list small">
           <li>Open your authenticator app and add an account.</li>

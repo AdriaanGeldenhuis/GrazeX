@@ -92,6 +92,10 @@ function admin_start(string $title, string $active, array $opts = []): array
     </header>
     <div class="adm-bell-panel card" data-adm-bell-panel hidden></div>
     <main id="main" class="adm-content">
+    <?php if ($gxProblems = gx_settings_problems()): ?>
+      <div class="alert alert-danger mb-3" role="alert"><strong>Settings file incomplete:</strong> add <?= e(implode(', ', $gxProblems)) ?> to <code>.env.php</code> / <code>.env</code> on the server.
+        Password-reset links, saved secrets and links in emails depend on it.</div>
+    <?php endif; ?>
 <?php
     return $admin;
 }

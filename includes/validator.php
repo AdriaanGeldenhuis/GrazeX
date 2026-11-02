@@ -37,6 +37,11 @@ function validate(array $data, array $rules): array
             }
             continue;
         }
+        if (is_array($value) || is_object($value)) {
+            // A list/object where text or a number is expected (e.g. name[]=x) — never let it reach string code
+            $errors[$field] = "{$label} is invalid.";
+            continue;
+        }
 
         foreach ($ruleList as $rule) {
             [$name, $param] = array_pad(explode(':', $rule, 2), 2, null);

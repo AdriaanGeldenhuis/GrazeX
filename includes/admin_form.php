@@ -15,7 +15,7 @@ function af_wrap(string $name, string $label, string $control, array $o = []): s
 {
     $hint = isset($o['hint']) ? '<span class="hint">' . e($o['hint']) . '</span>' : '';
     $opt = !empty($o['optional']) ? ' <span class="opt">(optional)</span>' : '';
-    return '<div class="field' . (!empty($o['span']) ? ' span-2' : '') . '"><label for="' . e(af_id($name)) . '">' . e($label) . $opt . '</label>' . $control . $hint . '</div>';
+    return '<div class="field' . (!empty($o['span']) ? ' span-2' : '') . '"><label for="' . e($o['id'] ?? af_id($name)) . '">' . e($label) . $opt . '</label>' . $control . $hint . '</div>';
 }
 
 function af_attrs(array $o): string

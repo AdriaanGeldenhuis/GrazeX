@@ -44,6 +44,10 @@ if ($export !== '') {
             $csv('documents', ['Date', 'Type', 'Number', 'Order', 'Customer', 'Customer VAT no', 'Excl VAT', 'VAT', 'Total'],
                 array_map(static fn($x) => array_merge(array_slice($x, 0, 6), array_map($r, array_map('intval', array_slice($x, 6)))), $rows));
         case 'customers':
+            if (!admin_can('customers.view')) {
+                http_response_code(403);
+                exit('You do not have permission to export customers.');
+            }
             $rows = db_all('SELECT first_name, last_name, email, phone, farm_name, company_name, vat_no, marketing_opt_in, created_at FROM customers WHERE status = \'active\' ORDER BY id');
             $csv('customers', ['First name', 'Last name', 'Email', 'Phone', 'Farm', 'Company', 'VAT no', 'Marketing opt-in', 'Joined'], $rows);
         case 'stock':

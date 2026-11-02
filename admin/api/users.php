@@ -7,10 +7,17 @@ require __DIR__ . '/../../includes/bootstrap.php';
 
 api_post();
 $me = require_admin_api('users.manage');
+// Managing admin logins and roles is the owner's job only (anyone else could make themselves an owner)
+if ($me['role_slug'] !== 'owner') {
+    json_error('Only the owner can manage admin users and permissions.', 403);
+}
 switch ((string) input('action')) {
     case 'create':
         $d = validate_or_fail(input_all(), ['name' => 'required|max:150', 'email' => 'required|email|max:191', 'role_id' => 'required|int|min:1',
                                             'division_scope' => 'required|in:all,feeds,ranch', 'password' => 'required|password']);
+        if (!db_val('SELECT 1 FROM roles WHERE id = ?', [$d['role_id']])) {
+            json_error(t('error.validation'), 422, ['role_id' => 'Choose a valid role.']);
+        }
         if (db_val('SELECT 1 FROM admin_users WHERE email = ?', [$d['email']])) {
             json_error(t('error.validation'), 422, ['email' => 'That email already has an admin login.']);
         }
@@ -30,7 +37,7 @@ switch ((string) input('action')) {
         audit('admin_user.toggled', 'admin_user', (int) $u['id']);
         json_ok([], 'Updated.');
     case 'reset_2fa':
-        db_exec('UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?', [(int) input('id')]);
+        db_exec('UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, totp_recovery = NULL WHERE id = ?', [(int) input('id')]);
         audit('admin_user.2fa_reset', 'admin_user', (int) input('id'));
         json_ok([], '2FA reset — they can set it up again from their profile.');
     case 'perms':

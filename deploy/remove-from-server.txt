@@ -1,0 +1,3 @@
+# Files that were deployed once and must be deleted from the server (the deploy never deletes anything else).
+# One path per line, relative to the website root. No "..", no leading "/". Lines starting with # are ignored.
+deploy-test.php

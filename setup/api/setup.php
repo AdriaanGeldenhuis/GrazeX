@@ -9,7 +9,10 @@ define('GX_SKIP_MAINTENANCE', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 api_post();
-rate_limit_or_fail('setup', client_ip(), 5, 900);
+if (setup_locked()) {
+    json_error('Setup has already been completed.', 409);
+}
+rate_limit_or_fail('setup', rate_limit_ip(), 5, 900);
 
 $data = validate_or_fail(input_all(), [
     'setup_token'      => 'required|max:200',
@@ -38,6 +41,7 @@ $admin = db_tx(static function () use ($data): array {
     return db_one('SELECT * FROM admin_users WHERE id = ?', [$id]);
 });
 
+setup_lock_write();
 login_admin($admin);
 audit('setup.owner_created', 'admin_user', (int) $admin['id']);
 
