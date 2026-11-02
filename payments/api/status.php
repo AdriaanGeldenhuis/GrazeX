@@ -28,9 +28,12 @@ if ($pending && query_str('check') === '1' && strtotime($pending['created_at']) 
 }
 
 $lastYoco = db_one("SELECT status FROM payments WHERE order_id = ? AND method = 'yoco' ORDER BY id DESC LIMIT 1", [$order['id']]);
+$paid = ($lastYoco['status'] ?? '') === 'succeeded';
 json_ok([
     'status' => $order['status'],
     'payment_status' => $order['payment_status'],
-    'paid' => ($lastYoco['status'] ?? '') === 'succeeded',
+    'paid' => $paid,
+    // Charged, but the order had already closed (stock released / cancelled): the customer is refunded
+    'late' => $paid && in_array($order['status'], ['expired', 'cancelled', 'refunded'], true),
     'failed' => ($lastYoco['status'] ?? '') === 'failed',
 ]);

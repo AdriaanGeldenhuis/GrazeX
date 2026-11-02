@@ -35,6 +35,10 @@ switch ((string) input('action')) {
         json_ok([], '2FA reset — they can set it up again from their profile.');
     case 'perms':
         $map = (array) input('perm', []);
+        if ($map && array_is_list($map)) {
+            // perm must be keyed by role id ({"2": [...], "3": [...]}) — a plain list would wipe the wrong roles
+            json_error('Permissions arrived in an unexpected format — nothing was changed. Reload the page and try again.', 400);
+        }
         db_tx(static function () use ($map): void {
             foreach (db_all("SELECT id FROM roles WHERE slug <> 'owner'") as $r) {
                 db_exec('DELETE FROM role_permissions WHERE role_id = ?', [$r['id']]);

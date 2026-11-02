@@ -23,6 +23,11 @@ switch ((string) input('action')) {
         if (!in_array($o['status'], ['pending_payment', 'reserved', 'awaiting_collection'], true) || $o['payment_status'] !== 'unpaid' || $awaiting) {
             json_error('This order can no longer be cancelled online — please contact us.', 409);
         }
+        // A card checkout that is still open could complete after cancelling (the card would be charged)
+        if (OrderService::cardCheckoutOpen((int) $o['id'])) {
+            json_error('A card payment for this order is still in progress. If it is not completed, the order is released automatically'
+                . ($o['hold_expires_at'] ? ' at ' . fmt_datetime($o['hold_expires_at']) : '') . '.', 409);
+        }
         try {
             OrderService::cancel((int) $o['id'], 'Cancelled by customer');
         } catch (DomainException $e) {

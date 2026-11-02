@@ -26,6 +26,10 @@ mb_internal_encoding('UTF-8');
 // ---------------------------------------------------------------------
 require GX_ROOT . '/includes/env.php';
 [$GLOBALS['GX_ENV'], $GLOBALS['GX_ENV_REPORT']] = gx_env_load();
+// Local test harness only: tests/dev-router.php (never deployed) points the built-in server at the throwaway test database
+if (defined('GX_TEST_DB_NAME') && PHP_SAPI === 'cli-server') {
+    $GLOBALS['GX_ENV']['db']['name'] = GX_TEST_DB_NAME;
+}
 if (!$GLOBALS['GX_ENV_REPORT'] && PHP_SAPI !== 'cli') {
     http_response_code(503);
     header('Content-Type: text/html; charset=utf-8');

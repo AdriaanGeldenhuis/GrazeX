@@ -26,6 +26,8 @@ $due = OrderService::amountDue($o);
 $awaitingPop = (bool) array_filter($payments, static fn($p) => $p['status'] === 'awaiting_verification');
 $closed = in_array($o['status'], ['cancelled', 'expired', 'refunded'], true);
 $canCancel = in_array($o['status'], ['pending_payment', 'reserved', 'awaiting_collection'], true) && $o['payment_status'] === 'unpaid' && !$awaitingPop;
+$cardOpen = $canCancel && OrderService::cardCheckoutOpen((int) $o['id']);
+$canCancel = $canCancel && !$cardOpen;
 [$label, $cls] = OrderService::label($o['status']);
 $placed = query_str('placed') === '1';
 $slot = $o['collection_slot_id'] ? db_one('SELECT start_time, end_time FROM collection_slots WHERE id = ?', [$o['collection_slot_id']]) : null;
@@ -187,6 +189,9 @@ require GX_ROOT . '/includes/layout/header.php';
         <?php else: ?><p class="muted small mb-0">Your documents appear here.</p><?php endif; ?>
       </section>
 
+      <?php if ($cardOpen): ?>
+        <p class="small muted center">A card payment for this order is in progress. If it is not completed, the order is released automatically<?= $o['hold_expires_at'] ? ' at ' . e(fmt_datetime($o['hold_expires_at'])) : '' ?>.</p>
+      <?php endif; ?>
       <?php if ($canCancel): ?>
         <button class="btn btn-danger btn-block" type="button" data-act="/account/api/orders.php" data-payload='<?= e(json_encode(['action' => 'cancel', 'order_no' => $o['order_no']])) ?>'
                 data-confirm="Cancel order <?= e($o['order_no']) ?>? The reserved stock will be released." data-ok="Yes, cancel" data-danger>Cancel this order</button>

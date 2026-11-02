@@ -1,0 +1,67 @@
+name: Tests
+
+# Runs on every pull request, and before every deploy (deploy.yml calls this workflow).
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP + Composer
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, gd, mbstring, fileinfo, curl, intl, openssl
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node (JS tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install PHP libraries (PDF + email)
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Settings for the test run (throwaway values)
+        run: |
+          cat > .env <<EOF
+          APP_URL=http://127.0.0.1:8080
+          APP_DEBUG=true
+          APP_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
+          SETUP_TOKEN=ci-setup-token-123
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_NAME=grazex
+          DB_USER=root
+          DB_PASS=root
+          MAIL_HOST=127.0.0.1
+          MAIL_PORT=2525
+          YOCO_MODE=test
+          YOCO_TEST_SECRET_KEY=sk_test_ci
+          YOCO_TEST_WEBHOOK_SECRET=whsec_$(php -r 'echo base64_encode(random_bytes(24));')
+          EOF
+
+      - name: PHP syntax check
+        run: find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
+
+      - name: JS tests
+        run: node tests/js/formToObject.test.mjs
+
+      - name: Engine + API tests (MariaDB)
+        run: php tests/run.php

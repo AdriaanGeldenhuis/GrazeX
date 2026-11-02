@@ -30,15 +30,19 @@ if (!is_array($event) || empty($event['id']) || empty($event['type'])) {
 $payload = is_array($event['payload'] ?? null) ? $event['payload'] : [];
 $checkoutId = (string) ($payload['metadata']['checkoutId'] ?? '');
 
-// Idempotency: each event is processed once
+// Idempotency: each event is processed once. A repeat of an event whose first run failed
+// (processed_at still NULL) is processed again — settle()/recordPayment() are idempotent per payment row.
 try {
     db_exec('INSERT INTO payment_webhook_events (provider, event_id, event_type, checkout_id, payload) VALUES (?, ?, ?, ?, ?)',
         ['yoco', (string) $event['id'], (string) $event['type'], $checkoutId ?: null, $raw]);
 } catch (PDOException $e) {
-    if ((int) ($e->errorInfo[1] ?? 0) === 1062) {
+    if ((int) ($e->errorInfo[1] ?? 0) !== 1062) {
+        throw $e;
+    }
+    $prev = db_one('SELECT processed_at FROM payment_webhook_events WHERE provider = ? AND event_id = ?', ['yoco', (string) $event['id']]);
+    if ($prev && $prev['processed_at'] !== null) {
         json_ok(['duplicate' => true]);
     }
-    throw $e;
 }
 
 $result = 'ignored';
@@ -60,6 +64,8 @@ if ($payment) {
             break;
         case 'refund.succeeded':
             db_exec("UPDATE payments SET status = 'refunded', notes = CONCAT(COALESCE(notes,''), ' Refund confirmed by Yoco.') WHERE id = ?", [$payment['id']]);
+            db_exec("UPDATE orders SET payment_status = 'refunded' WHERE id = ? AND amount_paid_cents > 0
+                     AND NOT EXISTS (SELECT 1 FROM payments WHERE order_id = ? AND status = 'succeeded')", [$payment['order_id'], $payment['order_id']]);
             NotificationService::admin('refund', 'Yoco refund confirmed for ' . $payment['reference'], money((int) ($payload['amount'] ?? 0)) . ' refunded.',
                 '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id'], false);
             $result = 'refunded';

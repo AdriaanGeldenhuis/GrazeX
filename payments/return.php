@@ -44,6 +44,12 @@ require GX_ROOT . '/includes/layout/head.php';
         <p class="muted">Order <strong><?= e($order['order_no']) ?></strong>. Your documents are on their way to <?= e($order['billing_email']) ?>.</p>
         <a class="btn btn-primary btn-lg btn-block" href="<?= e($orderUrl) ?>">View your order</a>
       </div>
+      <div data-state="late" hidden>
+        <h1 class="h3">We received your payment</h1>
+        <p class="muted">Order <strong><?= e($order['order_no']) ?></strong> had already closed before your payment came through, so the stock was released.
+          We have been alerted and will refund you in full — no need to do anything. Contact us if you have any questions.</p>
+        <a class="btn btn-primary btn-block" href="<?= e($orderUrl) ?>">View your order</a>
+      </div>
       <div data-state="slow" hidden>
         <h1 class="h3">Still confirming…</h1>
         <p class="muted">Your bank is taking a little longer. We'll email you as soon as the payment is confirmed — you can safely close this page.</p>

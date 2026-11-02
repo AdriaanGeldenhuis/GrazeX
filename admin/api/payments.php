@@ -1,7 +1,8 @@
 <?php
 /**
  * Admin payments API.
- *   {action: approve, id, amount}  — verify an EFT proof of payment
+ *   {action: approve, id, amount[, override]}  — verify an EFT proof of payment
+ *       (409 with errors.override when the amount is more than is due — resend with override=1 to accept it)
  *   {action: reject, id, reason}   — reject a POP (customer is emailed)
  *   {action: record, order_id, amount, method (cash|card|eft), reference}
  */
@@ -24,6 +25,14 @@ try {
             $amount = to_cents(input('amount', number_format((int) $p['amount_cents'] / 100, 2, '.', '')));
             if (!$amount || $amount <= 0) {
                 json_error('Enter the amount received.', 422);
+            }
+            $order = db_one('SELECT * FROM orders WHERE id = ?', [$p['order_id']]);
+            $dueNow = $order ? max(OrderService::amountDue($order), (int) $order['total_cents'] - (int) $order['amount_paid_cents']) : 0;
+            if (empty(input('override')) && $amount > $dueNow) {
+                $msg = $dueNow <= 0
+                    ? 'Nothing is outstanding on ' . ($order['order_no'] ?? 'this order') . ' — approving would record ' . money($amount) . ' extra and flag a refund.'
+                    : 'Only ' . money($dueNow) . ' is outstanding, but ' . money($amount) . ' was entered — the difference will be flagged for a refund.';
+                json_error($msg, 409, ['override' => $msg . ' Approve anyway?']);
             }
             OrderService::recordPayment((int) $p['order_id'], $amount, 'eft', (int) $p['id'], ['admin_id' => $aid, 'notes' => 'POP verified']);
             audit('payment.approved', 'payment', (int) $p['id'], ['amount' => $amount]);

@@ -57,16 +57,21 @@ final class YocoService
             [$order['id'], $order['division_id'], $purpose, $due, $idem, self::mode(), $order['order_no']]);
 
         $base = app_url('/payments/return.php?t=' . $order['pay_token']);
-        $res = self::request('POST', '/api/checkouts', [
-            'amount' => $due,
-            'currency' => 'ZAR',
-            'successUrl' => $base . '&r=success',
-            'cancelUrl' => $base . '&r=cancel',
-            'failureUrl' => $base . '&r=failed',
-            'externalId' => (string) $paymentId,
-            'clientReferenceId' => $order['order_no'],
-            'metadata' => ['order_no' => $order['order_no'], 'payment_id' => (string) $paymentId, 'purpose' => $purpose],
-        ], $idem);
+        try {
+            $res = self::request('POST', '/api/checkouts', [
+                'amount' => $due,
+                'currency' => 'ZAR',
+                'successUrl' => $base . '&r=success',
+                'cancelUrl' => $base . '&r=cancel',
+                'failureUrl' => $base . '&r=failed',
+                'externalId' => (string) $paymentId,
+                'clientReferenceId' => $order['order_no'],
+                'metadata' => ['order_no' => $order['order_no'], 'payment_id' => (string) $paymentId, 'purpose' => $purpose],
+            ], $idem);
+        } catch (Throwable $e) {
+            gx_log('error', 'Yoco checkout create failed', ['order' => $order['order_no'], 'error' => $e->getMessage()]);
+            $res = [];
+        }
         if (empty($res['id']) || empty($res['redirectUrl'])) {
             db_exec("UPDATE payments SET status = 'failed', notes = ? WHERE id = ?", ['Checkout create failed', $paymentId]);
             throw new RuntimeException('Card payments are unavailable right now. Please try again or choose EFT.');
@@ -105,11 +110,24 @@ final class YocoService
             OrderService::recordPayment((int) $payment['order_id'], $amount, 'yoco', (int) $payment['id'],
                 ['provider_payment_id' => $providerPaymentId, 'notes' => 'Confirmed via ' . $source]);
         } catch (LatePaymentException $e) {
-            db_exec("UPDATE payments SET status = 'succeeded', provider_payment_id = COALESCE(?, provider_payment_id), notes = 'Paid after expiry — refund required' WHERE id = ?",
-                [$providerPaymentId, $payment['id']]);
-            db_exec('UPDATE orders SET amount_paid_cents = amount_paid_cents + ?, admin_note = CONCAT(COALESCE(admin_note, \'\'), ?) WHERE id = ?',
-                [$amount, "\n[" . now() . '] Card payment received after expiry; stock unavailable — refund via Yoco.', $payment['order_id']]);
-            NotificationService::admin('refund_due', 'Refund needed: ' . $payment['reference'], $e->getMessage(), '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id']);
+            // The card was charged but the order is closed (expired with stock gone, cancelled or refunded):
+            // record the money once, never invoice it, and tell the admin to refund.
+            $recorded = db_tx(static function () use ($payment, $amount, $providerPaymentId, $e): bool {
+                $n = db_exec("UPDATE payments SET status = 'succeeded', provider_payment_id = COALESCE(?, provider_payment_id), verified_at = NOW(),
+                              notes = 'Paid after the order closed — refund required' WHERE id = ? AND status <> 'succeeded'",
+                    [$providerPaymentId, $payment['id']]);
+                if ($n !== 1) {
+                    return false;
+                }
+                // payment_status is assigned first so it reads the old amount_paid_cents (MySQL assigns left to right)
+                db_exec("UPDATE orders SET payment_status = IF(amount_paid_cents + ? >= total_cents, 'paid', 'partial'),
+                         amount_paid_cents = amount_paid_cents + ?, admin_note = CONCAT(COALESCE(admin_note, ''), ?) WHERE id = ?",
+                    [$amount, $amount, "\n[" . now() . '] ' . $e->getMessage() . ' Refund via the Yoco portal.', $payment['order_id']]);
+                return true;
+            });
+            if ($recorded) {
+                NotificationService::admin('refund_due', 'Refund needed: ' . $payment['reference'], $e->getMessage(), '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id']);
+            }
         }
     }
 

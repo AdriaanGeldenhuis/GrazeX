@@ -65,9 +65,26 @@ try {
             });
             json_ok([], 'Stock take started.');
         case 'stocktake_save':
-            foreach ((array) ($in['counts'] ?? []) as $itemId => $qty) {
-                db_exec('UPDATE stock_take_items SET counted_qty = ? WHERE id = ? AND stock_take_id = ?', [$qty === '' ? null : max(0, (int) $qty), (int) $itemId, (int) $in['id']]);
+            $takeId = (int) ($in['id'] ?? 0);
+            $counts = (array) ($in['counts'] ?? []);
+            if (!$takeId || !db_val("SELECT 1 FROM stock_takes WHERE id = ? AND status = 'open'", [$takeId])) {
+                json_error('This stock take is no longer open — reload the page.', 409);
             }
+            $ids = array_map('intval', array_keys($counts));
+            $known = $ids ? (int) db_val('SELECT COUNT(*) FROM stock_take_items WHERE stock_take_id = ? AND id IN (' . db_placeholders($ids) . ')', array_merge([$takeId], $ids)) : 0;
+            if ($known !== count($ids)) {
+                json_error('Those count lines do not belong to this stock take — nothing was saved. Reload the page and try again.', 409);
+            }
+            db_tx(static function () use ($counts, $takeId): void {
+                // The ledger position at the moment of counting: movements after it are added on completion
+                $mark = (int) db_val('SELECT COALESCE(MAX(id), 0) FROM stock_movements');
+                foreach ($counts as $itemId => $qty) {
+                    $qty = $qty === '' || $qty === null ? null : max(0, (int) $qty);
+                    // counted_qty is assigned last so the IF()s compare against the previous count
+                    db_exec('UPDATE stock_take_items SET counted_mark = IF(counted_qty <=> ?, counted_mark, ?), counted_at = IF(counted_qty <=> ?, counted_at, NOW()),
+                             counted_qty = ? WHERE id = ? AND stock_take_id = ?', [$qty, $qty === null ? null : $mark, $qty, $qty, (int) $itemId, $takeId]);
+                }
+            });
             json_ok([], 'Counts saved.');
         case 'stocktake_complete':
             $changed = db_tx(static function () use ($in, $aid): int {
@@ -77,10 +94,16 @@ try {
                 }
                 $n = 0;
                 foreach (db_all('SELECT * FROM stock_take_items WHERE stock_take_id = ? AND counted_qty IS NOT NULL', [$take['id']]) as $it) {
-                    // Account for sales that happened during the count
-                    $now = (int) db_val('SELECT stock_qty FROM product_variants WHERE id = ?', [$it['variant_id']]);
-                    $soldSince = (int) $it['system_qty'] - $now;
-                    $target = max(0, (int) $it['counted_qty'] - max(0, $soldSince));
+                    $now = (int) db_val('SELECT stock_qty FROM product_variants WHERE id = ? FOR UPDATE', [$it['variant_id']]);
+                    if ($it['counted_mark'] !== null) {
+                        // Count + every movement after the moment it was counted (sales, receipts, returns)
+                        $since = (int) db_val("SELECT COALESCE(SUM(qty_change), 0) FROM stock_movements WHERE variant_id = ? AND id > ? AND type <> 'stocktake'",
+                            [$it['variant_id'], (int) $it['counted_mark']]);
+                    } else {
+                        // Counted before counted_mark existed: treat the count as taken when the stock take started
+                        $since = $now - (int) $it['system_qty'];
+                    }
+                    $target = max(0, (int) $it['counted_qty'] + $since);
                     if ($target !== $now) {
                         StockService::adjustVariant((int) $it['variant_id'], $target - $now, 'stocktake', ['reference' => 'ST-' . $take['id'], 'note' => 'Stock take', 'admin_id' => $aid]);
                         $n++;

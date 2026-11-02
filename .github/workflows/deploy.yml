@@ -10,7 +10,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Nothing goes live unless the tests pass (see ci.yml)
+  test:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
