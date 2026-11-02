@@ -5,7 +5,8 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
-if (require_admin()['role_slug'] !== 'owner') {
+$me = require_admin();
+if ($me['role_slug'] !== 'owner' || $me['division_scope'] !== 'all') {
     http_response_code(403);
     require GX_ROOT . '/includes/layout/forbidden.php';
     exit;

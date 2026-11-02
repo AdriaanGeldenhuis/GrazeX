@@ -69,7 +69,7 @@ final class CronService
         if ($to !== '') {
             // A plain list ("- Name (size): 3 left"): it renders as a list without any ** that would show as ∗∗
             $items = implode("\n", array_map(static fn($r) => '- ' . $r['name'] . ' (' . $r['size'] . '): ' . (int) $r['stock_qty'] . ' left', $rows));
-            NotificationService::email('admin_low_stock', $to, 'GrazeX admin', ['count' => (string) count($rows), 'items' => $items],
+            NotificationService::email('admin_low_stock', $to, 'GrazeX admin', ['count' => (string) count($rows), 'items' => $items, 'items_md' => $items],
                 division_id('feeds'), [], ['label' => 'Open inventory', 'url' => app_url('/admin/inventory.php?filter=low')], false);
         }
         return count($rows) . ' items';
@@ -105,8 +105,9 @@ final class CronService
     {
         $removed = db_exec('DELETE FROM livestock_alerts WHERE confirmed_at IS NULL AND confirm_token IS NULL AND is_active = 0');
         $asked = 0;
-        foreach (db_all('SELECT * FROM livestock_alerts WHERE confirmed_at IS NULL AND confirm_token IS NULL ORDER BY id LIMIT 40') as $row) {
-            if (LivestockService::requestConfirmation($row)) {
+        // Its own hourly budget, so working through old alerts never blocks confirmations for new sign-ups
+        foreach (db_all('SELECT * FROM livestock_alerts WHERE confirmed_at IS NULL AND confirm_token IS NULL ORDER BY id LIMIT 20') as $row) {
+            if (LivestockService::requestConfirmation($row, 'alert_confirm_backlog', 20)) {
                 $asked++;
             }
         }

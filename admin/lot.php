@@ -26,7 +26,7 @@ $weighs = $id ? db_all('SELECT * FROM weigh_sessions WHERE lot_id = ? ORDER BY w
 $media = $id ? db_col('SELECT media_id FROM lot_media WHERE lot_id = ? ORDER BY sort_order, id', [$id]) : [];
 $breeds = array_column(db_all('SELECT id, name FROM breeds ORDER BY sort_order, name'), 'name', 'id');
 $cats = array_column(db_all('SELECT id, name FROM livestock_categories ORDER BY sort_order, name'), 'name', 'id');
-$subs = $id ? (int) db_val('SELECT COUNT(DISTINCT email) FROM livestock_alerts WHERE is_active = 1 AND (breed_id IS NULL OR breed_id = ?) AND (category_id IS NULL OR category_id = ?)', [$l['breed_id'], $l['category_id']]) : 0;
+$subs = $id ? (int) db_val('SELECT COUNT(DISTINCT email) FROM livestock_alerts WHERE is_active = 1 AND confirmed_at IS NOT NULL AND (breed_id IS NULL OR breed_id = ?) AND (category_id IS NULL OR category_id = ?)', [$l['breed_id'], $l['category_id']]) : 0;
 $types = ['vaccination' => 'Vaccination', 'dosing' => 'Dosing', 'treatment' => 'Treatment', 'inspection' => 'Inspection', 'other' => 'Other'];
 
 $healthRow = static function (string $i, array $h) use ($types): string {

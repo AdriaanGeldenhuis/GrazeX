@@ -223,13 +223,14 @@ final class LivestockService
      * whole site (the form can't flood an inbox or use up the shop's email allowance). The link is only replaced
      * when an email really goes out, so a pending link keeps working. Returns true when an email was queued.
      */
-    public static function requestConfirmation(array $row): bool
+    public static function requestConfirmation(array $row, string $siteBucket = 'alert_confirm_site', int $siteMax = 40): bool
     {
-        if (!rate_limit_hit('alert_confirm', (string) $row['email'], 3, 86400)) {
+        // The site-wide cap first: a refused site hit uses up nobody's own daily allowance
+        if (!rate_limit_hit($siteBucket, 'all', $siteMax, 3600)) {
+            gx_log('warning', 'Livestock alert confirmations paused: hourly cap reached', ['bucket' => $siteBucket]);
             return false;
         }
-        if (!rate_limit_hit('alert_confirm_site', 'all', 40, 3600)) {
-            gx_log('warning', 'Livestock alert confirmations paused: more than 40 this hour');
+        if (!rate_limit_hit('alert_confirm', (string) $row['email'], 3, 86400)) {
             return false;
         }
         $token = random_token(32);
@@ -274,9 +275,11 @@ final class LivestockService
         if ($email === null) {
             return 0;
         }
-        // Guest sign-ups and never-confirmed ones are deleted (POPIA: nothing kept once consent is withdrawn);
-        // an account's own alerts are switched off, so the customer can switch them on again in their account
-        return db_exec('DELETE FROM livestock_alerts WHERE email = ? AND (customer_id IS NULL OR confirmed_at IS NULL)', [$email])
+        // Deleted (POPIA: nothing kept once consent is withdrawn): guest sign-ups, never-confirmed ones, and alerts of
+        // accounts that never proved they own this address. Only a verified account's own alerts are switched off,
+        // so that customer can switch them on again in their account.
+        return db_exec('DELETE a FROM livestock_alerts a LEFT JOIN customers c ON c.id = a.customer_id
+                        WHERE a.email = ? AND (a.customer_id IS NULL OR a.confirmed_at IS NULL OR c.email_verified_at IS NULL OR c.email <> a.email)', [$email])
              + db_exec('UPDATE livestock_alerts SET is_active = 0, confirm_token = NULL WHERE email = ? AND is_active = 1', [$email]);
     }
 }

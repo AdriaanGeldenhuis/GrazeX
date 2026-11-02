@@ -7,9 +7,10 @@ require __DIR__ . '/../../includes/bootstrap.php';
 
 api_post();
 $me = require_admin_api('users.manage');
-// Managing admin logins and roles is the owner's job only (anyone else could make themselves an owner)
-if ($me['role_slug'] !== 'owner') {
-    json_error('Only the owner can manage admin users and permissions.', 403);
+// Managing admin logins and roles is the job of an owner who sees everything: anyone else could make themselves
+// (or a new login) an owner of both divisions and lock the real owner out
+if ($me['role_slug'] !== 'owner' || $me['division_scope'] !== 'all') {
+    json_error('Only an owner with access to both divisions can manage admin users and permissions.', 403);
 }
 /**
  * There must always be an active owner who can see everything. Call inside a transaction before an active

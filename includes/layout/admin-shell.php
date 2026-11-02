@@ -63,7 +63,7 @@ function admin_start(string $title, string $active, array $opts = []): array
   <aside class="adm-side" aria-label="Admin navigation">
     <a class="adm-brand" href="/admin/"><span class="brand"><span>Graze<b>X</b></span></span><span class="badge">Admin</span></a>
     <nav class="adm-nav">
-      <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]): if (!admin_can($perm) || ($key === 'users' && $admin['role_slug'] !== 'owner')) continue; ?>
+      <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]): if (!admin_can($perm) || ($key === 'users' && ($admin['role_slug'] !== 'owner' || $admin['division_scope'] !== 'all'))) continue; ?>
         <a href="<?= e($href) ?>"<?= $active === $key ? ' aria-current="page"' : '' ?>>
           <svg class="icon icon-sm"><use href="#i-<?= e($icon) ?>"/></svg><span><?= e($label) ?></span>
           <?php if (!empty($badges[$key])): ?><span class="adm-count"><?= (int) $badges[$key] ?></span><?php endif; ?>

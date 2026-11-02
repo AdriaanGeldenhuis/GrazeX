@@ -39,6 +39,13 @@ SET @sql = (SELECT IF(COUNT(*) = 0,
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'livestock_alerts' AND COLUMN_NAME = 'confirm_sent_at');
 PREPARE gx_stmt FROM @sql; EXECUTE gx_stmt; DEALLOCATE PREPARE gx_stmt;
 
+-- (An earlier draft of this migration marked ALL existing alerts as confirmed; undo that for alerts without proof of
+--  consent. Alerts confirmed through the emailed link have a later confirmed_at and are not touched.)
+UPDATE livestock_alerts a LEFT JOIN customers c ON c.id = a.customer_id
+   SET a.confirmed_at = NULL
+ WHERE a.confirmed_at = a.created_at AND a.confirm_token IS NULL
+   AND (c.id IS NULL OR c.email_verified_at IS NULL OR c.email <> a.email);
+
 -- Existing alerts of customers who verified that same email count as confirmed. Every other existing alert
 -- (anyone could have typed that address) gets ONE "confirm your alert" email from the cron and only continues
 -- if it is confirmed; switched-off ones without proof of consent are removed by the cron.
@@ -103,6 +110,8 @@ INSERT IGNORE INTO settings (setting_key, setting_value, value_type, group_name,
 --    "Payment received" says which documents are really attached (a receipt, or a receipt and tax invoice)
 UPDATE email_templates SET body = REPLACE(body, 'Your invoice is attached.', '{{docs_note_md}}')
  WHERE template_key = 'payment_received' AND body NOT LIKE '%{{docs_note_md}}%';
+--    (An earlier draft switched the low-stock digest to {{items_md}}; back to {{items}}, which the code fills)
+UPDATE email_templates SET body = REPLACE(body, '{{items_md}}', '{{items}}') WHERE template_key = 'admin_low_stock';
 INSERT IGNORE INTO email_templates (template_key, name, subject, body) VALUES
 ('livestock_alert_confirm', 'Confirm livestock alert', 'Confirm your GrazeX Ranch livestock alert',
  'Hi,\n\nPlease confirm that you want an email when new livestock matching your alert ({{alert}}) is available:\n\n{{link}}\n\nIf you did not ask for this, ignore this email — you will not get any alerts.'),
@@ -110,6 +119,12 @@ INSERT IGNORE INTO email_templates (template_key, name, subject, body) VALUES
  'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices that the law requires us to keep for 5 years are kept with only what a tax invoice must show (name, billing address and VAT number).\n\nIf you did not ask for this, please contact us.'),
 ('admin_password_reset', 'Admin: reset password', 'Reset your GrazeX admin password',
  'Hi {{first_name}},\n\nUse this link to choose a new admin password (valid for 1 hour): {{link}}\n\nIf you did not ask for this, ignore this email and tell the owner.');
+
+-- (An earlier draft inserted a less precise "account deleted" text; replaced only if it is still that exact text)
+UPDATE email_templates
+   SET body = 'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices that the law requires us to keep for 5 years are kept with only what a tax invoice must show (name, billing address and VAT number).\n\nIf you did not ask for this, please contact us.'
+ WHERE template_key = 'account_deleted'
+   AND body = 'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices and other records that the law requires us to keep (5 years) are kept, without your contact details.\n\nIf you did not ask for this, please contact us.';
 
 INSERT IGNORE INTO schema_migrations (version) VALUES ('006_admin_popia');
 

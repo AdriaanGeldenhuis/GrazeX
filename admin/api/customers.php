@@ -41,10 +41,23 @@ switch ((string) input('action')) {
         $oldEmail = (string) $c['email'];
         // Records made without logging in (alerts, enquiries) count as theirs only if they proved the address
         $byEmail = customer_verified_email($c);
-        $files = db_tx(static function () use ($cid, $byEmail): array {
+        $orderNos = db_col('SELECT order_no FROM orders WHERE customer_id = ?', [$cid]);
+        $files = db_tx(static function () use ($cid, $byEmail, $orderNos): array {
             $files = array_filter([db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ? FOR UPDATE', [$cid])]);
             // Saved PDFs still hold the old details: removed, and rebuilt from the cleaned snapshot when opened again
             $files = array_merge($files, db_col('SELECT pdf_path FROM documents WHERE customer_id = ? AND pdf_path IS NOT NULL', [$cid]));
+            // Proof-of-payment uploads (bank statements, screenshots): the payment itself stays recorded, the image goes
+            $files = array_merge($files, db_col('SELECT p.pop_path FROM payments p JOIN orders o ON o.id = p.order_id WHERE o.customer_id = ? AND p.pop_path IS NOT NULL', [$cid]));
+            db_exec('UPDATE payments p JOIN orders o ON o.id = p.order_id SET p.pop_path = NULL, p.pop_original_name = NULL WHERE o.customer_id = ?', [$cid]);
+            // Admin notices that quote them (their messages, POPs, orders, the deletion request)
+            $links = array_merge(['/admin/customer.php?id=' . $cid],
+                array_map(static fn($i) => '/admin/messages.php?id=' . $i, db_col('SELECT id FROM enquiries WHERE customer_id = ? OR email = ?', [$cid, $byEmail])),
+                array_map(static fn($i) => '/admin/order.php?id=' . $i, db_col('SELECT id FROM orders WHERE customer_id = ?', [$cid])));
+            db_exec('DELETE FROM admin_notifications WHERE link IN (' . db_placeholders($links) . ')', $links);
+            if ($orderNos) {
+                $titles = array_map(static fn($n) => 'POP uploaded for ' . $n, $orderNos);
+                db_exec('DELETE FROM admin_notifications WHERE title IN (' . db_placeholders($titles) . ')', $titles);
+            }
             $anon = 'deleted-' . $cid . '@deleted.invalid';
             db_exec("UPDATE customers SET email = ?, password_hash = '!', first_name = 'Deleted', last_name = 'Customer', phone = NULL, farm_name = NULL,
                      company_name = NULL, vat_no = NULL, vat_farmer_status = 'none', vat_farmer_doc_path = NULL, vat_farmer_verified_at = NULL,
@@ -53,7 +66,7 @@ switch ((string) input('action')) {
             // Orders stay for the 5-year tax record. A tax invoice needs the buyer's name, company, VAT number and billing
             // address; everything else personal goes (contact details, delivery address, notes, ID number).
             db_exec('UPDATE orders SET billing_email = ?, billing_phone = NULL, ship_name = NULL, ship_phone = NULL, ship_farm_name = NULL,
-                     ship_line1 = NULL, ship_line2 = NULL, ship_province = NULL, ship_postal_code = NULL, ship_directions = NULL,
+                     ship_line1 = NULL, ship_line2 = NULL, ship_town = NULL, ship_province = NULL, ship_postal_code = NULL, ship_directions = NULL,
                      ship_gps_lat = NULL, ship_gps_lng = NULL, customer_note = NULL, transport_note = NULL, buyer_id_number = NULL
                      WHERE customer_id = ?', [$anon, $cid]);
             // The documents' own copies of those details (an issued document keeps its numbers, lines and the invoice details).
@@ -68,7 +81,6 @@ switch ((string) input('action')) {
             db_exec('DELETE FROM wishlists WHERE customer_id = ?', [$cid]);
             db_exec('DELETE FROM customer_tokens WHERE customer_id = ?', [$cid]);
             db_exec('DELETE FROM push_devices WHERE customer_id = ?', [$cid]);
-            db_exec('DELETE FROM admin_notifications WHERE link = ?', ['/admin/customer.php?id=' . $cid]);
             return $files;
         });
         // Uploaded VAT certificate and saved PDFs (private storage)
@@ -79,8 +91,14 @@ switch ((string) input('action')) {
                 @unlink($abs);
             }
         }
-        // Our copies of emails to the old address (one being sent this second is left to finish)
-        db_exec("DELETE FROM email_queue WHERE to_email = ? AND status <> 'sending'", [$oldEmail]);
+        // Our copies of emails to the old address, and admin alerts that mention them or their orders
+        // (one being sent this second is left to finish)
+        $like = static fn(string $s): string => '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $s) . '%';
+        db_exec("DELETE FROM email_queue WHERE status <> 'sending' AND (to_email = ? OR body_html LIKE ?)", [$oldEmail, $like($oldEmail)]);
+        foreach (array_chunk($orderNos, 50) as $chunk) {
+            db_exec("DELETE FROM email_queue WHERE status <> 'sending' AND (" . implode(' OR ', array_fill(0, count($chunk), 'body_html LIKE ? OR subject LIKE ?')) . ')',
+                array_merge(...array_map(static fn($n) => [$like($n), $like($n)], $chunk)));
+        }
         // Confirm to the person, at the address they used (the request said we would)
         NotificationService::email('account_deleted', $oldEmail, null, ['first_name' => (string) $c['first_name']]);
         audit('customer.anonymised', 'customer', $cid);

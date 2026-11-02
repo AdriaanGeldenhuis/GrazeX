@@ -23,7 +23,13 @@ switch ((string) input('action')) {
             $email !== null);
         json_ok([], $live ? 'Alert added.' : 'Almost done — check your inbox and click the link to confirm this alert.');
     case 'toggle':
-        db_exec("UPDATE livestock_alerts SET is_active = 1 - is_active WHERE {$owns}", [(int) input('id'), $customer['id'], $email]);
+        // Pausing is always allowed; switching an alert back on needs the account's verified email (otherwise an
+        // unverified account could keep re-sending alerts to an inbox that unsubscribed)
+        $n = db_exec("UPDATE livestock_alerts SET is_active = 1 - is_active WHERE {$owns} AND (is_active = 1 OR email = ?)",
+            [(int) input('id'), $customer['id'], $email, $email]);
+        if (!$n) {
+            json_error('Confirm your email address first (see your account page), then you can switch alerts back on.', 409);
+        }
         json_ok([], 'Alert updated.');
     case 'delete':
         db_exec("DELETE FROM livestock_alerts WHERE {$owns}", [(int) input('id'), $customer['id'], $email]);

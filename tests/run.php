@@ -1323,6 +1323,13 @@ $fresh = db_insert("INSERT INTO email_queue (to_email, subject, body_html, statu
 step('requeue stuck emails', static fn() => CronService::requeueStuckEmails());
 check('email stuck in "sending" for an hour is queued again', db_val('SELECT status FROM email_queue WHERE id = ?', [$stuck]) === 'queued');
 check('an email being sent right now is left alone', db_val('SELECT status FROM email_queue WHERE id = ?', [$fresh]) === 'sending');
+// The age that counts is when sending started (claimed_at), not when the email was queued
+$oldQueued = db_insert("INSERT INTO email_queue (to_email, subject, body_html, status, attempts, created_at, claimed_at) VALUES ('q@test.local', 'Q', '<p>x</p>', 'sending', 1, NOW() - INTERVAL 3 HOUR, NOW() - INTERVAL 1 MINUTE)");
+$stuck2 = db_insert("INSERT INTO email_queue (to_email, subject, body_html, status, attempts, created_at, claimed_at) VALUES ('q@test.local', 'Q2', '<p>x</p>', 'sending', 5, NOW(), NOW() - INTERVAL 30 MINUTE)");
+step('requeue stuck emails (claimed_at)', static fn() => CronService::requeueStuckEmails());
+check('an old email that only just started sending is left alone', db_val('SELECT status FROM email_queue WHERE id = ?', [$oldQueued]) === 'sending');
+check('a stuck email that already had 5 tries is marked failed', db_val('SELECT status FROM email_queue WHERE id = ?', [$stuck2]) === 'failed');
+db_exec('DELETE FROM email_queue WHERE id IN (?, ?)', [$oldQueued, $stuck2]);
 db_exec('DELETE FROM email_queue WHERE id IN (?, ?)', [$stuck, $fresh]);
 
 section('Phase 4: POPIA');
@@ -1462,9 +1469,30 @@ $tk->page('/account/login.php');
 $tk->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'taken@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 10.44.0.9']);
 $tk->page('/account/alerts.php');
 [$st, $res] = $tk->api('POST', '/account/api/alerts.php', ['action' => 'create', 'breed' => '', 'category' => '']);
+$tkId = (int) db_val("SELECT id FROM customers WHERE email = 'taken@test.local'");
 check('unverified account: the guest\'s alert is not attached to it', (string) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'taken@test.local' AND confirmed_at IS NOT NULL") === ''
-    && !str_contains($tk->page('/account/alerts.php'), 'Last alert'), json_encode($res));
+    && !db_val('SELECT 1 FROM livestock_alerts WHERE customer_id = ? AND confirmed_at IS NOT NULL', [$tkId]), json_encode($res));
 check('… and the reply does not reveal that the address is subscribed', ($res['message'] ?? '') !== 'Alert added.', json_encode($res));
+// The inbox owner confirms the account's alert (thinking it is theirs), then unsubscribes: the unverified account can't switch it back on
+preg_match('#/ranch/alerts\.php\?confirm=([a-f0-9]{64})#', last_mail('taken@test.local', 'Confirm your%'), $m);
+step('inbox owner confirms', static fn() => LivestockService::confirmAlert($m[1] ?? ''));
+$tkAlert = (int) db_val('SELECT id FROM livestock_alerts WHERE customer_id = ?', [$tkId]);
+step('inbox owner unsubscribes', static fn() => LivestockService::unsubscribe((string) db_val('SELECT unsubscribe_token FROM livestock_alerts WHERE id = ?', [$tkAlert])));
+check("unsubscribing removes an unverified account's alert for that inbox", $tkAlert > 0 && !db_val('SELECT 1 FROM livestock_alerts WHERE id = ?', [$tkAlert]));
+db_exec('INSERT INTO livestock_alerts (customer_id, email, is_active, confirmed_at, unsubscribe_token) VALUES (?, ?, 0, NOW(), ?)', [$tkId, 'taken@test.local', random_token(32)]);
+[$st] = $tk->api('POST', '/account/api/alerts.php', ['action' => 'toggle', 'id' => (int) db_val('SELECT MAX(id) FROM livestock_alerts WHERE customer_id = ?', [$tkId])]);
+check('an unverified account cannot switch a paused alert back on', $st === 409 && (int) db_val('SELECT is_active FROM livestock_alerts WHERE customer_id = ? ORDER BY id DESC LIMIT 1', [$tkId]) === 0, (string) $st);
+// The site-wide hourly cap is checked first, so a busy hour doesn't use up anyone's own 3-a-day allowance
+for ($i = 0; $i < 40; $i++) {
+    rate_limit_hit('alert_confirm_site', 'all', 40, 3600);
+}
+LivestockService::subscribe('capped@test.local', null, null, null, false);
+check('when the hourly cap is reached no confirmation is sent', !db_val("SELECT 1 FROM email_queue WHERE to_email = 'capped@test.local'"));
+rate_limit_clear('alert_confirm_site', 'all');
+for ($i = 0; $i < 3; $i++) {
+    LivestockService::subscribe('capped@test.local', null, null, null, false);
+}
+check('… and the address still has its full daily allowance afterwards', (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'capped@test.local'") === 3);
 // A pending confirmation link is not replaced by repeated sign-ups once the daily email limit is reached
 for ($i = 0; $i < 3; $i++) {
     LivestockService::subscribe('pending@test.local', null, null, null, false);
@@ -1572,11 +1600,13 @@ $csvOrders = $sx4->page('/admin/reports.php?export=orders&status=cancelled');
 $csvLines = array_values(array_filter(explode("\n", trim($csvOrders))));
 check('staff with "View orders" (no Reports) can export the orders CSV', str_contains($csvLines[0] ?? '', 'Order,Division'), substr($csvOrders, 0, 120));
 check('the orders CSV uses the page filters (only cancelled orders)', count($csvLines) > 1 && !array_filter(array_slice($csvLines, 1), static fn($l) => !str_contains($l, ',cancelled,')));
-check('staff without "View customers" cannot export customers', !str_contains($sx4->page('/admin/reports.php?export=customers'), 'First name,Last name'));
+check('staff without "View customers" cannot export customers', str_contains($sx4->page('/admin/reports.php?export=customers'), 'You do not have permission for this export.'));
+check('… while the owner can (header present)', str_contains($p4->page('/admin/reports.php?export=customers'), '"First name","Last name",Email,Phone'));
 db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id IN (SELECT id FROM permissions WHERE slug IN ('orders.view','documents.view'))");
 db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug = 'reports.view'");
 check('a "Reports"-only role (bookkeeper) can export invoices', str_contains($sx4->page('/admin/reports.php?export=documents'), 'Date,Type,Number'));
-check('… but not the orders list with buyers\' email and phone', !str_contains($sx4->page('/admin/reports.php?export=orders'), 'Order,Division'));
+check('… but not the orders list with buyers\' email and phone', str_contains($sx4->page('/admin/reports.php?export=orders'), 'You do not have permission for this export.'));
+check('… nor the customers list', str_contains($sx4->page('/admin/reports.php?export=customers'), 'You do not have permission for this export.'));
 db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = (SELECT id FROM permissions WHERE slug = 'reports.view')");
 db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug IN ('orders.view','documents.view','customers.view')");
 $cnDoc = db_one("SELECT * FROM documents WHERE doc_type = 'credit_note' AND is_void = 0 ORDER BY id LIMIT 1");
@@ -1592,7 +1622,11 @@ $nv = db_insert("INSERT INTO product_variants (product_id, sku, name, price_cent
 $rcpt = db_insert("INSERT INTO stock_receipts (division_id, supplier_name, received_on) VALUES (1, 'Co-op', CURDATE())");
 db_exec('INSERT INTO stock_receipt_items (receipt_id, variant_id, qty) VALUES (?, ?, 5)', [$rcpt, $nv]);
 [$st, $res] = $p4->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => $np]);
-check('product with received stock is hidden, not deleted (no error)', $st === 200 && (int) db_val('SELECT is_active FROM products WHERE id = ?', [$np]) === 0, $st . ' ' . json_encode($res));
+check('product with received stock is hidden, not deleted (no error)', $st === 200 && (string) db_val('SELECT is_active FROM products WHERE id = ?', [$np]) === '0', $st . ' ' . json_encode($res));
+$np2 = db_insert("INSERT INTO products (category_id, slug, name) VALUES (?, 'no-history', 'No History')", [$catId]);
+db_insert("INSERT INTO product_variants (product_id, sku, name, price_cents, stock_qty) VALUES (?, 'NOHIST-1', '5kg', 5000, 0)", [$np2]);
+[$st] = $p4->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => $np2]);
+check('a product without any history is really deleted', $st === 200 && !db_val('SELECT 1 FROM products WHERE id = ?', [$np2]));
 
 section('Phase 4: admin users, password reset, small fixes');
 // --- Owner edits an admin user; the last owner can't be demoted ---
@@ -1613,7 +1647,15 @@ $fo2->page('/admin/login.php');
 $fo2->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'feedsowner@test.local', 'password' => $ownerPw], null, ['X-Test-Remote-Addr: 10.44.0.11']);
 $fo2->page('/admin/');
 [$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'toggle', 'id' => $ownerId]);
-check('the only owner with full access cannot be disabled (even by another, limited owner)', $st === 409 && db_val('SELECT status FROM admin_users WHERE id = ?', [$ownerId]) === 'active', (string) $st);
+check('an owner limited to one division cannot disable the full owner', $st === 403 && db_val('SELECT status FROM admin_users WHERE id = ?', [$ownerId]) === 'active', (string) $st);
+[$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $feedsOwner, 'name' => 'Feeds Owner', 'role_id' => 1, 'division_scope' => 'all']);
+check('… nor give themselves access to both divisions', $st === 403 && db_val('SELECT division_scope FROM admin_users WHERE id = ?', [$feedsOwner]) === 'feeds', (string) $st);
+[$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'create', 'name' => 'Sneaky', 'email' => 'sneaky@test.local', 'role_id' => 1, 'division_scope' => 'all', 'password' => 'Sneaky-Pass-99']);
+check('… nor create a new full owner', $st === 403 && !db_val("SELECT 1 FROM admin_users WHERE email = 'sneaky@test.local'"), (string) $st);
+db_exec("UPDATE admin_users a JOIN roles r ON r.id = a.role_id SET a.status = 'disabled' WHERE r.slug = 'owner' AND a.email NOT IN ('owner@test.local', 'feedsowner@test.local')");
+$secondFull = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (1, ?, ?, ?, ?)', ['second@owner.local', admin_password_hash($ownerPw), 'Second Owner', 'all']);
+[$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'toggle', 'id' => $secondFull]);
+check('a full owner can disable another full owner', $st === 200 && db_val('SELECT status FROM admin_users WHERE id = ?', [$secondFull]) === 'disabled', (string) $st);
 [$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $feedsOwner, 'name' => 'Feeds Owner', 'role_id' => 2, 'division_scope' => 'feeds']);
 check('an owner limited to one division can be made a manager', $st === 200 && (int) db_val('SELECT role_id FROM admin_users WHERE id = ?', [$feedsOwner]) === 2, (string) $st);
 db_exec("UPDATE admin_users a JOIN roles r ON r.id = a.role_id SET a.status = 'active' WHERE r.slug = 'owner'");
@@ -1680,6 +1722,7 @@ $schemaOf = static fn(): string => json_encode([
     db_all('SELECT setting_key FROM settings ORDER BY 1'),
 ]);
 $beforeSchema = $schemaOf();
+$installedVersions = db_col('SELECT version FROM schema_migrations ORDER BY version'); // as install.sql seeded them
 $migErr = '';
 foreach (glob(GX_ROOT . '/database/migrations/0*.sql') ?: [] as $mf) {
     try {
@@ -1691,7 +1734,7 @@ foreach (glob(GX_ROOT . '/database/migrations/0*.sql') ?: [] as $mf) {
 }
 check('all migrations run twice on a current database without errors', $migErr === '', $migErr);
 check('… and leave the schema, email templates and settings exactly as install.sql made them', $schemaOf() === $beforeSchema);
-check('every migration is recorded in install.sql', db_col('SELECT version FROM schema_migrations ORDER BY version') === array_merge(['001_install'],
+check('every migration is recorded in install.sql', $installedVersions === array_merge(['001_install'],
     array_map(static fn($f) => basename($f, '.sql'), glob(GX_ROOT . '/database/migrations/0*.sql') ?: [])));
 
 section('PDF rendering');
