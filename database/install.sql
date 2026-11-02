@@ -157,7 +157,7 @@ CREATE TABLE schema_migrations (
   PRIMARY KEY (version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security');
+INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security'), ('005_checkout');
 
 -- ---------------------------------------------------------------------
 -- 2. ACCOUNTS (customers + admin users are separate on purpose)
@@ -892,7 +892,7 @@ CREATE TABLE order_items (
   lot_id             INT UNSIGNED NULL,
   name               VARCHAR(191) NOT NULL,
   sku                VARCHAR(60)  NULL,
-  variant_name       VARCHAR(100) NULL,
+  variant_name       VARCHAR(200) NULL,
   qty                INT UNSIGNED NOT NULL,
   pricing_mode       ENUM('unit','per_head','per_kg') NOT NULL DEFAULT 'unit',
   unit_price_cents   INT UNSIGNED NOT NULL,
@@ -1232,6 +1232,7 @@ INSERT INTO settings (setting_key, setting_value, value_type, group_name, label)
 ('eft_reminder_hours',       '24',                             'int',    'orders',   'Send EFT payment reminder after (hours)'),
 ('yoco_hold_minutes',        '60',                             'int',    'orders',   'Minutes an unpaid card order holds stock'),
 ('cash_hold_days',           '3',                              'int',    'orders',   'Days after collection date before unpaid cash orders expire'),
+('pop_reupload_hours',       '24',                             'int',    'orders',   'Extra hours to upload a new proof of payment after one is rejected'),
 ('ranch_deposit_hold_hours', '48',                             'int',    'orders',   'Hours a livestock reservation waits for its deposit'),
 ('max_collection_days_ahead','30',                             'int',    'orders',   'How many days ahead customers can book collection'),
 ('payment_yoco_enabled',     '1',                              'bool',   'payments', 'Yoco card payments enabled'),

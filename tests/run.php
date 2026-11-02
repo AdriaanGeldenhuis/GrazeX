@@ -40,6 +40,30 @@ if ($worker === '--worker') {
     exit;
 }
 
+// Worker mode 2 (parallel checkout tests): JSON {cid, div, variant?, lot?, qty?, coupon?, date?, slot?, place_only?}
+if ($worker === '--worker2') {
+    $w = json_decode((string) ($argv[2] ?? '{}'), true);
+    $_COOKIE = [];
+    $_SESSION = ['customer_id' => (int) $w['cid'], 'customer_sv' => 1];
+    try {
+        $div = $w['div'] ?? 'feeds';
+        if (empty($w['place_only'])) {
+            CartService::add($div, (int) ($w['variant'] ?? $w['lot']), (int) ($w['qty'] ?? 1));
+            if (!empty($w['coupon'])) {
+                CartService::setCoupon($div, (int) $w['coupon']);
+            }
+        }
+        $cal = DeliveryService::collectionCalendar(division_id($div))[0];
+        usleep(random_int(0, 20000));
+        $o = OrderService::place($div, ['billing_name' => 'W', 'billing_address' => 'Farm', 'buyer_id_number' => '8001015009087', 'payment_method' => $w['method'] ?? 'eft',
+            'fulfilment' => 'collection', 'collection_date' => $w['date'] ?? $cal['date'], 'collection_slot_id' => $w['slot'] ?? $cal['slots'][0]['id']], current_customer());
+        echo 'OK ' . $o['order_no'];
+    } catch (Throwable $e) {
+        echo 'FAIL ' . $e->getMessage();
+    }
+    exit;
+}
+
 // ---------------------------------------------------------------------
 // Fresh test database
 // ---------------------------------------------------------------------
@@ -638,6 +662,205 @@ $rsig = base64_encode(hash_hmac('sha256', "evt_refund_r.{$rts}.{$rbody}", base64
 $hook->raw('/payments/api/yoco-webhook.php', $rbody, ['webhook-id: evt_refund_r', 'webhook-timestamp: ' . $rts, 'webhook-signature: v1,' . $rsig]);
 check('Yoco refund webhook marks the order refunded', order_row((int) $yr['id'])['payment_status'] === 'refunded');
 
+
+
+/** Run several checkout workers at the same time; returns their outputs. */
+function parallel_place(array $jobs): array
+{
+    $procs = [];
+    $pipesAll = [];
+    foreach ($jobs as $j) {
+        $procs[] = proc_open([PHP_BINARY, __FILE__, '--worker2', json_encode($j)], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $pipesAll[] = $pipes;
+    }
+    $out = [];
+    foreach ($pipesAll as $i => $pipes) {
+        $out[] = trim((string) stream_get_contents($pipes[1]));
+        proc_close($procs[$i]);
+    }
+    return $out;
+}
+$oks = static fn(array $r) => count(array_filter($r, static fn($x) => str_starts_with($x, 'OK')));
+
+section('Checkout: double submits, last slot, last coupon use');
+$d1 = make_customer('double@test.local');
+as_customer($d1);
+CartService::add('feeds', 5, 2);
+$before5 = stock(5);
+$res = parallel_place([['cid' => $d1['id'], 'place_only' => true], ['cid' => $d1['id'], 'place_only' => true]]);
+check('two submits of the same cart make one order', $oks($res) === 1, implode(' | ', $res));
+check('… and take the stock once', stock(5) === $before5 - 2, (string) stock(5));
+$cal1 = DeliveryService::collectionCalendar(1)[0];
+$slotDate = $cal1['date'];
+$slotId = (int) $cal1['slots'][0]['id'];
+$capWas = (int) db_val('SELECT capacity FROM collection_slots WHERE id = ?', [$slotId]);
+$bookedNow = (int) db_val("SELECT COUNT(*) FROM orders WHERE division_id = 1 AND collection_date = ? AND collection_slot_id = ? AND status NOT IN ('cancelled','expired','refunded')", [$slotDate, $slotId]);
+db_exec('UPDATE collection_slots SET capacity = ? WHERE id = ?', [$bookedNow + 1, $slotId]);
+$s1 = make_customer('slot1@test.local');
+$s2 = make_customer('slot2@test.local');
+$res = parallel_place([['cid' => $s1['id'], 'variant' => 6, 'date' => $slotDate, 'slot' => $slotId], ['cid' => $s2['id'], 'variant' => 6, 'date' => $slotDate, 'slot' => $slotId]]);
+check('two buyers, one place left in a collection slot: one order', $oks($res) === 1, implode(' | ', $res));
+db_exec('UPDATE collection_slots SET capacity = ? WHERE id = ?', [$capWas, $slotId]);
+$cpn = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active, max_uses) VALUES ('ONCEONLY', 'percent', 10, 1, 1, 1)");
+$k1 = make_customer('cpn1@test.local');
+$k2 = make_customer('cpn2@test.local');
+$res = parallel_place([['cid' => $k1['id'], 'variant' => 6, 'coupon' => $cpn], ['cid' => $k2['id'], 'variant' => 6, 'coupon' => $cpn]]);
+check('a coupon with one use left is used once', (int) db_val('SELECT used_count FROM coupons WHERE id = ?', [$cpn]) === 1
+    && (int) db_val('SELECT COUNT(*) FROM coupon_redemptions WHERE coupon_id = ?', [$cpn]) === 1, implode(' | ', $res));
+
+section('Checkout: coupons, deposits and VAT');
+$fd = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active) VALUES ('FREEDEL', 'free_delivery', 0, 1, 1)");
+$z1 = make_customer('freedel@test.local');
+as_customer($z1);
+CartService::add('feeds', 6, 1);
+CartService::setCoupon('feeds', $fd);
+$zo = OrderService::place('feeds', ['billing_name' => 'Free Del', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+check('a coupon that gives nothing (free delivery on collection) is not used up', $zo['coupon_id'] === null && (int) db_val('SELECT used_count FROM coupons WHERE id = ?', [$fd]) === 0);
+$today = db_insert('INSERT INTO coupons (code, type, value, division_id, is_active, ends_at) VALUES (?, ?, 5, 1, 1, ?)', ['TODAYONLY', 'percent', date('Y-m-d') . ' 00:00:00']);
+check('a coupon ending today still works today', PricingService::checkCoupon('TODAYONLY', 1, 100000, null)['ok'] === true);
+db_exec('UPDATE lots SET deposit_pct = 100 WHERE id = 5');
+$big = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active) VALUES ('RANCH500', 'fixed', 50000, 2, 1)");
+$dep = make_customer('deposit@test.local');
+as_customer($dep);
+CartService::add('ranch', 5, 1);
+CartService::setCoupon('ranch', $big);
+$dq = OrderService::quote('ranch', ['fulfilment' => 'collection'], current_customer());
+check('the deposit is never more than the order total', $dq['deposit'] <= $dq['total'] && $dq['discount'] > 0, $dq['deposit'] . ' vs ' . $dq['total']);
+CartService::clear('ranch');
+db_exec('UPDATE lots SET deposit_pct = 20 WHERE id = 5');
+setting_set('zero_rating_enabled', '1');
+db_exec('UPDATE products p JOIN product_variants v ON v.product_id = p.id SET p.zero_rate_eligible = 1 WHERE v.id = 2');
+$vf = make_customer('vatfarmer@test.local');
+db_exec("UPDATE customers SET vat_farmer_status = 'verified', vat_no = '4111111111' WHERE id = ?", [$vf['id']]);
+$ten = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active) VALUES ('TENOFF', 'percent', 10, 1, 1)");
+as_customer(db_one('SELECT * FROM customers WHERE id = ?', [$vf['id']]));
+CartService::add('feeds', 2, 1);
+CartService::add('feeds', 6, 2);
+CartService::setCoupon('feeds', $ten);
+$vo = OrderService::place('feeds', ['billing_name' => 'VAT Farmer', 'billing_address' => 'Farm', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
+OrderService::recordPayment((int) $vo['id'], (int) $vo['total_cents'], 'cash');
+$vinv = db_one("SELECT * FROM documents WHERE order_id = ? AND doc_type = 'tax_invoice'", [$vo['id']]);
+check('order VAT equals the tax invoice VAT (zero-rated + standard lines with a coupon)', $vinv && (int) $vinv['vat_cents'] === (int) db_val('SELECT vat_cents FROM orders WHERE id = ?', [$vo['id']]),
+    ($vinv['vat_cents'] ?? 'no invoice') . ' vs ' . db_val('SELECT vat_cents FROM orders WHERE id = ?', [$vo['id']]));
+setting_set('zero_rating_enabled', '0');
+$hundred = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active) VALUES ('ALLFREE', 'percent', 100, 1, 1)");
+$fr = make_customer('free@test.local');
+as_customer($fr);
+CartService::add('feeds', 6, 1);
+CartService::setCoupon('feeds', $hundred);
+$fo = OrderService::place('feeds', ['billing_name' => 'Free', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
+check('an order that costs nothing is paid as placed (never expires)', $fo['status'] === 'paid' && $fo['payment_status'] === 'paid' && $fo['hold_expires_at'] === null, $fo['status'] . '/' . $fo['payment_status']);
+check('… and gets its invoice', (bool) db_val("SELECT 1 FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$fo['id']]));
+
+section('Checkout: holds, payment methods and the checkout API');
+$uv = db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone) VALUES (?,?,?,?,?)', ['unverified@test.local', password_hash('x', PASSWORD_BCRYPT), 'Un', 'Verified', '0821234567']);
+as_customer(db_one('SELECT * FROM customers WHERE id = ?', [$uv]));
+CartService::add('feeds', 6, 1);
+$us = slot(1);
+$uo = OrderService::place('feeds', ['billing_name' => 'Unverified', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + $us, current_customer());
+check('an unconfirmed email holds pay-on-collection stock only until the end of the collection day', $uo['hold_expires_at'] === $us['collection_date'] . ' 23:59:59', (string) $uo['hold_expires_at']);
+check('a livestock reservation without a deposit can only be paid at the farm', OrderService::allowedPaymentMethods('ranch', 'collection', 0) === ['cash_on_collection']);
+setting_set('max_collection_days_ahead', '1');
+$far = null;
+foreach (DeliveryService::collectionCalendar(1, 30) as $dd) {
+    if ($dd['date'] > date('Y-m-d', strtotime('+2 days'))) { $far = $dd; break; }
+}
+check('"how far ahead" is enforced on the server too (not only at least 14 days)', $far !== null && DeliveryService::validateSlot(1, $far['date'], (int) $far['slots'][0]['id']) === null);
+setting_set('max_collection_days_ahead', '30');
+$co = new TestHttp($base);
+$co->page('/account/login.php');
+$co->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'pay@test.local', 'password' => 'x']);
+$co->page('/feeds/');
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 9, 'qty' => 3]);
+$stock9 = stock(9);
+db_exec('UPDATE product_variants SET stock_qty = 2 WHERE id = 9');
+$cslot = slot(1);
+$placeBody = ['action' => 'place', 'billing_name' => 'Pay Test', 'billing_phone' => '0821234567', 'fulfilment' => 'collection', 'payment_method' => 'eft',
+    'accept_terms' => 1, 'collection_date' => $cslot['collection_date'], 'collection_slot_id' => $cslot['collection_slot_id']];
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $placeBody);
+check('when stock ran low the order is not placed with a silently smaller quantity', $st === 409 && str_contains((string) ($res['error'] ?? ''), 'Only 2'), $st . ' ' . json_encode($res));
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $placeBody);
+check('… the second attempt (customer has seen it) goes through with the 2 left', $st === 200, $st . ' ' . json_encode($res));
+db_exec('UPDATE product_variants SET stock_qty = 1 WHERE id = 10');
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 10, 'qty' => 1]);
+db_exec('UPDATE cart_items ci JOIN carts c ON c.id = ci.cart_id SET ci.qty = 3 WHERE c.customer_id = ? AND ci.variant_id = 10', [$c3['id']]);
+check('the checkout page shows when the cart was changed (no silent cap on page load)', str_contains($co->page('/feeds/checkout.php'), 'Your cart was updated'));
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'remove', 'item_id' => (int) db_val('SELECT ci.id FROM cart_items ci JOIN carts c ON c.id = ci.cart_id WHERE c.customer_id = ? AND ci.variant_id = 10', [$c3['id']])]);
+db_exec('UPDATE product_variants SET stock_qty = 19 WHERE id = 10');
+db_exec('UPDATE product_variants SET stock_qty = ? WHERE id = 9', [max(0, $stock9 - 2)]);
+$zoneRow = DeliveryService::zoneForTown('Riverside');
+$dDate = DeliveryService::deliveryDates($zoneRow, 10)[0] ?? null;
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 6, 'qty' => 1]);
+$addrCount = (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$c3['id']]);
+$delBody = ['action' => 'place', 'billing_name' => 'Pay Test', 'billing_phone' => '0821234567', 'billing_company' => 'Pay Farms (Pty) Ltd', 'fulfilment' => 'delivery', 'payment_method' => 'eft', 'accept_terms' => 1,
+    'delivery_date' => $dDate, 'town' => 'Riverside', 'address_id' => 'new', 'save_address' => 1,
+    'address' => ['recipient_name' => 'Pay Test', 'phone' => '0821234567', 'line1' => '12 Farm Road']];
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $delBody); // below the zone's minimum order → refused
+check('a refused order does not save the delivery address', $st !== 200 && (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$c3['id']]) === $addrCount, $st . ' ' . json_encode($res));
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 2, 'qty' => 2]);
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $delBody);
+check('a placed delivery order saves the new address', $st === 200 && (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$c3['id']]) === $addrCount + 1, $st . ' ' . json_encode($res));
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 2, 'qty' => 2]);
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 6, 'qty' => 1]);
+[$st] = $co->api('POST', '/feeds/api/checkout.php', $delBody);
+check('… and the same address is not saved twice', $st === 200 && (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$c3['id']]) === $addrCount + 1, (string) $st);
+$cc3 = db_one('SELECT company_name, farm_name FROM customers WHERE id = ?', [$c3['id']]);
+check('the billing company is kept as the company name (not the farm name)', $cc3['company_name'] === 'Pay Farms (Pty) Ltd' && $cc3['farm_name'] !== 'Pay Farms (Pty) Ltd', json_encode($cc3));
+
+section('Card payments and proof of payment: edge cases');
+as_customer($c3);
+CartService::add('feeds', 6, 1);
+$lm = OrderService::place('feeds', ['billing_name' => 'Live Mode', 'payment_method' => 'yoco', 'fulfilment' => 'collection'] + slot(1), current_customer());
+$lmPay = yoco_pending($lm, 'ch_testmode');
+$GLOBALS['GX_ENV']['yoco']['mode'] = 'live';
+YocoService::settle(db_one('SELECT * FROM payments WHERE id = ?', [$lmPay]), (int) $lm['total_cents'], 'p_tm', 'test');
+YocoService::settle(db_one('SELECT * FROM payments WHERE id = ?', [$lmPay]), (int) $lm['total_cents'], 'p_tm', 'test');
+$GLOBALS['GX_ENV']['yoco']['mode'] = 'test';
+check('a test-mode card payment never counts on a live site', order_row((int) $lm['id'])['payment_status'] === 'unpaid');
+check('… one alert, not one per retry', (int) db_val("SELECT COUNT(*) FROM admin_notifications WHERE title LIKE ?", ['%wrong Yoco mode%' . $lm['order_no'] . '%']) === 1);
+as_customer($c3);
+CartService::add('feeds', 6, 1);
+$mm = OrderService::place('feeds', ['billing_name' => 'Mismatch', 'payment_method' => 'yoco', 'fulfilment' => 'collection'] + slot(1), current_customer());
+$mmPay = yoco_pending($mm, 'ch_mismatch');
+for ($i = 0; $i < 3; $i++) {
+    YocoService::settle(db_one('SELECT * FROM payments WHERE id = ?', [$mmPay]), 123, 'p_mm', 'poll');
+}
+check('an amount mismatch raises one alert, not one per poll', (int) db_val("SELECT COUNT(*) FROM admin_notifications WHERE title LIKE ?", ['%amount mismatch%' . $mm['order_no'] . '%']) === 1);
+as_customer($c3);
+CartService::add('feeds', 6, 1);
+$rj = OrderService::place('feeds', ['billing_name' => 'Reject', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+db_exec('UPDATE orders SET hold_expires_at = NOW() + INTERVAL 1 HOUR WHERE id = ?', [$rj['id']]);
+$rjPop = db_insert("INSERT INTO payments (order_id, division_id, method, purpose, amount_cents, status, pop_path) VALUES (?, 1, 'eft', 'full', ?, 'awaiting_verification', 'x.pdf')", [$rj['id'], $rj['total_cents']]);
+$adm->api('POST', '/admin/api/payments.php', ['action' => 'reject', 'id' => $rjPop, 'reason' => 'Not in our account']);
+check('a rejected proof of payment gives the customer time to upload a new one', (int) db_val('SELECT hold_expires_at > NOW() + INTERVAL 23 HOUR FROM orders WHERE id = ?', [$rj['id']]) === 1);
+$pd = make_customer('partial@test.local');
+as_customer($pd);
+CartService::add('ranch', 2, 1);
+$po2 = OrderService::place('ranch', ['billing_name' => 'Partial', 'billing_address' => 'Farm', 'buyer_id_number' => '8001015009087', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(2), current_customer());
+OrderService::recordPayment((int) $po2['id'], intdiv((int) $po2['deposit_due_cents'], 2), 'eft');
+db_exec('UPDATE orders SET hold_expires_at = NOW() - INTERVAL 1 MINUTE WHERE id = ?', [$po2['id']]);
+OrderService::expireDue();
+OrderService::expireDue();
+check('a half-paid deposit past its hold: one alert to the admin', (int) db_val("SELECT COUNT(*) FROM admin_notifications WHERE type = 'payment_overdue' AND title LIKE ?", ['%' . $po2['order_no']]) === 1);
+check('… and the animals stay reserved (not silently held forever without anyone knowing)', order_row((int) $po2['id'])['status'] === 'reserved' && order_row((int) $po2['id'])['hold_expires_at'] === null);
+$rv = make_customer('revive@test.local');
+as_customer($rv);
+CartService::add('feeds', 6, 1);
+CartService::setCoupon('feeds', $ten);
+$ro2 = OrderService::place('feeds', ['billing_name' => 'Revive', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+db_exec('UPDATE orders SET hold_expires_at = NOW() - INTERVAL 1 MINUTE WHERE id = ?', [$ro2['id']]);
+OrderService::expireDue();
+$usedAfterExpiry = (int) db_val('SELECT used_count FROM coupons WHERE id = ?', [$ten]);
+OrderService::recordPayment((int) $ro2['id'], (int) $ro2['total_cents'], 'eft');
+$ro2b = order_row((int) $ro2['id']);
+check('a late payment reinstates the order cleanly (no "cancelled" stamp)', $ro2b['status'] === 'paid' && $ro2b['cancelled_at'] === null, $ro2b['status']);
+check('… and its coupon use is restored', (bool) db_val('SELECT 1 FROM coupon_redemptions WHERE order_id = ?', [$ro2['id']]) && (int) db_val('SELECT used_count FROM coupons WHERE id = ?', [$ten]) === $usedAfterExpiry + 1);
+as_customer($c3);
+CartService::add('feeds', 6, 1);
+$cx = OrderService::place('feeds', ['billing_name' => 'Cancel CN', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
+OrderService::recordPayment((int) $cx['id'], (int) $cx['total_cents'], 'cash');
+OrderService::cancel((int) $cx['id'], 'Out of stock at supplier');
+check('the cancellation email carries the credit note', str_contains((string) db_val("SELECT attachments FROM email_queue WHERE subject LIKE ? ORDER BY id DESC LIMIT 1", ['%' . $cx['order_no'] . ' cancelled%']), '.pdf'));
 
 section('Security: logins cannot be used to lock someone else out');
 $lockPw = 'Lock-Pass-123!';

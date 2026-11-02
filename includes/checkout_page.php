@@ -56,6 +56,10 @@ require GX_ROOT . '/includes/layout/header.php';
     <h1 class="display-3"><?= $isRanch ? 'Reserve your livestock' : 'Checkout' ?></h1>
     <a class="link small" href="/<?= e($division) ?>/cart.php">← Back to <?= $isRanch ? 'selection' : 'cart' ?></a>
   </div>
+  <?php $cartChanges = CartService::changes($summary); ?>
+  <?php if ($cartChanges): ?>
+    <div class="alert alert-warning mb-2" role="alert"><strong>Your cart was updated:</strong> <?= e(implode(' ', $cartChanges)) ?></div>
+  <?php endif; ?>
   <ol class="steps mb-3" aria-label="Checkout progress">
     <li class="<?= $customer ? 'is-done' : 'is-current' ?>">Account</li>
     <li class="<?= $customer ? 'is-current' : '' ?>">Details</li>
@@ -200,6 +204,8 @@ require GX_ROOT . '/includes/layout/header.php';
           <div class="co-head"><span class="co-num">3</span><h2 class="h3">Payment</h2></div>
           <?php if ($isRanch && $quote['deposit'] > 0): ?>
             <p class="muted small">Pay the <strong><?= e(money($quote['deposit'])) ?></strong> deposit now to reserve. The balance is payable at collection<?= $quote['est_weight_kg'] > 0 ? ' (final weights confirmed on the day)' : '' ?>.</p>
+          <?php elseif ($isRanch): ?>
+            <p class="muted small">No deposit is needed for this reservation — nothing is paid now. You pay at the farm when you collect<?= $quote['est_weight_kg'] > 0 ? ' (final weights confirmed on the day)' : '' ?>.</p>
           <?php endif; ?>
           <div class="alert alert-warning" data-no-methods <?= $methods ? 'hidden' : '' ?>>Online payment isn't available for this order yet<?= !$isRanch ? ' — choose collection, or' : ' —' ?> please contact us to complete it.</div>
           <div class="option-cards" data-methods>

@@ -73,6 +73,10 @@
     };
     try {
       const q = await GX.api(api, { body, quiet: true, signal: ctrl.signal });
+      if (q.notices && q.notices.length) {
+        const key = q.notices.join('|');
+        if (key !== form.dataset.noticeShown) { form.dataset.noticeShown = key; GX.toast(q.notices.join(' '), 'error'); }
+      }
       setT('subtotal', GX.money(q.subtotal));
       setT('discount', '−' + GX.money(q.discount));
       $('[data-row="discount"]') && ($('[data-row="discount"]').hidden = !q.discount);

@@ -45,6 +45,9 @@ try {
             }
             $reason = mb_substr(trim((string) input('reason', '')) ?: 'We could not find this payment in our account.', 0, 250);
             db_exec("UPDATE payments SET status = 'rejected', rejection_reason = ?, verified_by = ?, verified_at = NOW() WHERE id = ?", [$reason, $aid, $p['id']]);
+            // The email asks for a new proof: keep the stock long enough for that
+            db_exec("UPDATE orders SET hold_expires_at = GREATEST(COALESCE(hold_expires_at, NOW()), NOW() + INTERVAL ? HOUR)
+                     WHERE id = ? AND status IN ('pending_payment','reserved') AND payment_status = 'unpaid'", [setting_int('pop_reupload_hours', 24), $p['order_id']]);
             $o = db_one('SELECT o.*, c.first_name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.id = ?', [$p['order_id']]);
             OrderService::history((int) $o['id'], $o['status'], $o['status'], 'Proof of payment rejected: ' . $reason, 'admin', $aid);
             NotificationService::email('pop_rejected', $o['billing_email'], $o['billing_name'], ['first_name' => $o['first_name'], 'order_no' => $o['order_no'], 'reason' => $reason],

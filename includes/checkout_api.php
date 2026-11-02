@@ -9,6 +9,12 @@ declare(strict_types=1);
 defined('GX_ROOT') || exit;
 /** @var string $division */
 
+/** Changes the cart made on its own (stock capped, item removed, coupon dropped) — the customer must see them. */
+function checkout_notices(array $q): array
+{
+    return CartService::changes($q);
+}
+
 api_post();
 $customer = require_customer_api();
 $action = (string) input('action', 'quote');
@@ -22,6 +28,7 @@ if ($action === 'quote') {
     }
     $q = OrderService::quote($division, ['fulfilment' => $all['fulfilment'] ?? 'collection', 'town' => $town, 'payment_method' => $all['payment_method'] ?? ''], $customer);
     json_ok([
+        'notices' => checkout_notices($q),
         'subtotal' => $q['subtotal'], 'discount' => $q['discount'], 'delivery' => $q['delivery'], 'total' => $q['total'], 'vat' => $q['vat'],
         'deposit' => $q['deposit'], 'due_now' => $q['due_now'], 'balance' => $q['balance'], 'errors' => $q['errors'],
         'zone' => $q['zone'], 'methods' => OrderService::allowedPaymentMethods($division, $q['fulfilment'], $q['deposit']),
@@ -91,18 +98,16 @@ if ($fulfilment === 'delivery') {
         }
         $data['address'] = $addr;
         $data['town'] = $addr['town'];
-        if (!empty($all['save_address'])) {
-            db_exec('INSERT INTO customer_addresses (customer_id, recipient_name, phone, farm_name, line1, town, postal_code, directions, gps_lat, gps_lng, is_default)
-                     VALUES (?,?,?,?,?,?,?,?,?,?, NOT EXISTS (SELECT 1 FROM customer_addresses x WHERE x.customer_id = ?))', [
-                $customer['id'], $addr['recipient_name'], $addr['phone'], $addr['farm_name'], $addr['line1'], $addr['town'], $addr['postal_code'],
-                $addr['directions'], $addr['gps_lat'], $addr['gps_lng'], $customer['id'],
-            ]);
-        }
+        $saveAddress = !empty($all['save_address']) ? $addr : null; // saved once the order is placed
     }
 }
 
 // VAT invoices over R5 000 need the buyer's address
 $q = OrderService::quote($division, $data, $customer);
+// The cart changed on its own (less stock, item gone, coupon dropped): show it before taking the order
+if ($changed = checkout_notices($q)) {
+    json_error(implode(' ', $changed) . ' Please check your order and place it again.', 409, ['notices' => implode(' ', $changed)]);
+}
 if (PricingService::divisionVatBp(division_id($division)) > 0 && $q['total'] > 500000 && empty($data['billing_address'])) {
     json_error(t('error.validation'), 422, ['billing_address' => 'Your billing address is required for tax invoices over R5 000.']);
 }
@@ -113,9 +118,25 @@ try {
     json_error($e->getMessage(), 409);
 }
 
-// Remember useful details on the profile
-db_exec('UPDATE customers SET phone = COALESCE(NULLIF(phone, \'\'), ?), farm_name = COALESCE(NULLIF(farm_name, \'\'), ?), vat_no = COALESCE(NULLIF(vat_no, \'\'), ?) WHERE id = ?',
+// Remember useful details on the profile (the billing company is the company name, not the farm name)
+db_exec('UPDATE customers SET phone = COALESCE(NULLIF(phone, \'\'), ?), company_name = COALESCE(NULLIF(company_name, \'\'), ?), vat_no = COALESCE(NULLIF(vat_no, \'\'), ?) WHERE id = ?',
     [$data['billing_phone'], $data['billing_company'], $data['billing_vat_no'], $customer['id']]);
+// "Save this address": only now that the order exists, never twice, at most 20 per customer
+if (!empty($saveAddress)) {
+    try {
+        $dup = db_val('SELECT 1 FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND town = ?', [$customer['id'], $saveAddress['line1'], $saveAddress['town']]);
+        $count = (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$customer['id']]);
+        if (!$dup && $count < 20) {
+            db_insert('INSERT INTO customer_addresses (customer_id, recipient_name, phone, farm_name, line1, town, postal_code, directions, gps_lat, gps_lng, is_default)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)', [
+                $customer['id'], $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['line1'], $saveAddress['town'],
+                $saveAddress['postal_code'], $saveAddress['directions'], $saveAddress['gps_lat'], $saveAddress['gps_lng'], $count === 0 ? 1 : 0,
+            ]);
+        }
+    } catch (Throwable $e) {
+        gx_log('warning', 'Saving the delivery address failed', ['order' => $order['order_no'], 'error' => $e->getMessage()]);
+    }
+}
 if (!empty($data['marketing_opt_in'])) {
     db_exec('UPDATE customers SET marketing_opt_in = 1, marketing_opt_in_at = NOW() WHERE id = ?', [$customer['id']]);
 }

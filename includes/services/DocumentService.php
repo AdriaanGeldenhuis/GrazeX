@@ -116,12 +116,8 @@ final class DocumentService
         }
         $discount = (int) $order['discount_cents'];
         if ($discount > 0) {
-            $sub = array_sum($byRate);
-            $left = $discount;
             $rates = array_keys($byRate);
-            foreach ($rates as $i => $rate) {
-                $share = $i === count($rates) - 1 ? $left : (int) round($discount * $byRate[$rate] / max(1, $sub));
-                $left -= $share;
+            foreach (self::allocateDiscount($byRate, $discount) as $rate => $share) {
                 if ($share > 0) {
                     $lines[] = self::line('Discount' . ($order['coupon_code'] ?? '' ? ' (' . $order['coupon_code'] . ')' : '') . (count($rates) > 1 ? ($rate ? ' — standard-rated' : ' — zero-rated') : ''),
                         1, null, -$share, -$share, $rate, $rate === 0 && $rateStd > 0, null);
@@ -132,6 +128,28 @@ final class DocumentService
             $lines[] = self::line('Delivery', 1, null, (int) $order['delivery_cents'], (int) $order['delivery_cents'], $rateStd, false, null);
         }
         return $lines;
+    }
+
+    /**
+     * Split a discount across VAT rates in proportion to the line totals per rate ([rate => incl total]).
+     * Used for both the checkout quote and the invoice, so the order's VAT always equals the invoice's VAT.
+     * Returns [rate => discount share] (shares add up to the discount exactly).
+     */
+    public static function allocateDiscount(array $byRate, int $discount): array
+    {
+        if ($discount <= 0 || !$byRate) {
+            return [];
+        }
+        $sub = array_sum($byRate);
+        $left = $discount;
+        $rates = array_keys($byRate);
+        $out = [];
+        foreach ($rates as $i => $rate) {
+            $share = $i === count($rates) - 1 ? $left : (int) round($discount * $byRate[$rate] / max(1, $sub));
+            $left -= $share;
+            $out[$rate] = $share;
+        }
+        return $out;
     }
 
     public static function line(string $desc, float $qty, ?string $unit, int $unitIncl, int $lineIncl, int $rateBp, bool $zero, ?int $itemId): array

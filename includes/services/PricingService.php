@@ -126,7 +126,9 @@ final class PricingService
         if ($c['starts_at'] && strtotime($c['starts_at']) > time()) {
             return $fail('That coupon is not active yet.');
         }
-        if ($c['ends_at'] && strtotime($c['ends_at']) < time()) {
+        // An end date without a time (00:00) means "valid through that whole day"
+        $ends = $c['ends_at'] ? (str_ends_with((string) $c['ends_at'], '00:00:00') ? strtotime(substr((string) $c['ends_at'], 0, 10) . ' 23:59:59') : strtotime((string) $c['ends_at'])) : null;
+        if ($ends !== null && $ends < time()) {
             return $fail('That coupon has expired.');
         }
         if ($c['max_uses'] !== null && (int) $c['used_count'] >= (int) $c['max_uses']) {

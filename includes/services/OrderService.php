@@ -125,12 +125,21 @@ final class OrderService
         }
 
         $total = $subtotal - $discount + $delivery;
+        // VAT exactly as the invoice will show it: per line, delivery at the standard rate, and the discount
+        // split across the VAT rates in the same way (DocumentService::allocateDiscount)
         $vat = 0;
+        $byRate = [];
         foreach ($lines as $l) {
-            $vat += $l['zero_rated'] ? 0 : vat_from_incl($l['total'], $vatBp);
+            $rate = $l['zero_rated'] ? 0 : $vatBp;
+            $vat += vat_from_incl($l['total'], $rate);
+            $byRate[$rate] = ($byRate[$rate] ?? 0) + $l['total'];
         }
-        $vat += vat_from_incl($delivery, $vatBp) - ($discount > 0 ? vat_from_incl($discount, $vatBp) : 0);
-        $deposit = $div === 'ranch' ? (int) $summary['deposit'] : 0;
+        foreach (DocumentService::allocateDiscount($byRate, $discount) as $rate => $share) {
+            $vat -= vat_from_incl($share, $rate);
+        }
+        $vat += vat_from_incl($delivery, $vatBp);
+        // The deposit can never be more than the order (e.g. a coupon on a high-deposit lot)
+        $deposit = $div === 'ranch' ? min((int) $summary['deposit'], max(0, $total)) : 0;
         $dueNow = $div === 'ranch' ? $deposit : (($in['payment_method'] ?? '') === 'cash_on_collection' ? 0 : $total);
 
         return [
@@ -183,21 +192,32 @@ final class OrderService
             }
         } else {
             $zoneRow = DeliveryService::zoneForTown((string) $in['town']);
+            if (!$zoneRow) {
+                throw new DomainException('We no longer deliver to that town — please choose collection or another town.');
+            }
             if (!in_array((string) ($in['delivery_date'] ?? ''), DeliveryService::deliveryDates($zoneRow, 10), true)) {
                 throw new DomainException('Please choose one of the available delivery dates.');
             }
             $deliveryDate = (string) $in['delivery_date'];
         }
 
-        // Status + stock hold window
+        // Status + stock hold window. Nothing is paid up front for pay-on-collection and deposit-free reservations,
+        // so an account whose email is not confirmed yet only holds stock until the end of the collection day.
+        $cashDays = !empty($customer['email_verified_at']) ? setting_int('cash_hold_days', 3) : 0;
+        $paymentStatus = 'unpaid';
         if ($div === 'ranch') {
             $status = 'reserved';
             $hold = $quote['deposit'] > 0
                 ? date('Y-m-d H:i:s', time() + setting_int('ranch_deposit_hold_hours', 48) * 3600)
-                : date('Y-m-d 23:59:59', strtotime($in['collection_date'] . ' +' . setting_int('cash_hold_days', 3) . ' days'));
+                : date('Y-m-d 23:59:59', strtotime($in['collection_date'] . ' +' . $cashDays . ' days'));
+        } elseif ((int) $quote['total'] === 0) {
+            // Nothing to pay (e.g. a 100% coupon): the order is paid as placed
+            $status = 'paid';
+            $paymentStatus = 'paid';
+            $hold = null;
         } elseif ($method === 'cash_on_collection') {
             $status = 'awaiting_collection';
-            $hold = date('Y-m-d 23:59:59', strtotime($in['collection_date'] . ' +' . setting_int('cash_hold_days', 3) . ' days'));
+            $hold = date('Y-m-d 23:59:59', strtotime($in['collection_date'] . ' +' . $cashDays . ' days'));
         } else {
             $status = 'pending_payment';
             $hold = $method === 'yoco'
@@ -205,7 +225,27 @@ final class OrderService
                 : date('Y-m-d H:i:s', time() + setting_int('eft_hold_hours', 48) * 3600);
         }
 
-        $order = db_tx(static function () use ($div, $divisionId, $quote, $in, $customer, $method, $status, $hold, $slot, $deliveryDate): array {
+        $cartId = (int) (CartService::current($div)['id'] ?? 0);
+        $order = db_tx(static function () use ($div, $divisionId, $quote, $in, $customer, $method, $status, $paymentStatus, $hold, $slot, $deliveryDate, $cartId): array {
+            // 0. One order per cart: lock the cart and check it still holds exactly what was quoted
+            //    (a double click or a second tab waits here, then finds the cart already ordered).
+            //    These locks come FIRST, before any plain read, so every later read in this transaction
+            //    sees the data as it is after the lock was granted.
+            if (!$cartId || !db_val('SELECT id FROM carts WHERE id = ? FOR UPDATE', [$cartId])) {
+                throw new DomainException('Your cart is empty.');
+            }
+            if ($slot) {
+                db_val('SELECT id FROM collection_slots WHERE id = ? FOR UPDATE', [$slot['id']]);
+            }
+            CartService::forget($div);
+            $fresh = self::quote($div, $in, $customer);
+            if (!$fresh['lines']) {
+                throw new DomainException('Your cart is empty.');
+            }
+            if (self::quoteSignature($fresh) !== self::quoteSignature($quote)) {
+                throw new DomainException('Your cart changed while you were checking out — please check the totals and try again.');
+            }
+
             // 1. Lock stock rows in id order and re-check (prevents overselling under concurrency)
             $isFeeds = $div === 'feeds';
             $ids = array_map(static fn($l) => (int) $l['target_id'], $quote['lines']);
@@ -223,6 +263,29 @@ final class OrderService
                 }
             }
 
+            // 1b. Collection slot: count again under the slot lock taken in step 0 (two buyers cannot both take the last place)
+            if ($slot) {
+                $capacity = (int) db_val('SELECT capacity FROM collection_slots WHERE id = ?', [$slot['id']]);
+                $taken = (int) db_val("SELECT COUNT(*) FROM orders WHERE division_id = ? AND collection_date = ? AND collection_slot_id = ?
+                                       AND status NOT IN ('cancelled','expired','refunded') LOCK IN SHARE MODE", [$divisionId, $in['collection_date'], $slot['id']]);
+                if ($taken >= $capacity) {
+                    throw new DomainException('That collection time has just filled up. Please choose another.');
+                }
+            }
+
+            // 1c. Coupon: claim a use atomically (limits hold under concurrency); a coupon that gives nothing is not used
+            $couponId = $quote['coupon'] && (int) $quote['discount'] > 0 ? (int) $quote['coupon']['id'] : null;
+            if ($couponId) {
+                if (db_exec('UPDATE coupons SET used_count = used_count + 1 WHERE id = ? AND is_active = 1 AND (max_uses IS NULL OR used_count < max_uses)', [$couponId]) !== 1) {
+                    throw new DomainException('That coupon has just been fully redeemed — please remove it from your cart and try again.');
+                }
+                $perCustomer = db_val('SELECT max_uses_per_customer FROM coupons WHERE id = ?', [$couponId]);
+                if ($perCustomer !== null && (int) db_val('SELECT COUNT(*) FROM coupon_redemptions WHERE coupon_id = ? AND customer_id = ? LOCK IN SHARE MODE',
+                        [$couponId, $customer['id']]) >= (int) $perCustomer) {
+                    throw new DomainException('You have already used this coupon.');
+                }
+            }
+
             // 2. Order row
             $orderNo = DocumentService::orderNumber($divisionId);
             $addr = $in['address'] ?? [];
@@ -233,7 +296,7 @@ final class OrderService
                     vat_rate_bp, zero_rated, subtotal_cents, discount_cents, delivery_cents, vat_cents, total_cents, deposit_due_cents, coupon_id,
                     customer_note, hold_expires_at, pay_token)
                 VALUES (?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?)', [
-                $divisionId, $orderNo, $customer['id'], $status, 'unpaid', $method, $quote['fulfilment'],
+                $divisionId, $orderNo, $customer['id'], $status, $paymentStatus, $method, $quote['fulfilment'],
                 $slot ? $slot['collection_point_id'] : null, $slot['id'] ?? null, $slot ? $in['collection_date'] : null,
                 $quote['zone']['id'] ?? null, $deliveryDate,
                 $addr['recipient_name'] ?? null, $addr['phone'] ?? null, $addr['farm_name'] ?? null, $addr['line1'] ?? null, $addr['line2'] ?? null,
@@ -242,7 +305,7 @@ final class OrderService
                 $in['billing_name'], $customer['email'], $in['billing_phone'] ?? null, $in['billing_company'] ?? null, $in['billing_vat_no'] ?? null,
                 $in['billing_address'] ?? null, $in['buyer_id_number'] ?? null, $in['buyer_brand_mark'] ?? null, $in['transport_note'] ?? null,
                 $quote['vat_bp'], $quote['zero_rated'] ? 1 : 0, $quote['subtotal'], $quote['discount'], $quote['delivery'],
-                $quote['vat'], $quote['total'], $quote['deposit'], $quote['coupon']['id'] ?? null,
+                $quote['vat'], $quote['total'], $quote['deposit'], $couponId,
                 $in['customer_note'] ?? null, $hold, random_token(32),
             ]);
 
@@ -251,7 +314,8 @@ final class OrderService
                 $row = $locked[(int) $l['target_id']];
                 db_exec('INSERT INTO order_items (order_id, variant_id, lot_id, name, sku, variant_name, qty, pricing_mode, unit_price_cents,
                          est_weight_kg, line_total_cents, vat_rate_bp, zero_rated, unit_cost_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [
-                    $orderId, $isFeeds ? $l['target_id'] : null, $isFeeds ? null : $l['target_id'], $l['name'], $l['sku'], $l['variant'],
+                    $orderId, $isFeeds ? $l['target_id'] : null, $isFeeds ? null : $l['target_id'], mb_substr((string) $l['name'], 0, 191), $l['sku'],
+                    $l['variant'] !== null ? mb_substr((string) $l['variant'], 0, 200) : null,
                     $l['qty'], $isFeeds ? 'unit' : $l['pricing_mode'], $isFeeds ? $l['unit'] : ($l['pricing_mode'] === 'per_kg' ? $l['price_cents'] : $l['unit']),
                     $isFeeds ? null : $l['est_weight_kg'], $l['total'], $quote['vat_bp'], $l['zero_rated'] ? 1 : 0, $row['cost_cents'],
                 ]);
@@ -260,11 +324,13 @@ final class OrderService
                          : StockService::adjustLot((int) $l['target_id'], -(int) $l['qty'], 'sale', $opts);
             }
 
-            // 4. Coupon redemption
-            if ($quote['coupon']) {
+            // 4. Coupon redemption (the use was claimed in step 1c)
+            if ($couponId) {
                 db_exec('INSERT INTO coupon_redemptions (coupon_id, order_id, customer_id, discount_cents) VALUES (?,?,?,?)',
-                    [$quote['coupon']['id'], $orderId, $customer['id'], $quote['discount']]);
-                db_exec('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?', [$quote['coupon']['id']]);
+                    [$couponId, $orderId, $customer['id'], $quote['discount']]);
+            }
+            if ($paymentStatus === 'paid') {
+                db_exec('UPDATE orders SET paid_at = NOW() WHERE id = ?', [$orderId]);
             }
 
             self::history($orderId, null, $status, 'Order placed', 'customer', (int) $customer['id']);
@@ -272,28 +338,47 @@ final class OrderService
             return db_one('SELECT * FROM orders WHERE id = ?', [$orderId]);
         });
 
-        // After commit: documents + notifications (never block the order on email/PDF problems)
-        try {
+        // After commit, and after the customer already has their answer (a slow mail server never slows checkout):
+        // documents + notifications, each on its own so one failure never skips the others
+        $firstName = (string) $customer['first_name'];
+        gx_after_response('Order confirmation for ' . $order['order_no'], static function () use ($order, $divisionId, $firstName): void {
             $docId = DocumentService::issue((int) $order['id'], 'order_confirmation');
+            $attach = DocumentService::attachment($docId);
+            if ($order['payment_status'] === 'paid' && (int) $order['division_id'] === division_id('feeds')) {
+                $attach = array_merge($attach, DocumentService::attachment(DocumentService::issue((int) $order['id'], 'tax_invoice')));
+            }
             $instructions = self::paymentInstructions($order);
             NotificationService::email('order_placed', $order['billing_email'], $order['billing_name'], [
-                'first_name' => $customer['first_name'], 'order_no' => $order['order_no'], 'payment_instructions' => $instructions,
+                'first_name' => $firstName, 'order_no' => $order['order_no'], 'payment_instructions' => $instructions,
                 'payment_instructions_md' => $instructions,
-            ], $divisionId, DocumentService::attachment($docId), ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($order['order_no']))]);
+            ], $divisionId, $attach, ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($order['order_no']))]);
+        });
+        gx_after_response('New-order alert for ' . $order['order_no'], static function () use ($order, $divisionId, $method): void {
             NotificationService::admin('new_order', 'New ' . division($divisionId)['name'] . ' order ' . $order['order_no'] . ' (' . money((int) $order['total_cents']) . ')',
                 $order['billing_name'] . ' · ' . strtoupper(str_replace('_', ' ', $method)) . ' · ' . ($order['fulfilment'] === 'delivery' ? 'Delivery to ' . $order['ship_town'] : 'Collection ' . fmt_date($order['collection_date'])),
                 '/admin/order.php?id=' . $order['id'], $divisionId);
-        } catch (Throwable $e) {
-            gx_log('error', 'Post-order tasks failed', ['order' => $order['order_no'], 'error' => $e->getMessage()]);
-        }
+        });
         audit('order.placed', 'order', (int) $order['id'], ['order_no' => $order['order_no'], 'total' => $order['total_cents']]);
         return $order;
     }
 
+    /** What the customer agreed to: lines, quantities and money. Used to detect a cart that changed under the lock. */
+    private static function quoteSignature(array $q): string
+    {
+        return json_encode([
+            array_map(static fn($l) => [(int) $l['target_id'], (int) $l['qty'], (int) $l['total']], $q['lines']),
+            (int) $q['subtotal'], (int) $q['discount'], (int) $q['delivery'], (int) $q['total'], (int) $q['deposit'], $q['coupon']['id'] ?? null,
+        ]);
+    }
+
     public static function allowedPaymentMethods(string $div, string $fulfilment, int $deposit): array
     {
+        if ($div === 'ranch' && $deposit === 0) {
+            // Nothing is due now: the reservation is paid at the farm (card/EFT here would charge the full estimate)
+            return ['cash_on_collection'];
+        }
         $m = [];
-        if (setting_bool('payment_yoco_enabled', true) && (string) env('yoco.' . env('yoco.mode', 'test') . '_secret_key', '') !== '') {
+        if (setting_bool('payment_yoco_enabled', true) && YocoService::configured()) {
             $m[] = 'yoco';
         }
         // EFT only once the division's bank details are filled in (Admin → Settings) — otherwise the
@@ -304,10 +389,6 @@ final class OrderService
         $cashOk = $div === 'ranch' ? $deposit === 0 : $fulfilment === 'collection';
         if (setting_bool('payment_cash_enabled', true) && $cashOk) {
             $m[] = 'cash_on_collection';
-        }
-        if ($div === 'ranch' && $deposit === 0) {
-            // Nothing due now: reservation without online payment
-            $m = array_values(array_unique(array_merge($m, ['cash_on_collection'])));
         }
         return $m;
     }
@@ -411,6 +492,14 @@ final class OrderService
                     throw new LatePaymentException('Payment received for expired order ' . $o['order_no'] . ' but stock is no longer available — refund needed.');
                 }
                 $newStatus = $isRanch ? 'reserved' : 'pending_payment';
+                // Reinstated: undo what the expiry did (cancel stamp, coupon use)
+                db_exec('UPDATE orders SET cancelled_at = NULL, cancel_reason = NULL WHERE id = ?', [$orderId]);
+                if ($o['coupon_id'] && !db_val('SELECT 1 FROM coupon_redemptions WHERE order_id = ?', [$orderId])) {
+                    db_exec('INSERT INTO coupon_redemptions (coupon_id, order_id, customer_id, discount_cents) VALUES (?,?,?,?)',
+                        [$o['coupon_id'], $orderId, $o['customer_id'], (int) $o['discount_cents']]);
+                    db_exec('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?', [$o['coupon_id']]);
+                }
+                self::history($orderId, 'expired', $newStatus, 'Order reinstated — payment arrived after the hold had expired', 'system');
             }
 
             if ($isRanch) {
@@ -650,7 +739,7 @@ final class OrderService
             $template = match ($finalStatus) { 'expired' => 'order_expired', 'refunded' => 'order_refunded', default => 'order_cancelled' };
             NotificationService::email($template, $o['billing_email'], $o['billing_name'],
                 ['first_name' => $first, 'order_no' => $o['order_no'], 'reason' => $reason], (int) $o['division_id'],
-                $finalStatus === 'refunded' && $cnId ? DocumentService::attachment($cnId) : []);
+                $cnId ? DocumentService::attachment($cnId) : []);
             if ((int) $o['amount_paid_cents'] > 0 && $finalStatus !== 'refunded') {
                 NotificationService::admin('refund_due', 'Refund due on ' . $o['order_no'], money((int) $o['amount_paid_cents']) . ' was paid before the order was ' . $finalStatus . '.',
                     '/admin/order.php?id=' . $orderId, (int) $o['division_id']);
@@ -741,6 +830,16 @@ final class OrderService
 
     public static function expireDue(int $limit = 25): int
     {
+        // Part-paid orders are never released automatically: tell the admin once, then stop the clock
+        foreach (db_all("SELECT id, order_no, division_id, amount_paid_cents, total_cents, deposit_due_cents FROM orders
+                         WHERE status IN ('pending_payment','reserved') AND payment_status = 'partial'
+                         AND hold_expires_at IS NOT NULL AND hold_expires_at < NOW() LIMIT " . (int) $limit) as $p) {
+            if (db_exec('UPDATE orders SET hold_expires_at = NULL WHERE id = ? AND hold_expires_at IS NOT NULL', [$p['id']]) === 1) {
+                NotificationService::admin('payment_overdue', 'Part-paid order past its hold: ' . $p['order_no'],
+                    money((int) $p['amount_paid_cents']) . ' of ' . money((int) ($p['deposit_due_cents'] ?: $p['total_cents'])) . ' received. Contact the customer, then record the rest or cancel (a refund is flagged).',
+                    '/admin/order.php?id=' . $p['id'], (int) $p['division_id']);
+            }
+        }
         $due = db_col("SELECT id FROM orders WHERE status IN ('pending_payment','reserved','awaiting_collection') AND payment_status = 'unpaid'
                        AND hold_expires_at IS NOT NULL AND hold_expires_at < NOW() ORDER BY hold_expires_at LIMIT " . (int) $limit);
         $n = 0;
