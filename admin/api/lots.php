@@ -59,8 +59,10 @@ try {
     json_error($e->getMessage(), 422);
 }
 
-$id = db_tx(static function () use ($d, $in, $id, $slug, $cost, $admin): int {
+$before = null;
+$id = db_tx(static function () use ($d, $in, $id, $slug, $cost, $admin, &$before): int {
     $existing = $id ? db_one('SELECT * FROM lots WHERE id = ? FOR UPDATE', [$id]) : null;
+    $before = $existing;
     $vals = [strtoupper($d['lot_no']), $slug, $d['title'], $d['breed_id'], $d['category_id'], $d['sex'], $d['age_months_min'], $d['age_months_max'],
              $d['tag_no'], $d['qty_total'], $d['avg_weight_kg'], $d['pricing_mode'], $d['price'], $d['deposit_pct'], $cost, $d['available_from'],
              $d['location'], $d['short_description'], $d['description_md'], $d['health_summary'], $d['video_url'], $d['status'],
@@ -122,5 +124,6 @@ $id = db_tx(static function () use ($d, $in, $id, $slug, $cost, $admin): int {
     }
     return $id;
 });
-audit('lot.saved', 'lot', $id, ['title' => $d['title']]);
+audit($before ? 'lot.saved' : 'lot.created', 'lot', $id, ['title' => $d['title'],
+    'changes' => audit_diff($before, db_one('SELECT * FROM lots WHERE id = ?', [$id]), ['updated_at', 'created_at', 'description_md'])]);
 json_ok(['redirect' => '/admin/lot.php?id=' . $id], 'Lot saved.');

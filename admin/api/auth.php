@@ -3,6 +3,7 @@
  * Admin auth API: {action: login, email, password} → {action: 2fa, code (6 digits or a recovery code)} | {action: logout}
  *                 {action: 2fa_setup, password} → secret · {action: 2fa_enable, code} · {action: 2fa_disable, password}
  *                 {action: password, current_password, password, password_confirm}
+ *                 {action: forgot, email} · {action: reset, token, password, password_confirm} — "forgot password" by email
  */
 declare(strict_types=1);
 
@@ -137,6 +138,38 @@ switch ($action) {
         audit('admin.password_changed', 'admin_user', (int) $a['id']);
         login_admin(db_one('SELECT * FROM admin_users WHERE id = ?', [$a['id']]));
         json_ok([], 'Password changed.');
+
+    case 'forgot':
+        rate_limit_or_fail('admin_forgot', rate_limit_ip(), 5, 3600);
+        $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191']);
+        // Same limit, same answer and the email sent after the response, whether or not the login exists (no enumeration)
+        rate_limit_or_fail('admin_forgot_email', $d['email'], 3, 3600);
+        $a = db_one("SELECT * FROM admin_users WHERE email = ? AND status = 'active'", [$d['email']]);
+        if ($a) {
+            $token = admin_token_create((int) $a['id']);
+            $link = app_url('/admin/reset.php?token=' . $token);
+            $first = explode(' ', trim((string) $a['name']))[0];
+            $qid = NotificationService::email('admin_password_reset', $a['email'], $a['name'], ['first_name' => $first, 'link' => $link],
+                null, [], ['label' => 'Choose a new password', 'url' => $link], false);
+            if ($qid) {
+                register_shutdown_function(static fn() => MailService::sendNow($qid));
+            }
+            audit('admin.password_reset_requested', 'admin_user', (int) $a['id']);
+        }
+        json_ok([], 'If that email has an admin login, a reset link is on its way. It works for one hour.');
+
+    case 'reset':
+        rate_limit_or_fail('admin_reset', rate_limit_ip(), 10, 3600);
+        $d = validate_or_fail(input_all(), ['token' => 'required|regex:/^[a-f0-9]{64}$/', 'password' => 'required|password', 'password_confirm' => 'required|same:password']);
+        $aid = admin_token_consume($d['token']);
+        if (!$aid) {
+            json_error('This reset link has expired or was already used. Ask for a new one.', 422);
+        }
+        // New password, every session logged out; two-step verification stays on (recovery codes still work)
+        db_exec('UPDATE admin_users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?', [admin_password_hash($d['password']), $aid]);
+        rate_limit_clear('admin_login_account', (string) db_val('SELECT email FROM admin_users WHERE id = ?', [$aid]));
+        audit('admin.password_reset', 'admin_user', $aid);
+        json_ok(['redirect' => '/admin/login.php'], 'Password changed — log in with your new password.');
 
     default:
         json_error('Unknown action.', 400);

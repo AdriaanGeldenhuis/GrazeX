@@ -14,6 +14,7 @@ if ($cat) { $where[] = 'p.category_id = ?'; $params[] = $cat; }
 $products = db_all('SELECT p.*, c.name AS category_name,
         (SELECT pm.media_id FROM product_media pm WHERE pm.product_id = p.id ORDER BY pm.sort_order LIMIT 1) AS media_id
     FROM products p JOIN categories c ON c.id = p.category_id WHERE ' . implode(' AND ', $where) . ' ORDER BY p.is_active DESC, p.sort_order, p.name', $params);
+media_prime(array_column($products, 'media_id'));
 $variants = [];
 foreach (db_all('SELECT * FROM product_variants ORDER BY sort_order, id') as $v) {
     $variants[$v['product_id']][] = $v;

@@ -3,7 +3,7 @@
  * Admin inventory API.
  *   {action: adjust, variant_id, change: "+10 reason"} · {action: adjust_lot, lot_id, change}
  *   {action: receive, supplier_name, supplier_invoice_no, received_on, lines[{variant_id, qty, unit_cost}]}
- *   {action: stocktake_start} · {action: stocktake_save, id, counts{itemId: qty}} · {action: stocktake_complete, id} · {action: stocktake_cancel, id}
+ *   {action: stocktake_start} · {action: stocktake_save, id, counts{itemId: qty}} · {action: stocktake_complete, id, counts?} · {action: stocktake_cancel, id}
  */
 declare(strict_types=1);
 
@@ -24,21 +24,38 @@ $parseChange = static function (string $s): array {
     return [(int) $m[1], trim($m[2]) ?: 'Manual adjustment'];
 };
 
+/** Store typed counts on an open stock take (refuses lines of another stock take). Call inside a transaction. */
+$saveCounts = static function (int $takeId, array $counts): void {
+    $ids = array_map('intval', array_keys($counts));
+    $known = $ids ? (int) db_val('SELECT COUNT(*) FROM stock_take_items WHERE stock_take_id = ? AND id IN (' . db_placeholders($ids) . ')', array_merge([$takeId], $ids)) : 0;
+    if ($known !== count($ids)) {
+        throw new DomainException('Those count lines do not belong to this stock take — nothing was saved. Reload the page and try again.', 409);
+    }
+    // The ledger position at the moment of counting: movements after it are added on completion
+    $mark = (int) db_val('SELECT COALESCE(MAX(id), 0) FROM stock_movements');
+    foreach ($counts as $itemId => $qty) {
+        $qty = $qty === '' || $qty === null ? null : max(0, (int) $qty);
+        // counted_qty is assigned last so the IF()s compare against the previous count
+        db_exec('UPDATE stock_take_items SET counted_mark = IF(counted_qty <=> ?, counted_mark, ?), counted_at = IF(counted_qty <=> ?, counted_at, NOW()),
+                 counted_qty = ? WHERE id = ? AND stock_take_id = ?', [$qty, $qty === null ? null : $mark, $qty, $qty, (int) $itemId, $takeId]);
+    }
+};
+
 try {
     switch ((string) ($in['action'] ?? '')) {
         case 'adjust':
             [$delta, $reason] = $parseChange((string) ($in['change'] ?? ''));
-            $bal = StockService::adjustVariant((int) $in['variant_id'], $delta, $delta < 0 ? 'write_off' : 'adjustment', ['note' => $reason, 'admin_id' => $aid]);
+            $bal = StockService::adjustVariant((int) ($in['variant_id'] ?? 0), $delta, $delta < 0 ? 'write_off' : 'adjustment', ['note' => $reason, 'admin_id' => $aid]);
             json_ok([], 'Stock updated — now ' . $bal . '.');
         case 'adjust_lot':
             [$delta, $reason] = $parseChange((string) ($in['change'] ?? ''));
-            $bal = StockService::adjustLot((int) $in['lot_id'], $delta, 'adjustment', ['note' => $reason, 'admin_id' => $aid]);
+            $bal = StockService::adjustLot((int) ($in['lot_id'] ?? 0), $delta, 'adjustment', ['note' => $reason, 'admin_id' => $aid]);
             if ($delta > 0) {
-                db_exec('UPDATE lots SET qty_total = GREATEST(qty_total, qty_available) WHERE id = ?', [(int) $in['lot_id']]);
+                db_exec('UPDATE lots SET qty_total = GREATEST(qty_total, qty_available) WHERE id = ?', [(int) ($in['lot_id'] ?? 0)]);
             }
             json_ok([], 'Livestock updated — ' . $bal . ' available.');
         case 'receive':
-            $lines = array_values(array_filter((array) ($in['lines'] ?? []), static fn($l) => (int) ($l['qty'] ?? 0) > 0));
+            $lines = array_values(array_filter((array) ($in['lines'] ?? []), static fn($l) => is_array($l) && (int) ($l['qty'] ?? 0) > 0));
             if (!$lines) {
                 json_error('Add at least one line with a quantity.', 422);
             }
@@ -48,9 +65,10 @@ try {
                     af_date($in['received_on'] ?? '') ?? date('Y-m-d'), $aid]);
                 foreach ($lines as $l) {
                     $cost = af_cents($l['unit_cost'] ?? '');
-                    db_exec('INSERT INTO stock_receipt_items (receipt_id, variant_id, qty, unit_cost_cents) VALUES (?,?,?,?)', [$rid, (int) $l['variant_id'], (int) $l['qty'], $cost]);
-                    StockService::adjustVariant((int) $l['variant_id'], (int) $l['qty'], 'receive', ['unit_cost_cents' => $cost, 'reference' => 'GRV-' . $rid,
+                    // Stock first: an unknown product stops here with a clear message (not a database error)
+                    StockService::adjustVariant((int) ($l['variant_id'] ?? 0), (int) $l['qty'], 'receive', ['unit_cost_cents' => $cost, 'reference' => 'GRV-' . $rid,
                         'note' => trim('Received ' . ($in['supplier_name'] ?? '') . ' ' . ($in['supplier_invoice_no'] ?? '')), 'admin_id' => $aid]);
+                    db_exec('INSERT INTO stock_receipt_items (receipt_id, variant_id, qty, unit_cost_cents) VALUES (?,?,?,?)', [$rid, (int) $l['variant_id'], (int) $l['qty'], $cost]);
                 }
                 return count($lines);
             });
@@ -70,27 +88,17 @@ try {
             if (!$takeId || !db_val("SELECT 1 FROM stock_takes WHERE id = ? AND status = 'open'", [$takeId])) {
                 json_error('This stock take is no longer open — reload the page.', 409);
             }
-            $ids = array_map('intval', array_keys($counts));
-            $known = $ids ? (int) db_val('SELECT COUNT(*) FROM stock_take_items WHERE stock_take_id = ? AND id IN (' . db_placeholders($ids) . ')', array_merge([$takeId], $ids)) : 0;
-            if ($known !== count($ids)) {
-                json_error('Those count lines do not belong to this stock take — nothing was saved. Reload the page and try again.', 409);
-            }
-            db_tx(static function () use ($counts, $takeId): void {
-                // The ledger position at the moment of counting: movements after it are added on completion
-                $mark = (int) db_val('SELECT COALESCE(MAX(id), 0) FROM stock_movements');
-                foreach ($counts as $itemId => $qty) {
-                    $qty = $qty === '' || $qty === null ? null : max(0, (int) $qty);
-                    // counted_qty is assigned last so the IF()s compare against the previous count
-                    db_exec('UPDATE stock_take_items SET counted_mark = IF(counted_qty <=> ?, counted_mark, ?), counted_at = IF(counted_qty <=> ?, counted_at, NOW()),
-                             counted_qty = ? WHERE id = ? AND stock_take_id = ?', [$qty, $qty === null ? null : $mark, $qty, $qty, (int) $itemId, $takeId]);
-                }
-            });
+            db_tx(static fn() => $saveCounts($takeId, $counts));
             json_ok([], 'Counts saved.');
         case 'stocktake_complete':
-            $changed = db_tx(static function () use ($in, $aid): int {
-                $take = db_one("SELECT * FROM stock_takes WHERE id = ? AND status = 'open' FOR UPDATE", [(int) $in['id']]);
+            $changed = db_tx(static function () use ($in, $aid, $saveCounts): int {
+                $take = db_one("SELECT * FROM stock_takes WHERE id = ? AND status = 'open' FOR UPDATE", [(int) ($in['id'] ?? 0)]);
                 if (!$take) {
                     throw new DomainException('Stock take not found.');
+                }
+                // "Complete" also stores what is typed on the page right now (no need to press Save first)
+                if (is_array($in['counts'] ?? null)) {
+                    $saveCounts((int) $take['id'], $in['counts']);
                 }
                 $n = 0;
                 foreach (db_all('SELECT * FROM stock_take_items WHERE stock_take_id = ? AND counted_qty IS NOT NULL', [$take['id']]) as $it) {
@@ -114,11 +122,11 @@ try {
             });
             json_ok([], "Stock take complete — {$changed} item" . ($changed === 1 ? '' : 's') . ' corrected.');
         case 'stocktake_cancel':
-            db_exec("UPDATE stock_takes SET status = 'cancelled' WHERE id = ? AND status = 'open'", [(int) $in['id']]);
+            db_exec("UPDATE stock_takes SET status = 'cancelled' WHERE id = ? AND status = 'open'", [(int) ($in['id'] ?? 0)]);
             json_ok([], 'Stock take cancelled.');
         default:
             json_error('Unknown action.', 400);
     }
 } catch (DomainException $e) {
-    json_error($e->getMessage(), 422);
+    json_error($e->getMessage(), $e->getCode() === 409 ? 409 : 422);
 }

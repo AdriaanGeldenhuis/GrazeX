@@ -14,7 +14,9 @@ if ($id && !$l) {
     http_response_code(404);
     exit('Lot not found.');
 }
-$nextNo = 'GXR-L' . str_pad((string) ((int) db_val('SELECT COUNT(*) FROM lots') + 1), 3, '0', STR_PAD_LEFT);
+// Next free number after the highest GXR-L… in use (a count would repeat a number once a lot is deleted)
+$maxNo = (int) db_val("SELECT MAX(CAST(SUBSTRING(lot_no, 6) AS UNSIGNED)) FROM lots WHERE lot_no REGEXP '^GXR-L[0-9]+$'");
+$nextNo = 'GXR-L' . str_pad((string) ($maxNo + 1), 3, '0', STR_PAD_LEFT);
 $l ??= ['id' => 0, 'lot_no' => $nextNo, 'slug' => '', 'title' => '', 'breed_id' => '', 'category_id' => '', 'sex' => 'mixed', 'age_months_min' => '', 'age_months_max' => '',
         'tag_no' => '', 'qty_total' => '', 'qty_available' => 0, 'avg_weight_kg' => '', 'pricing_mode' => 'per_head', 'price_cents' => null, 'deposit_pct' => 20,
         'cost_cents' => null, 'available_from' => date('Y-m-d'), 'location' => '', 'short_description' => '', 'description_md' => '', 'health_summary' => '',

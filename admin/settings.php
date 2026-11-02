@@ -97,6 +97,8 @@ admin_start('Settings', 'settings', ['perm' => 'settings.manage']);
       <?php else: ?>
         <?= af_text('s[low_stock_email]', 'Email for admin alerts (new orders, POPs, low stock)', $v('low_stock_email'), ['type' => 'email']) ?>
         <?= af_text('s[email_hourly_cap]', 'Max emails per hour (Xneelo limit 500)', $v('email_hourly_cap'), ['type' => 'number', 'min' => 10, 'max' => 450]) ?>
+        <?= af_text('s[retention_audit_days]', 'Keep the admin activity log for (days)', $v('retention_audit_days'), ['type' => 'number', 'min' => 90, 'hint' => 'POPIA: personal information is not kept longer than needed. Minimum 90.']) ?>
+        <?= af_text('s[retention_enquiries_days]', 'Keep enquiries / contact messages for (days)', $v('retention_enquiries_days'), ['type' => 'number', 'min' => 30, 'hint' => 'Orders, invoices and payments are always kept 5 years (tax records).']) ?>
         <?= af_select('s[site_language]', 'Website language', ['en' => 'English', 'af' => 'Afrikaans (add config/lang/af.php first)'], $v('site_language') ?: 'en') ?>
         <?= af_check('s[maintenance_mode]', 'Maintenance mode — only logged-in admins can browse the site', $v('maintenance_mode') === '1', ['span' => true]) ?>
         <div class="span-2 alert alert-info small"><div>Emails waiting: <?= (int) db_val("SELECT COUNT(*) FROM email_queue WHERE status = 'queued'") ?> · failed: <?= (int) db_val("SELECT COUNT(*) FROM email_queue WHERE status = 'failed'") ?> ·

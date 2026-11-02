@@ -127,7 +127,7 @@ admin_start('Inventory', 'inventory', ['perm' => 'inventory.manage']);
       <div class="save-bar">
         <button class="btn btn-ghost" type="button" data-admin-act="/admin/api/inventory.php" data-payload='<?= e(json_encode(['action' => 'stocktake_cancel', 'id' => (int) $openTake['id']])) ?>' data-confirm="Cancel this stock take? Counts are discarded." data-danger>Cancel</button>
         <button class="btn" type="submit">Save counts</button>
-        <button class="btn btn-primary" type="button" data-admin-act="/admin/api/inventory.php" data-payload='<?= e(json_encode(['action' => 'stocktake_complete', 'id' => (int) $openTake['id']])) ?>' data-confirm="Apply the counted quantities? Differences are written to the ledger. (Save your counts first.)" data-ok="Apply">Complete stock take</button>
+        <button class="btn btn-primary" type="button" data-admin-act="/admin/api/inventory.php" data-include-form data-payload='<?= e(json_encode(['action' => 'stocktake_complete', 'id' => (int) $openTake['id']])) ?>' data-confirm="Apply the counted quantities (including what is typed now)? Differences are written to the ledger." data-ok="Apply">Complete stock take</button>
       </div>
     </form>
   <?php endif; ?>

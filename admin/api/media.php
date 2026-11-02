@@ -52,8 +52,7 @@ try {
             json_ok($out(db_one('SELECT * FROM media WHERE id = ?', [$m['id']])), 'Image updated.');
         case 'delete':
             $id = (int) input('id');
-            $used = (int) db_val('SELECT (SELECT COUNT(*) FROM product_media WHERE media_id = ?) + (SELECT COUNT(*) FROM lot_media WHERE media_id = ?)
-                                 + (SELECT COUNT(*) FROM content_blocks WHERE media_id = ?) + (SELECT COUNT(*) FROM gallery_items WHERE media_id = ?)', [$id, $id, $id, $id]);
+            $used = (int) db_val('SELECT ' . media_uses_sql((string) $id));
             if ($used) {
                 json_error('This image is still used on the site — remove it there first.', 409);
             }

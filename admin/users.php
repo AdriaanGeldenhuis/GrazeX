@@ -29,6 +29,7 @@ admin_start('Admin users', 'users', ['perm' => 'users.manage']);
           <td data-label=""><?= e(ucfirst($u['division_scope'])) ?></td><td data-label="2FA"><?= (int) $u['totp_enabled'] ? '✓' : '—' ?></td><td data-label=""><?= e(fmt_datetime($u['last_login_at'])) ?></td>
           <td class="actions"><?php if ($u['role_name'] !== 'Owner' || count(array_filter($users, static fn($x) => $x['role_name'] === 'Owner')) > 1): ?>
             <button class="btn btn-sm<?= $u['status'] === 'active' ? ' btn-danger' : '' ?>" type="button" data-admin-act="/admin/api/users.php" data-payload='<?= e(json_encode(['action' => 'toggle', 'id' => (int) $u['id']])) ?>' data-confirm="<?= $u['status'] === 'active' ? 'Disable' : 'Enable' ?> <?= e($u['name']) ?>?"><?= $u['status'] === 'active' ? 'Disable' : 'Enable' ?></button><?php endif; ?>
+            <button class="btn btn-sm btn-ghost" type="button" data-modal-open="user-edit-modal" data-fill='<?= e(json_encode(['id' => (int) $u['id'], 'name' => $u['name'], 'role_id' => (int) $u['role_id'], 'division_scope' => $u['division_scope']])) ?>' aria-label="Edit <?= e($u['name']) ?>">Edit</button>
             <?php if ((int) $u['totp_enabled']): ?><button class="btn btn-sm btn-ghost" type="button" data-admin-act="/admin/api/users.php" data-payload='<?= e(json_encode(['action' => 'reset_2fa', 'id' => (int) $u['id']])) ?>' data-confirm="Reset 2FA for <?= e($u['name']) ?>?">Reset 2FA</button><?php endif; ?></td></tr>
       <?php endforeach; ?></tbody>
     </table></div>
@@ -59,6 +60,19 @@ admin_start('Admin users', 'users', ['perm' => 'users.manage']);
       <?= af_text('password', 'Temporary password (min ' . GX_PASSWORD_MIN . ')', '', ['type' => 'password', 'required' => true, 'hint' => 'Share it privately; they should change it on first login.']) ?>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancel</button><button class="btn btn-primary" type="submit">Add</button></div>
+  </form>
+</dialog>
+<dialog class="modal" id="user-edit-modal">
+  <form data-modal-form data-api="/admin/api/users.php" data-action="update" novalidate>
+    <div class="modal-head"><h3>Edit admin user</h3><button class="nav-icon-btn" type="button" data-modal-close aria-label="Close">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" name="id" value="">
+      <?= af_text('name', 'Name', '', ['required' => true]) ?>
+      <?= af_select('role_id', 'Role', array_column($roles, 'name', 'id'), '') ?>
+      <?= af_select('division_scope', 'Can see', ['all' => 'Feeds and Ranch', 'feeds' => 'Feeds only', 'ranch' => 'Ranch only'], 'all') ?>
+      <p class="hint">To change someone's email, add them again with the new address and disable the old login.</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>
   </form>
 </dialog>
 <?php admin_end(); ?>

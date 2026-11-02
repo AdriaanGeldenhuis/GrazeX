@@ -33,6 +33,7 @@ require GX_ROOT . '/includes/layout/head.php';
         <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="username" required autofocus></div>
         <div class="field"><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required></div>
         <button class="btn btn-primary btn-lg btn-block" type="submit">Log in</button>
+        <p class="center small mt-2"><a class="link" href="/admin/forgot.php">Forgot your password?</a></p>
       </form>
     <?php endif; ?>
   </div>

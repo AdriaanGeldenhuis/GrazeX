@@ -24,7 +24,7 @@ admin_start('Documents', 'documents', ['perm' => 'documents.view']);
   <input class="input" type="search" name="q" value="<?= e($q) ?>" placeholder="Doc no, order no, customer…">
   <select class="select" name="type"><option value="">All types</option>
     <?php foreach (DocumentService::TITLES as $k => $l): ?><option value="<?= e($k) ?>"<?= $type === $k ? ' selected' : '' ?>><?= e($l) ?></option><?php endforeach; ?></select>
-  <a class="btn btn-sm" href="/admin/reports.php?export=documents"><svg class="icon icon-sm"><use href="#i-download"/></svg>CSV</a>
+  <a class="btn btn-sm" href="/admin/reports.php?<?= e(http_build_query(array_filter(['export' => 'documents', 'type' => $type, 'q' => $q]))) ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>CSV</a>
 </form>
 <div class="table-wrap"><table class="table dt dt-cards">
   <thead><tr><th>Date</th><th>Type</th><th>Number</th><th>Order / customer</th><th class="num">Total</th><th class="num">VAT</th><th></th></tr></thead>

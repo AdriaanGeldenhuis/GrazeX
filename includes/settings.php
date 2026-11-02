@@ -95,17 +95,62 @@ function content_scope(string $scope): array
     return $cache[$scope];
 }
 
+/** Request-wide cache of media rows (id => row|null). */
+function &media_cache(): array
+{
+    static $cache = [];
+    return $cache;
+}
+
+/** One media row (id, base_path, variants), loaded once per request. */
+function media_row(int $mediaId): ?array
+{
+    $cache = &media_cache();
+    if (!array_key_exists($mediaId, $cache)) {
+        $cache[$mediaId] = db_one('SELECT id, base_path, variants FROM media WHERE id = ?', [$mediaId]);
+    }
+    return $cache[$mediaId];
+}
+
+/** Load the media rows for a list of images in ONE query (call before rendering the list). */
+function media_prime(array $ids): void
+{
+    $cache = &media_cache();
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn(int $i): bool => $i > 0 && !array_key_exists($i, $cache))));
+    if (!$ids) {
+        return;
+    }
+    foreach ($ids as $i) {
+        $cache[$i] = null;
+    }
+    foreach (db_all('SELECT id, base_path, variants FROM media WHERE id IN (' . db_placeholders($ids) . ')', $ids) as $r) {
+        $cache[(int) $r['id']] = $r;
+    }
+}
+
+/** Drop a cached media row (after its files changed). */
+function media_forget(int $mediaId): void
+{
+    $cache = &media_cache();
+    unset($cache[$mediaId]);
+}
+
+/** Every table that can use a media item — an image is only "unused" when none of these points at it. */
+const GX_MEDIA_USES = ['product_media', 'lot_media', 'content_blocks', 'gallery_items', 'testimonials', 'categories', 'brands'];
+
+/** SQL expression counting the uses of the media id in $idExpr (a column such as m.id, or an integer). */
+function media_uses_sql(string $idExpr): string
+{
+    return '(' . implode(' + ', array_map(static fn(string $t): string => "(SELECT COUNT(*) FROM {$t} WHERE media_id = {$idExpr})", GX_MEDIA_USES)) . ')';
+}
+
 /**
  * Public URL for a media item at a given width (closest generated size).
  * $ratio: 'wide' (16:9 crop) or 'orig' (original aspect).
  */
 function media_url(int $mediaId, int $width = 960, string $ratio = 'wide'): ?string
 {
-    static $cache = [];
-    if (!array_key_exists($mediaId, $cache)) {
-        $cache[$mediaId] = db_one('SELECT base_path, variants FROM media WHERE id = ?', [$mediaId]);
-    }
-    $m = $cache[$mediaId];
+    $m = media_row($mediaId);
     if (!$m) {
         return null;
     }
@@ -128,7 +173,7 @@ function media_url(int $mediaId, int $width = 960, string $ratio = 'wide'): ?str
 /** srcset string for a media item. */
 function media_srcset(int $mediaId, string $ratio = 'wide'): string
 {
-    $m = db_one('SELECT variants FROM media WHERE id = ?', [$mediaId]);
+    $m = media_row($mediaId);
     $variants = json_decode((string) ($m['variants'] ?? ''), true) ?: [];
     $set = $variants[$ratio] ?? [];
     $out = [];

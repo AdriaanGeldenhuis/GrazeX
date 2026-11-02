@@ -17,6 +17,7 @@ $lots = db_all("SELECT l.*, b.name AS breed_name, c.name AS category_name,
         (SELECT COALESCE(SUM(oi.qty),0) FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE oi.lot_id = l.id AND o.status IN ('reserved','deposit_paid','finalised','ready_for_collection')) AS reserved_qty
     FROM lots l JOIN breeds b ON b.id = l.breed_id JOIN livestock_categories c ON c.id = l.category_id
     WHERE {$where} ORDER BY FIELD(l.status,'available','reserved','coming_soon','draft','sold_out','archived'), l.id DESC", $params);
+media_prime(array_column($lots, 'media_id'));
 
 admin_start('Livestock', 'lots', ['perm' => 'lots.manage']);
 ?>

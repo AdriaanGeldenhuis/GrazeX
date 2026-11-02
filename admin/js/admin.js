@@ -87,7 +87,9 @@
   GX.on(document, 'click', '[data-admin-act]', async (e, b) => {
     e.preventDefault();
     if (b.dataset.confirm && !(await GX.confirm(b.dataset.confirm, { ok: b.dataset.ok || 'Yes', danger: b.dataset.danger !== undefined }))) return;
-    const payload = JSON.parse(b.dataset.payload || '{}');
+    let payload = JSON.parse(b.dataset.payload || '{}');
+    // data-include-form: also send the surrounding form's fields (e.g. stock-take counts typed but not saved yet)
+    if (b.dataset.includeForm !== undefined && b.form) payload = Object.assign(GX.formToObject(b.form), payload);
     if (b.dataset.prompt) {
       const v = window.prompt(b.dataset.prompt, b.dataset.promptDefault || '');
       if (v === null) return;
@@ -296,6 +298,28 @@
     const field = b.closest('[data-image-field]');
     $('input[type=hidden]', field).value = '';
     $('.ip-preview', field).innerHTML = '<span class="muted small">No image</span>';
+  });
+
+  /* ---------- Prefill a modal form: <button data-modal-open="id" data-fill='{"field":"value"}'> ---------- */
+  GX.on(document, 'click', '[data-modal-open][data-fill]', (e, b) => {
+    let values;
+    try { values = JSON.parse(b.dataset.fill); } catch (_) { return; }
+    const form = document.getElementById(b.dataset.modalOpen)?.querySelector('form');
+    if (!form || !values) return;
+    Object.entries(values).forEach(([k, v]) => {
+      const el = form.elements.namedItem(k);
+      if (el && 'value' in el) el.value = v === null || v === undefined ? '' : String(v);
+    });
+  });
+
+  /* ---------- Codes typed in capitals (coupon codes, prefixes): <input data-upper> ---------- */
+  GX.on(document, 'input', 'input[data-upper]', (e, el) => {
+    const pos = el.selectionStart;
+    const up = el.value.toUpperCase();
+    if (up !== el.value) {
+      el.value = up;
+      try { el.setSelectionRange(pos, pos); } catch (_) { /* some input types have no caret */ }
+    }
   });
 
   /* ---------- Auto-slug ---------- */

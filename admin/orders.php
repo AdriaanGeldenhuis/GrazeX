@@ -7,35 +7,11 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
+require_once GX_ROOT . '/includes/admin_filters.php';
+
 $ids = admin_division_ids();
-$f = [
-    'q' => mb_substr(query_str('q'), 0, 80),
-    'division' => in_array(query_str('division'), ['feeds', 'ranch'], true) ? query_str('division') : '',
-    'status' => array_key_exists(query_str('status'), OrderService::STATUS_LABELS) ? query_str('status') : '',
-    'method' => in_array(query_str('method'), ['yoco', 'eft', 'cash_on_collection'], true) ? query_str('method') : '',
-    'queue' => in_array(query_str('queue'), ['pack', 'today', 'weigh', 'unpaid'], true) ? query_str('queue') : '',
-    'from' => preg_match('/^\d{4}-\d{2}-\d{2}$/', query_str('from')) ? query_str('from') : '',
-    'to' => preg_match('/^\d{4}-\d{2}-\d{2}$/', query_str('to')) ? query_str('to') : '',
-];
-$where = ['o.division_id IN (' . db_placeholders($ids) . ')'];
-$params = $ids;
-if ($f['division']) { $where[] = 'o.division_id = ?'; $params[] = division_id($f['division']); }
-if ($f['status']) { $where[] = 'o.status = ?'; $params[] = $f['status']; }
-if ($f['method']) { $where[] = 'o.payment_method = ?'; $params[] = $f['method']; }
-if ($f['from']) { $where[] = 'o.placed_at >= ?'; $params[] = $f['from'] . ' 00:00:00'; }
-if ($f['to']) { $where[] = 'o.placed_at <= ?'; $params[] = $f['to'] . ' 23:59:59'; }
-if ($f['q'] !== '') {
-    $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $f['q']) . '%';
-    $where[] = '(o.order_no LIKE ? OR o.billing_name LIKE ? OR o.billing_email LIKE ? OR o.billing_phone LIKE ? OR o.billing_company LIKE ?)';
-    array_push($params, $like, $like, $like, $like, $like);
-}
-$queueSql = [
-    'pack' => "o.status IN ('paid','awaiting_collection','processing')",
-    'today' => "(o.collection_date = CURDATE() OR o.delivery_date = CURDATE()) AND o.status NOT IN ('cancelled','expired','refunded','completed','collected')",
-    'weigh' => "o.status IN ('reserved','deposit_paid')",
-    'unpaid' => "o.payment_status IN ('unpaid','partial') AND o.status NOT IN ('cancelled','expired','refunded')",
-];
-if ($f['queue']) { $where[] = $queueSql[$f['queue']]; }
+// Same filter as the CSV export (admin/reports.php?export=orders&…)
+[$f, $where, $params] = admin_order_filters($_GET, $ids);
 $sqlWhere = implode(' AND ', $where);
 $perPage = 25;
 $pageNo = query_page();

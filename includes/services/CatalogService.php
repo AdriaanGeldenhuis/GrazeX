@@ -92,6 +92,7 @@ final class CatalogService
             {$base}
             ORDER BY {$order}
             LIMIT {$perPage} OFFSET " . (($page - 1) * $perPage), $params);
+        media_prime(array_column($items, 'media_id'));
 
         return ['items' => $items, 'total' => $total, 'page' => $page, 'pages' => max(1, (int) ceil($total / $perPage))];
     }
