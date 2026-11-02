@@ -1706,12 +1706,94 @@ setting_set('last_cron_run', now());
 check('… and the warning goes once cron runs again', !str_contains($p4->page('/admin/'), 'data-cron-warning'));
 db_exec("UPDATE pages SET show_in_footer = 0 WHERE slug = 'returns'");
 $home = (new TestHttp($base))->page('/pages/contact.php');
-check('a page switched off "Link in footer menu" leaves the footer', !str_contains($home, 'slug=returns') && str_contains($home, 'slug=terms'));
+check('a page switched off "Link in footer menu" leaves the footer', !str_contains($home, '/pages/returns') && str_contains($home, 'href="/pages/terms"'));
 db_exec("UPDATE pages SET show_in_footer = 1 WHERE slug = 'returns'");
-db_exec("UPDATE menu_items SET is_active = 0 WHERE url = '/pages/page.php?slug=returns'");
-check('a footer menu item switched off stays off', !str_contains((new TestHttp($base))->page('/pages/contact.php'), 'slug=returns'));
-db_exec("UPDATE menu_items SET is_active = 1 WHERE url = '/pages/page.php?slug=returns'");
+db_exec("UPDATE menu_items SET is_active = 0 WHERE url = '/pages/returns'");
+check('a footer menu item switched off stays off', !str_contains((new TestHttp($base))->page('/pages/contact.php'), '/pages/returns'));
+db_exec("UPDATE menu_items SET is_active = 1 WHERE url = '/pages/returns'");
 db_exec("UPDATE pages SET show_in_footer = 1 WHERE slug = 'returns'");
+
+section('Phase 5: one address per page, search engines');
+$pv = new TestHttp($base);
+$ldOf = static function (string $html): array {
+    preg_match_all('#<script type="application/ld\+json">(.*?)</script>#s', $html, $m);
+    return array_map(static fn($j) => json_decode($j, true), $m[1]);
+};
+$canonOf = static fn(string $html): string => preg_match('#<link rel="canonical" href="([^"]+)"#', $html, $m) ? $m[1] : '';
+// Absolute URL ending in exactly this path (the server's APP_URL is not the test process's)
+$isUrl = static fn(string $url, string $path): bool => (bool) preg_match('#^https?://[^/]+' . preg_quote($path, '#') . '$#', $url);
+$prod = db_one("SELECT p.slug, c.slug AS cslug FROM products p JOIN categories c ON c.id = p.category_id WHERE p.is_active = 1
+                AND EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id AND v.is_active = 1) ORDER BY p.id LIMIT 1");
+$h = $pv->page('/feeds/product/' . $prod['slug']);
+check('product page: canonical is its own pretty address', $isUrl($canonOf($h), '/feeds/product/' . $prod['slug']), $canonOf($h));
+$ld = $ldOf($h);
+$types = array_column($ld, '@type');
+check('product page: Product and BreadcrumbList structured data, no empty values', in_array('Product', $types, true) && in_array('BreadcrumbList', $types, true)
+    && !preg_match('#"[^"]+":(null|"")#', implode('', array_map('json_encode', $ld))), json_encode($types));
+check('product page: offer links use the pretty address', $isUrl((string) ($ld[0]['offers'][0]['url'] ?? ''), '/feeds/product/' . $prod['slug']));
+check('<html lang> comes from the site language', str_contains($h, '<html lang="en"'));
+[$st, $hd] = $pv->headers('/feeds/product.php?slug=' . $prod['slug']);
+check('old product address moves permanently to the pretty one (301)', $st === 301 && ($hd['location'] ?? '') === '/feeds/product/' . $prod['slug'], $st . ' ' . ($hd['location'] ?? ''));
+$lotSlug = (string) db_val("SELECT slug FROM lots WHERE status = 'available' ORDER BY id LIMIT 1");
+$h = $pv->page('/ranch/lot/' . $lotSlug);
+$ld = $ldOf($h);
+check('lot page: canonical, Product with an offer and availability, breadcrumbs', $isUrl($canonOf($h), '/ranch/lot/' . $lotSlug)
+    && ($ld[0]['@type'] ?? '') === 'Product' && str_starts_with((string) ($ld[0]['offers']['availability'] ?? ''), 'https://schema.org/')
+    && in_array('BreadcrumbList', array_column($ld, '@type'), true), json_encode($ld[0] ?? null));
+[$st, $hd] = $pv->headers('/ranch/lot.php?slug=' . $lotSlug);
+check('old lot address moves to the pretty one', $st === 301 && ($hd['location'] ?? '') === '/ranch/lot/' . $lotSlug);
+[$st, $hd] = $pv->headers('/pages/page.php?slug=terms');
+check('old information page address moves to /pages/terms', $st === 301 && ($hd['location'] ?? '') === '/pages/terms');
+check('information page canonical is /pages/terms', $isUrl($canonOf($pv->page('/pages/terms')), '/pages/terms'));
+check('category page canonical is /feeds/category/…', $isUrl($canonOf($pv->page('/feeds/category/' . $prod['cslug'])), '/feeds/category/' . $prod['cslug']));
+check('search results are not indexed', str_contains($pv->page('/feeds/shop.php?q=lick'), 'name="robots" content="noindex'));
+check('shop cards link to pretty product addresses', str_contains($pv->page('/feeds/shop.php'), 'href="/feeds/product/'));
+db_exec("INSERT INTO products (category_id, slug, name, is_active) VALUES (?, 'no-sizes-yet', 'No sizes yet', 1)", [$catId]);
+$sm = $pv->page('/sitemap.xml');
+check('sitemap: pretty addresses only (pages, categories), no ?slug=', str_contains($sm, '/pages/terms</loc>') && str_contains($sm, '/feeds/category/' . $prod['cslug'] . '</loc>') && !str_contains($sm, '?slug='));
+check('sitemap: a product without any live size is left out', !str_contains($sm, 'no-sizes-yet'));
+db_exec("UPDATE menu_items SET url = '/pages/page.php?slug=about' WHERE url = '/pages/about'");
+check('footer shows old-style menu links in the pretty form', str_contains($pv->page('/pages/contact.php'), 'href="/pages/about"'));
+db_exec("UPDATE menu_items SET url = '/pages/about' WHERE url = '/pages/page.php?slug=about'");
+
+section('Phase 5: accessibility, speed and small UX (server side)');
+$fh5 = $pv->page('/feeds/');
+check('closed cart drawer is inert and a real modal when open', (bool) preg_match('#<aside class="drawer" id="cart-drawer"[^>]*aria-modal="true"[^>]*inert>#', $fh5));
+check('closed mobile menu is inert and labelled as a dialog', (bool) preg_match('#<div class="menu-sheet" id="menu-sheet" role="dialog" aria-modal="true" aria-label="[^"]+" aria-hidden="true" inert>#', $fh5));
+check('cart button says how many items it holds', (bool) preg_match('#data-cart-label="Cart"\s+aria-label="Cart, \d+ items?"#', $fh5));
+$heroAt = (int) strpos($fh5, 'class="store-hero"');
+$hero = substr($fh5, $heroAt, (int) strpos($fh5, '</section>', $heroAt) - $heroAt);
+check('Feeds hero is visible without waiting for JavaScript (no .reveal above the fold)', !str_contains($hero, ' reveal"') && str_contains($hero, 'hero-rise'));
+$home = $pv->page('/');
+$stats = (int) db_val("SELECT COUNT(*) FROM lots WHERE status IN ('available','reserved') AND qty_available > 0");
+check('home stats show the real numbers in the page (not 0 until JavaScript runs)', (bool) preg_match('#data-count="(\d+)">\1</span>#', $home) && !str_contains(substr($home, (int) strpos($home, 'hero-stats'), 800), '">0</span>'));
+check('home portal images come in phone sizes (srcset)', substr_count($home, 'logo-480.webp 480w') >= 3);
+$calc = $pv->page('/feeds/calculator.php');
+check('calculator animal buttons use valid ARIA (pressed toggle buttons, not radio roles)', !str_contains($calc, 'role="radio"') && str_contains($calc, 'aria-pressed='));
+$sw = $pv->page('/sw.js');
+check('service worker precaches the exact versioned files the pages use', str_contains($sw, asset('/assets/css/core.css')) && str_contains($sw, '/offline.html'));
+check('offline page exists', str_contains($pv->page('/offline.html'), "You're offline"));
+db_exec('UPDATE faqs SET is_active = 0 WHERE division_id = 2');
+check('Ranch "FAQ" link only appears when there are FAQs', !str_contains($pv->page('/ranch/'), '/ranch/#faq'));
+db_exec('UPDATE faqs SET is_active = 1 WHERE division_id = 2');
+check('… and comes back with them', str_contains($pv->page('/ranch/'), '/ranch/#faq'));
+check('contact page marks "Contact" as the current page', (bool) preg_match('#href="/pages/contact\.php" aria-current="page"#', $pv->page('/pages/contact.php')));
+// Address forms: area, province and postal code are saved; bad values are refused
+$ah = new TestHttp($base);
+$ah->page('/account/login.php');
+$ah->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'docs@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 10.55.0.1']);
+$ah->page('/account/addresses.php');
+[$st] = $ah->api('POST', '/account/api/addresses.php', ['action' => 'create', 'recipient_name' => 'A', 'phone' => '0821234567', 'line1' => '1 Farm Rd',
+    'line2' => 'Plot 7', 'town' => 'Riverside', 'province' => 'Western Cape', 'postal_code' => '7300']);
+$addr = db_one("SELECT line2, province, postal_code FROM customer_addresses WHERE customer_id = ? ORDER BY id DESC LIMIT 1", [$c5d['id']]);
+check('saved address keeps area, province and postal code', $st === 200 && $addr && $addr['line2'] === 'Plot 7' && $addr['province'] === 'Western Cape' && $addr['postal_code'] === '7300', json_encode($addr));
+[$st] = $ah->api('POST', '/account/api/addresses.php', ['action' => 'create', 'recipient_name' => 'A', 'phone' => '0821234567', 'line1' => '1 Farm Rd', 'town' => 'X', 'province' => 'Atlantis']);
+[$st2] = $ah->api('POST', '/account/api/addresses.php', ['action' => 'create', 'recipient_name' => 'A', 'phone' => '0821234567', 'line1' => '1 Farm Rd', 'town' => 'X', 'postal_code' => '12']);
+check('unknown province or a bad postal code is refused', $st === 422 && $st2 === 422, $st . ' ' . $st2);
+$ah->page('/feeds/');
+[$st] = $ah->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 5, 'qty' => 1]);
+check('checkout address form asks for area, province and postal code (with autofill hints)',
+    $st === 200 && (bool) preg_match('#name="address\[line2\]" autocomplete="shipping address-line2".*name="address\[postal_code\]".*name="address\[province\]"#s', $ah->page('/feeds/checkout.php')));
 
 section('Migrations');
 // Every migration must run on an up-to-date database without errors and without changing anything (safe to paste twice)
