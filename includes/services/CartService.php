@@ -130,6 +130,27 @@ final class CartService
         }
     }
 
+    /**
+     * What the cart changed on its own since the customer last looked (item removed, quantity capped, coupon dropped),
+     * as sentences that name the product. Shown on checkout; placing the order waits until the customer has seen them.
+     */
+    public static function changes(array $summary): array
+    {
+        $out = $summary['notices'];
+        foreach ($summary['lines'] as $l) {
+            if (!empty($l['notice'])) {
+                $out[] = $l['name'] . ($l['variant'] ? ' (' . $l['variant'] . ')' : '') . ': ' . rtrim($l['notice'], '.') . ' — quantity changed to ' . (int) $l['qty'] . '.';
+            }
+        }
+        return array_values(array_unique($out));
+    }
+
+    /** Forget the cached cart row (it is read again, e.g. under a lock). */
+    public static function forget(string $div): void
+    {
+        unset(self::$cartCache[$div]);
+    }
+
     public static function clear(string $div): void
     {
         $cart = self::current($div);
@@ -177,7 +198,8 @@ final class CartService
                 $notice = null;
                 if (!(int) $r['is_active'] || !(int) $r['p_active'] || $stock <= 0) {
                     db_exec('DELETE FROM cart_items WHERE id = ?', [$r['item_id']]);
-                    $out['notices'][] = $r['product_name'] . ' is out of stock and was removed from your cart.';
+                    $out['notices'][] = $r['product_name'] . ((int) $r['is_active'] && (int) $r['p_active']
+                        ? ' is out of stock and was removed from your cart.' : ' is no longer available and was removed from your cart.');
                     continue;
                 }
                 if ($qty > $stock) {
@@ -237,7 +259,7 @@ final class CartService
             }
         }
 
-        if ($cart['coupon_id']) {
+        if ($cart['coupon_id'] ?? null) {
             $coupon = db_one('SELECT * FROM coupons WHERE id = ?', [$cart['coupon_id']]);
             $check = $coupon ? PricingService::checkCoupon($coupon['code'], division_id($div), $out['subtotal'], customer_id()) : ['ok' => false];
             if ($check['ok']) {
@@ -250,6 +272,8 @@ final class CartService
                 }
             }
         }
+        // The deposit can never be more than what the cart costs (same rule as checkout)
+        $out['deposit'] = min($out['deposit'], max(0, $out['subtotal'] - $out['discount']));
         return $out;
     }
 

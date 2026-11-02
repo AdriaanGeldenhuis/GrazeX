@@ -63,6 +63,8 @@
     const input = e.target.closest('[data-cart-qty]');
     if (!input) return;
     const id = input.dataset.cartQty;
+    // An emptied box is not "remove this line": put the previous number back
+    if (input.value.trim() === '' || Number(input.value) < 1) { input.value = input.defaultValue || '1'; return; }
     clearTimeout(pending[id]);
     pending[id] = setTimeout(() => GX.cart.update(id, input.value).catch(() => {}), 350);
   });

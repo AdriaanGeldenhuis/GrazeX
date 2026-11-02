@@ -114,7 +114,8 @@
       GX.drawer._last?.focus?.();
     },
   };
-  GX.on(document, 'click', '[data-drawer-open]', (e, t) => { e.preventDefault(); GX.drawer.open(t.dataset.drawerOpen); });
+  // No drawer on this page (e.g. checkout): let the link go to the cart page instead
+  GX.on(document, 'click', '[data-drawer-open]', (e, t) => { if (!document.getElementById(t.dataset.drawerOpen)) return; e.preventDefault(); GX.drawer.open(t.dataset.drawerOpen); });
   GX.on(document, 'click', '[data-drawer-close], .drawer-backdrop', (e) => { e.preventDefault(); GX.drawer.close(); });
 
   // ---------- Modals (<dialog>) ----------

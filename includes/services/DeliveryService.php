@@ -150,7 +150,7 @@ final class DeliveryService
     /** Validate a chosen collection slot; returns the slot row or null. */
     public static function validateSlot(int $divisionId, string $date, int $slotId): ?array
     {
-        foreach (self::collectionCalendar($divisionId, max(14, setting_int('max_collection_days_ahead', 30))) as $day) {
+        foreach (self::collectionCalendar($divisionId, max(1, setting_int('max_collection_days_ahead', 30))) as $day) {
             if ($day['date'] !== $date) {
                 continue;
             }

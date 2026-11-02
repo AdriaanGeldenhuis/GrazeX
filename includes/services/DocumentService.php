@@ -33,8 +33,13 @@ final class DocumentService
     public static function nextNumber(int $divisionId, string $seqType): int
     {
         $year = (int) date('Y');
-        db_exec('INSERT IGNORE INTO document_sequences (division_id, doc_type, seq_year, next_no) VALUES (?, ?, ?, 1)', [$divisionId, $seqType, $year]);
-        $n = (int) db_val('SELECT next_no FROM document_sequences WHERE division_id = ? AND doc_type = ? AND seq_year = ? FOR UPDATE', [$divisionId, $seqType, $year]);
+        // Lock the existing row first; create it only for the first number of the year
+        $n = db_val('SELECT next_no FROM document_sequences WHERE division_id = ? AND doc_type = ? AND seq_year = ? FOR UPDATE', [$divisionId, $seqType, $year]);
+        if ($n === null) {
+            db_exec('INSERT IGNORE INTO document_sequences (division_id, doc_type, seq_year, next_no) VALUES (?, ?, ?, 1)', [$divisionId, $seqType, $year]);
+            $n = db_val('SELECT next_no FROM document_sequences WHERE division_id = ? AND doc_type = ? AND seq_year = ? FOR UPDATE', [$divisionId, $seqType, $year]);
+        }
+        $n = (int) $n;
         db_exec('UPDATE document_sequences SET next_no = next_no + 1 WHERE division_id = ? AND doc_type = ? AND seq_year = ?', [$divisionId, $seqType, $year]);
         return $n;
     }
@@ -98,6 +103,7 @@ final class DocumentService
         $lines = [];
         $rateStd = (int) $order['vat_rate_bp'];
         $byRate = [];
+        $vatByRate = [];
         foreach ($items as $it) {
             $rate = (int) $it['zero_rated'] ? 0 : (int) $it['vat_rate_bp'];
             $incl = (int) $it['line_total_cents'];
@@ -110,33 +116,91 @@ final class DocumentService
             } elseif ($it['pricing_mode'] === 'per_head') {
                 $desc .= ' (per head)';
             }
-            $lines[] = self::line($desc, $qty, $isKg ? 'kg' : ($it['pricing_mode'] === 'per_head' ? 'head' : 'unit'),
+            $line = self::line($desc, $qty, $isKg ? 'kg' : ($it['pricing_mode'] === 'per_head' ? 'head' : 'unit'),
                 (int) $it['unit_price_cents'], $incl, $rate, (bool) $it['zero_rated'], (int) $it['id']);
+            $lines[] = $line;
             $byRate[$rate] = ($byRate[$rate] ?? 0) + $incl;
+            $vatByRate[$rate] = ($vatByRate[$rate] ?? 0) + $line['line_vat_cents'];
         }
-        $discount = (int) $order['discount_cents'];
-        if ($discount > 0) {
-            $sub = array_sum($byRate);
-            $left = $discount;
+        $delivery = (int) $order['delivery_cents'];
+        [$goodsDiscount, $deliveryDiscount] = self::splitDiscount((int) $order['discount_cents'], $delivery, $order['coupon_type'] ?? null);
+        $label = 'Discount' . (($order['coupon_code'] ?? '') !== '' ? ' (' . $order['coupon_code'] . ')' : '');
+        if ($goodsDiscount > 0) {
             $rates = array_keys($byRate);
-            foreach ($rates as $i => $rate) {
-                $share = $i === count($rates) - 1 ? $left : (int) round($discount * $byRate[$rate] / max(1, $sub));
-                $left -= $share;
+            foreach (self::allocateDiscount($byRate, $goodsDiscount) as $rate => $share) {
                 if ($share > 0) {
-                    $lines[] = self::line('Discount' . ($order['coupon_code'] ?? '' ? ' (' . $order['coupon_code'] . ')' : '') . (count($rates) > 1 ? ($rate ? ' — standard-rated' : ' — zero-rated') : ''),
-                        1, null, -$share, -$share, $rate, $rate === 0 && $rateStd > 0, null);
+                    // VAT so that this rate's VAT is exactly the VAT on its net amount (matches orderVat())
+                    $vat = vat_from_incl($byRate[$rate] - $share, $rate) - $vatByRate[$rate];
+                    $lines[] = self::line($label . (count($rates) > 1 ? ($rate ? ' — standard-rated' : ' — zero-rated') : ''),
+                        1, null, -$share, -$share, $rate, $rate === 0 && $rateStd > 0, null, $vat);
                 }
             }
         }
-        if ((int) $order['delivery_cents'] > 0) {
-            $lines[] = self::line('Delivery', 1, null, (int) $order['delivery_cents'], (int) $order['delivery_cents'], $rateStd, false, null);
+        if ($delivery > 0) {
+            $lines[] = self::line('Delivery', 1, null, $delivery, $delivery, $rateStd, false, null);
+            if ($deliveryDiscount > 0) {
+                $vat = vat_from_incl($delivery - $deliveryDiscount, $rateStd) - vat_from_incl($delivery, $rateStd);
+                $lines[] = self::line('Free delivery' . (($order['coupon_code'] ?? '') !== '' ? ' (' . $order['coupon_code'] . ')' : ''),
+                    1, null, -$deliveryDiscount, -$deliveryDiscount, $rateStd, false, null, $vat);
+            }
         }
         return $lines;
     }
 
-    public static function line(string $desc, float $qty, ?string $unit, int $unitIncl, int $lineIncl, int $rateBp, bool $zero, ?int $itemId): array
+    /** A coupon's discount as [on goods, on delivery]: a free-delivery coupon only ever reduces the delivery fee. */
+    public static function splitDiscount(int $discount, int $delivery, ?string $couponType): array
     {
-        $vat = vat_from_incl($lineIncl, $rateBp);
+        $onDelivery = $couponType === 'free_delivery' ? min($discount, $delivery) : 0;
+        return [$discount - $onDelivery, $onDelivery];
+    }
+
+    /**
+     * The order's VAT, computed the same way for the checkout quote, finalise() and the invoice:
+     * VAT per line; where a discount applies, VAT on the NET amount per rate (goods at that rate minus their share);
+     * delivery at the standard rate on the fee minus any free-delivery discount.
+     * $lineRates: list of [incl cents, rate bp] per goods line.
+     */
+    public static function orderVat(array $lineRates, int $goodsDiscount, int $delivery, int $deliveryDiscount, int $stdRate): int
+    {
+        $byRate = [];
+        $perLine = [];
+        foreach ($lineRates as [$incl, $rate]) {
+            $byRate[$rate] = ($byRate[$rate] ?? 0) + $incl;
+            $perLine[$rate] = ($perLine[$rate] ?? 0) + vat_from_incl($incl, $rate);
+        }
+        $shares = self::allocateDiscount($byRate, $goodsDiscount);
+        $vat = 0;
+        foreach ($byRate as $rate => $incl) {
+            $vat += !empty($shares[$rate]) ? vat_from_incl($incl - $shares[$rate], $rate) : $perLine[$rate];
+        }
+        return $vat + vat_from_incl(max(0, $delivery - $deliveryDiscount), $stdRate);
+    }
+
+    /**
+     * Split a discount across VAT rates in proportion to the line totals per rate ([rate => incl total]).
+     * Used for both the checkout quote and the invoice, so the order's VAT always equals the invoice's VAT.
+     * Returns [rate => discount share] (shares add up to the discount exactly).
+     */
+    public static function allocateDiscount(array $byRate, int $discount): array
+    {
+        if ($discount <= 0 || !$byRate) {
+            return [];
+        }
+        $sub = array_sum($byRate);
+        $left = $discount;
+        $rates = array_keys($byRate);
+        $out = [];
+        foreach ($rates as $i => $rate) {
+            $share = $i === count($rates) - 1 ? $left : (int) round($discount * $byRate[$rate] / max(1, $sub));
+            $left -= $share;
+            $out[$rate] = $share;
+        }
+        return $out;
+    }
+
+    public static function line(string $desc, float $qty, ?string $unit, int $unitIncl, int $lineIncl, int $rateBp, bool $zero, ?int $itemId, ?int $vatOverride = null): array
+    {
+        $vat = $vatOverride ?? vat_from_incl($lineIncl, $rateBp);
         return ['description' => mb_substr($desc, 0, 255), 'qty' => $qty, 'unit' => $unit, 'unit_price_incl_cents' => $unitIncl,
                 'line_excl_cents' => $lineIncl - $vat, 'line_vat_cents' => $vat, 'line_incl_cents' => $lineIncl,
                 'vat_rate_bp' => $rateBp, 'zero_rated' => $zero ? 1 : 0, 'order_item_id' => $itemId];
@@ -149,7 +213,7 @@ final class DocumentService
     public static function issue(int $orderId, string $type, array $opts = []): int
     {
         return db_tx(static function () use ($orderId, $type, $opts): int {
-            $order = db_one('SELECT o.*, c.code AS coupon_code FROM orders o LEFT JOIN coupons c ON c.id = o.coupon_id WHERE o.id = ? FOR UPDATE', [$orderId]);
+            $order = db_one('SELECT o.*, c.code AS coupon_code, c.type AS coupon_type FROM orders o LEFT JOIN coupons c ON c.id = o.coupon_id WHERE o.id = ? FOR UPDATE', [$orderId]);
             if (!$order) {
                 throw new DomainException('Order not found.');
             }

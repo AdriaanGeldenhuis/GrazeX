@@ -41,6 +41,22 @@ function redirect(string $url, int $code = 302): never
 }
 
 /**
+ * Run work after the visitor has their answer (PDFs, emails). In the CLI (cron, tests) it runs at once.
+ * Each task is isolated: a failure is logged and never affects the response or other tasks.
+ */
+function gx_after_response(string $label, callable $task): void
+{
+    $run = static function () use ($label, $task): void {
+        try {
+            $task();
+        } catch (Throwable $e) {
+            gx_log('error', $label . ' failed', ['error' => $e->getMessage()]);
+        }
+    };
+    PHP_SAPI === 'cli' ? $run() : register_shutdown_function($run);
+}
+
+/**
  * The setup wizard locks itself with a file (not only a database row), so it stays locked —
  * and shows no server diagnostics — even while the database is unreachable.
  */

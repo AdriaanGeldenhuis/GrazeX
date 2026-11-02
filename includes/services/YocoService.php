@@ -77,8 +77,11 @@ final class YocoService
             throw new RuntimeException('Card payments are unavailable right now. Please try again or choose EFT.');
         }
         db_exec('UPDATE payments SET provider_checkout_id = ?, redirect_url = ? WHERE id = ?', [$res['id'], $res['redirectUrl'], $paymentId]);
-        db_exec("UPDATE orders SET hold_expires_at = GREATEST(COALESCE(hold_expires_at, NOW()), NOW() + INTERVAL ? MINUTE) WHERE id = ? AND status IN ('pending_payment','reserved')",
-            [setting_int('yoco_hold_minutes', 60), $order['id']]);
+        // Keep the stock while the customer pays — but only for the first few card attempts (no endless holds)
+        if ((int) db_val("SELECT COUNT(*) FROM payments WHERE order_id = ? AND method = 'yoco' AND provider_checkout_id IS NOT NULL", [$order['id']]) <= 3) {
+            db_exec("UPDATE orders SET hold_expires_at = GREATEST(COALESCE(hold_expires_at, NOW()), NOW() + INTERVAL ? MINUTE) WHERE id = ? AND status IN ('pending_payment','reserved')",
+                [setting_int('yoco_hold_minutes', 60), $order['id']]);
+        }
         return db_one('SELECT * FROM payments WHERE id = ?', [$paymentId]);
     }
 
@@ -99,11 +102,22 @@ final class YocoService
         if ($payment['status'] === 'succeeded') {
             return;
         }
+        // A test-mode checkout never counts on a live site (and the other way round)
+        if (!empty($payment['provider_mode']) && $payment['provider_mode'] !== self::mode()) {
+            $note = 'Paid in Yoco ' . $payment['provider_mode'] . ' mode while the site is in ' . self::mode() . ' mode — not recorded';
+            if (db_exec('UPDATE payments SET notes = ? WHERE id = ? AND (notes IS NULL OR notes <> ?)', [$note, $payment['id'], $note]) === 1) {
+                NotificationService::admin('payment_mismatch', 'Card payment in the wrong Yoco mode on ' . $payment['reference'], $note . '.',
+                    '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id']);
+            }
+            return;
+        }
         if ($amount !== (int) $payment['amount_cents']) {
-            NotificationService::admin('payment_mismatch', 'Card payment amount mismatch on ' . $payment['reference'],
-                'Expected ' . money((int) $payment['amount_cents']) . ', Yoco reported ' . money($amount) . '. Check the Yoco portal.',
-                '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id']);
-            db_exec("UPDATE payments SET notes = 'Amount mismatch — check manually' WHERE id = ?", [$payment['id']]);
+            // One alert per payment (status polls and webhook retries would otherwise repeat it)
+            if (db_exec("UPDATE payments SET notes = 'Amount mismatch — check manually' WHERE id = ? AND (notes IS NULL OR notes <> 'Amount mismatch — check manually')", [$payment['id']]) === 1) {
+                NotificationService::admin('payment_mismatch', 'Card payment amount mismatch on ' . $payment['reference'],
+                    'Expected ' . money((int) $payment['amount_cents']) . ', Yoco reported ' . money($amount) . '. Check the Yoco portal.',
+                    '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id']);
+            }
             return;
         }
         try {
