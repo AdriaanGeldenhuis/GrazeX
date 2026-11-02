@@ -19,15 +19,15 @@ $live = "o.status NOT IN ('cancelled','expired','refunded')";
 // ---------------- CSV exports ----------------
 $export = query_str('export');
 if ($export !== '') {
-    // Each export has its own permission (the list page it comes from); "Reports" covers the money exports,
-    // but customer contact details always need "View customers"
+    // Each export has its own permission (the list page it comes from). "Reports" also covers the invoice and stock
+    // exports for the bookkeeper, but exports with buyers' email and phone (orders, customers) need their own permission.
     require_admin();
     $need = ['orders' => 'orders.view', 'documents' => 'documents.view', 'customers' => 'customers.view', 'stock' => 'inventory.manage'][$export] ?? null;
     if ($need === null) {
         http_response_code(400);
         exit('Unknown export.');
     }
-    if (!admin_can($need) && ($export === 'customers' || !admin_can('reports.view'))) {
+    if (!admin_can($need) && (in_array($export, ['customers', 'orders'], true) || !admin_can('reports.view'))) {
         http_response_code(403);
         exit('You do not have permission for this export.');
     }
@@ -101,7 +101,7 @@ admin_start('Reports', 'reports', ['perm' => 'reports.view']);
   <a class="chip" href="/admin/reports.php?from=<?= $taxYear ?>-03-01&amp;to=<?= date('Y-m-d') ?>">Tax year (from 1 Mar <?= $taxYear ?>)</a>
 </form>
 <div class="row mb-3">
-  <a class="btn btn-sm" href="/admin/reports.php?export=orders&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Orders CSV</a>
+  <?php if (admin_can('orders.view')): ?><a class="btn btn-sm" href="/admin/reports.php?export=orders&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Orders CSV</a><?php endif; ?>
   <a class="btn btn-sm" href="/admin/reports.php?export=documents&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Invoices &amp; credit notes CSV (for your accountant)</a>
   <a class="btn btn-sm" href="/admin/reports.php?export=stock"><svg class="icon icon-sm"><use href="#i-download"/></svg>Stock valuation CSV</a>
   <?php if (admin_can('customers.view')): ?><a class="btn btn-sm" href="/admin/reports.php?export=customers"><svg class="icon icon-sm"><use href="#i-download"/></svg>Customers CSV</a><?php endif; ?>

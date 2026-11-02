@@ -1,7 +1,8 @@
 <?php
 /**
  * PDF template for every document type (rendered by Dompdf).
- * Vars: $doc (documents row), $lines (document_lines), $snap (snapshot array), $copy (bool)
+ * Vars: $doc (documents row), $lines (document_lines), $snap (snapshot array), $copy (bool),
+ *       $live (the order as it is now: status, amount_paid_cents — only for the "how to pay" note; optional)
  */
 defined('GX_ROOT') || exit;
 
@@ -20,6 +21,10 @@ $showVat = $vatReg && $type !== 'receipt';
 $vatRates = array_values(array_unique(array_filter(array_map(static fn($l) => (int) $l['vat_rate_bp'], $lines))));
 $vatLabel = count($vatRates) === 1 ? 'VAT (' . rtrim(rtrim(number_format($vatRates[0] / 100, 2, '.', ''), '0'), '.') . '%)' : 'VAT';
 $balanceDue = in_array($type, ['tax_invoice', 'invoice'], true) ? max(0, (int) $doc['total_cents'] - (int) ($o['amount_paid_cents'] ?? 0)) : 0;
+// "Pay the balance by EFT" only while money is really still owed (the PDF is re-rendered on every download)
+$live = $live ?? null;
+$owedNow = $live && $balanceDue > 0 && !in_array($live['status'], ['cancelled', 'expired', 'refunded', 'completed'], true)
+    ? max(0, (int) $doc['total_cents'] - (int) $live['amount_paid_cents']) : 0;
 $title = $snap['title'] ?? strtoupper($type);
 $r = static fn(int $c) => money($c);
 ?><!doctype html>
@@ -135,7 +140,7 @@ $r = static fn(int $c) => money($c);
     <?php endif; ?>
   </table>
 
-  <?php if ($balanceDue > 0 && !empty($s['bank']['account_no'])): ?>
+  <?php if ($owedNow > 0 && !empty($s['bank']['account_no'])): ?>
     <div class="note">
       <strong>Pay the balance by EFT</strong> — <?= e($s['bank']['bank']) ?> · Account name: <?= e($s['bank']['account_name']) ?> · Account no: <?= e($s['bank']['account_no']) ?>
       · Branch: <?= e($s['bank']['branch_code']) ?><?= $s['bank']['account_type'] ? ' · ' . e($s['bank']['account_type']) : '' ?><br>

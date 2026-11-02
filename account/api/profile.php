@@ -56,7 +56,14 @@ switch ((string) input('action')) {
         } catch (DomainException $e) {
             json_error($e->getMessage(), 422, ['vat_doc' => $e->getMessage()]);
         }
+        $oldDoc = (string) db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ?', [$cid]);
         db_exec("UPDATE customers SET vat_farmer_status = 'pending', vat_farmer_doc_path = ? WHERE id = ?", [$file['path'], $cid]);
+        // The previous certificate is replaced, not kept (POPIA: no copies we no longer need)
+        $root = realpath(GX_ROOT . '/storage/private');
+        $abs = $oldDoc !== '' && $oldDoc !== $file['path'] ? realpath(GX_ROOT . '/' . ltrim($oldDoc, '/')) : false;
+        if ($abs && $root && str_starts_with($abs, $root . DIRECTORY_SEPARATOR) && is_file($abs)) {
+            @unlink($abs);
+        }
         NotificationService::admin('vat_farmer', 'VAT farmer verification: ' . $customer['first_name'] . ' ' . $customer['last_name'],
             'A customer uploaded a SARS Notice of Registration for zero-rated feed.', '/admin/customer.php?id=' . $cid, division_id('feeds'));
         json_ok([], 'Uploaded — we will verify it and let you know.');

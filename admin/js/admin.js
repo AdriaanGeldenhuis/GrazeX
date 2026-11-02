@@ -65,10 +65,21 @@
     return fix(out);
   };
 
-  /* ---------- Admin forms: <form data-admin-form data-api="..." [data-action] [data-redirect] [data-reload]> ---------- */
+  /**
+   * Build a form's data without the fields that still hold the value they had when the page loaded (<input data-orig>),
+   * so a save never overwrites what someone else saved meanwhile (e.g. two people counting stock).
+   */
+  const changedOnly = (form, build) => {
+    const same = $$('[data-orig]', form).filter((el) => !el.disabled && el.value === el.dataset.orig);
+    same.forEach((el) => { el.disabled = true; }); // disabled fields are left out of FormData
+    try { return build(); } finally { same.forEach((el) => { el.disabled = false; }); }
+  };
+
+  /* ---------- Admin forms: <form data-admin-form data-api="..." [data-action] [data-redirect] [data-reload] [data-only-changed]> ---------- */
   $$('form[data-admin-form]').forEach((form) => {
     GX.bindForm(form, {
-      body: (f) => Object.assign(GX.formToObject(f), f.dataset.action ? { action: f.dataset.action } : {}),
+      body: (f) => Object.assign(f.dataset.onlyChanged !== undefined ? changedOnly(f, () => GX.formToObject(f)) : GX.formToObject(f),
+        f.dataset.action ? { action: f.dataset.action } : {}),
       onSuccess(data, f) {
         GX.toast(data.message || 'Saved');
         if (data.redirect) setTimeout(() => { location.href = data.redirect; }, 400);
@@ -88,8 +99,8 @@
     e.preventDefault();
     if (b.dataset.confirm && !(await GX.confirm(b.dataset.confirm, { ok: b.dataset.ok || 'Yes', danger: b.dataset.danger !== undefined }))) return;
     let payload = JSON.parse(b.dataset.payload || '{}');
-    // data-include-form: also send the surrounding form's fields (e.g. stock-take counts typed but not saved yet)
-    if (b.dataset.includeForm !== undefined && b.form) payload = Object.assign(GX.formToObject(b.form), payload);
+    // data-include-form: also send the surrounding form's changed fields (e.g. stock-take counts typed but not saved yet)
+    if (b.dataset.includeForm !== undefined && b.form) payload = Object.assign(changedOnly(b.form, () => GX.formToObject(b.form)), payload);
     if (b.dataset.prompt) {
       const v = window.prompt(b.dataset.prompt, b.dataset.promptDefault || '');
       if (v === null) return;
@@ -98,6 +109,7 @@
     GX.setLoading(b, true);
     const run = async (body) => {
       const d = await GX.api(b.dataset.adminAct, { body, quiet: true });
+      if (b.form) b.form.dataset.dirty = ''; // its fields were sent: no "leave page?" prompt on the reload
       GX.toast(d.message || 'Done');
       if (d.redirect) location.href = d.redirect;
       else if (b.dataset.noReload === undefined) setTimeout(() => location.reload(), 450);

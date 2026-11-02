@@ -6,6 +6,9 @@
  */
 declare(strict_types=1);
 
+if (isset($_GET['unsubscribe']) || isset($_GET['done'])) {
+    define('GX_SKIP_MAINTENANCE', true); // unsubscribing works even in maintenance mode
+}
 require __DIR__ . '/../includes/bootstrap.php';
 
 $confirm = query_str('confirm');

@@ -534,7 +534,7 @@ function audit(string $action, ?string $entityType = null, ?int $entityId = null
                  VALUES (?,?,?,?,?,?,?,?)', [
             $actorType, $actorId, $action, $entityType, $entityId,
             $details ? json_encode($details, JSON_UNESCAPED_UNICODE) : null,
-            GX_IS_CLI ? null : client_ip(), GX_IS_CLI ? 'cli' : user_agent(),
+            GX_IS_CLI || $system ? null : client_ip(), GX_IS_CLI ? 'cli' : ($system ? 'system' : user_agent()),
         ]);
     } catch (Throwable $e) {
         gx_log('warning', 'Audit write failed: ' . $e->getMessage());

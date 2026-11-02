@@ -7,7 +7,8 @@ defined('GX_ROOT') || exit;
 
 $gxFooterMenu = [];
 try {
-    $gxFooterMenu = db_all("SELECT label, url FROM menu_items WHERE location = 'footer' AND is_active = 1 ORDER BY sort_order, id");
+    $gxFooterAll = db_all("SELECT label, url, is_active FROM menu_items WHERE location = 'footer' ORDER BY sort_order, id");
+    $gxFooterMenu = array_values(array_filter($gxFooterAll, static fn($m) => (int) $m['is_active'] === 1));
     // Pages follow their "Link in footer menu" switch: hidden/unpublished pages drop out, other shown pages are added
     $gxOff = $gxOn = [];
     foreach (db_all('SELECT slug, title, is_published, show_in_footer FROM pages ORDER BY sort_order, id') as $gxP) {
@@ -19,7 +20,8 @@ try {
         }
     }
     $gxFooterMenu = array_values(array_filter($gxFooterMenu, static fn($m) => !isset($gxOff[$m['url']])));
-    $gxLinked = array_flip(array_column($gxFooterMenu, 'url'));
+    // A page that has a footer menu item (switched on or off) follows that item; only pages without one are added
+    $gxLinked = array_flip(array_column($gxFooterAll, 'url'));
     foreach ($gxOn as $gxUrl => $gxTitle) {
         if (!isset($gxLinked[$gxUrl])) {
             $gxFooterMenu[] = ['label' => $gxTitle, 'url' => $gxUrl];

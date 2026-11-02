@@ -26,6 +26,10 @@ $parseChange = static function (string $s): array {
 
 /** Store typed counts on an open stock take (refuses lines of another stock take). Call inside a transaction. */
 $saveCounts = static function (int $takeId, array $counts): void {
+    // Checked under a lock: a count can never land on a stock take that was just completed or cancelled
+    if (!db_val("SELECT 1 FROM stock_takes WHERE id = ? AND status = 'open' FOR UPDATE", [$takeId])) {
+        throw new DomainException('This stock take is no longer open — reload the page.', 409);
+    }
     $ids = array_map('intval', array_keys($counts));
     $known = $ids ? (int) db_val('SELECT COUNT(*) FROM stock_take_items WHERE stock_take_id = ? AND id IN (' . db_placeholders($ids) . ')', array_merge([$takeId], $ids)) : 0;
     if ($known !== count($ids)) {
@@ -85,9 +89,6 @@ try {
         case 'stocktake_save':
             $takeId = (int) ($in['id'] ?? 0);
             $counts = (array) ($in['counts'] ?? []);
-            if (!$takeId || !db_val("SELECT 1 FROM stock_takes WHERE id = ? AND status = 'open'", [$takeId])) {
-                json_error('This stock take is no longer open — reload the page.', 409);
-            }
             db_tx(static fn() => $saveCounts($takeId, $counts));
             json_ok([], 'Counts saved.');
         case 'stocktake_complete':

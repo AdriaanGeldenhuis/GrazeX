@@ -74,8 +74,9 @@ admin_start($c['first_name'] . ' ' . $c['last_name'], 'customers', ['perm' => 'c
       <section class="card card-pad adm-section" style="border-color:rgba(255,95,82,.4)">
         <h2 class="h4 mb-1">Deletion requested</h2>
         <p class="small muted">Removes their login, contact details, addresses, livestock alerts, enquiries and uploaded VAT certificate, and emails them a confirmation.
-          Orders and invoices stay for the 5-year tax record: the name, company, VAT number and billing address on invoices are kept; phone numbers, notes,
-          ID number and delivery directions are removed from their orders. Open orders must be completed or cancelled first.</p>
+          Orders and invoices stay for the 5-year tax record with only what a tax invoice must show (name, company, VAT number, billing address);
+          email, phone numbers, delivery address, notes and ID number are removed from their orders and documents (the document of identification
+          keeps the ID number). Open orders must be completed or cancelled first.</p>
         <button class="btn btn-sm btn-danger" type="button" data-admin-act="<?= e($api) ?>" data-payload='<?= e(json_encode(['action' => 'anonymise', 'id' => (int) $c['id']])) ?>' data-confirm="Permanently anonymise this customer?" data-danger>Anonymise now</button>
       </section>
     <?php endif; ?>

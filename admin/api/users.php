@@ -11,6 +11,19 @@ $me = require_admin_api('users.manage');
 if ($me['role_slug'] !== 'owner') {
     json_error('Only the owner can manage admin users and permissions.', 403);
 }
+/**
+ * There must always be an active owner who can see everything. Call inside a transaction before an active
+ * all-division owner is demoted, limited to one division or disabled. Locks the owner rows, so two owners
+ * changing each other at the same moment can't both succeed.
+ */
+$keepFullOwner = static function (int $userId): void {
+    $others = db_col("SELECT a.id FROM admin_users a JOIN roles r ON r.id = a.role_id
+                      WHERE r.slug = 'owner' AND a.status = 'active' AND a.division_scope = 'all' AND a.id <> ? FOR UPDATE", [$userId]);
+    if (!$others) {
+        throw new DomainException('This is the only active owner with access to everything — make someone else an owner first.');
+    }
+};
+
 try {
     switch ((string) input('action')) {
         case 'create':
@@ -37,14 +50,12 @@ try {
             if (!$before) {
                 json_error('Admin user not found.', 404);
             }
-            db_tx(static function () use ($d, $role, $before): void {
-                // There must always be an active owner with full access: the last one cannot be demoted or limited to one division
-                if ($before['slug'] === 'owner' && $before['status'] === 'active' && ($role['slug'] !== 'owner' || $d['division_scope'] !== 'all')) {
-                    $owners = (int) db_val("SELECT COUNT(*) FROM admin_users a JOIN roles r ON r.id = a.role_id
-                                            WHERE r.slug = 'owner' AND a.status = 'active' AND a.division_scope = 'all' FOR UPDATE");
-                    if ($owners <= 1) {
-                        throw new DomainException('This is the only owner with access to everything — make someone else an owner first.');
-                    }
+            db_tx(static function () use ($d, $role, $keepFullOwner): void {
+                $cur = db_one('SELECT a.status, a.division_scope, r.slug FROM admin_users a JOIN roles r ON r.id = a.role_id WHERE a.id = ? FOR UPDATE', [$d['id']]);
+                // Only matters when this person is an active owner with full access and would stop being one
+                if ($cur && $cur['slug'] === 'owner' && $cur['status'] === 'active' && $cur['division_scope'] === 'all'
+                    && ($role['slug'] !== 'owner' || $d['division_scope'] !== 'all')) {
+                    $keepFullOwner((int) $d['id']);
                 }
                 db_exec('UPDATE admin_users SET name = ?, role_id = ?, division_scope = ? WHERE id = ?', [$d['name'], $d['role_id'], $d['division_scope'], $d['id']]);
             });
@@ -57,10 +68,13 @@ try {
             if (!$u || (int) $u['id'] === (int) $me['id']) {
                 json_error('You cannot disable yourself.', 409);
             }
-            if ($u['slug'] === 'owner' && $u['status'] === 'active' && (int) db_val("SELECT COUNT(*) FROM admin_users a JOIN roles r ON r.id = a.role_id WHERE r.slug = 'owner' AND a.status = 'active'") <= 1) {
-                json_error('There must always be one active owner.', 409);
-            }
-            db_exec("UPDATE admin_users SET status = IF(status = 'active', 'disabled', 'active'), session_version = session_version + 1 WHERE id = ?", [$u['id']]);
+            db_tx(static function () use ($u, $keepFullOwner): void {
+                $cur = db_one('SELECT a.status, a.division_scope, r.slug FROM admin_users a JOIN roles r ON r.id = a.role_id WHERE a.id = ? FOR UPDATE', [$u['id']]);
+                if ($cur && $cur['slug'] === 'owner' && $cur['status'] === 'active' && $cur['division_scope'] === 'all') {
+                    $keepFullOwner((int) $u['id']);
+                }
+                db_exec("UPDATE admin_users SET status = IF(status = 'active', 'disabled', 'active'), session_version = session_version + 1 WHERE id = ?", [$u['id']]);
+            });
             audit('admin_user.toggled', 'admin_user', (int) $u['id']);
             json_ok([], 'Updated.');
         case 'reset_2fa':

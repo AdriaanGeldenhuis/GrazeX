@@ -111,16 +111,18 @@ admin_start('Inventory', 'inventory', ['perm' => 'inventory.manage']);
       <button class="btn btn-primary" type="button" data-admin-act="/admin/api/inventory.php" data-payload='{"action":"stocktake_start"}'>Start a stock take</button>
     </section>
   <?php else: ?>
-    <form data-admin-form data-api="/admin/api/inventory.php" data-action="stocktake_save" data-reload novalidate>
+    <form data-admin-form data-only-changed data-api="/admin/api/inventory.php" data-action="stocktake_save" data-reload novalidate>
       <input type="hidden" name="id" value="<?= (int) $openTake['id'] ?>">
-      <p class="muted small">Started <?= e(fmt_datetime($openTake['created_at'])) ?>. Leave a line empty to skip it. Save as you go; complete when done.</p>
+      <p class="muted small">Started <?= e(fmt_datetime($openTake['created_at'])) ?>. Leave a line empty to skip it. Save as you go; complete when done.
+        Only the lines you changed on this page are sent, so several people can count different aisles at the same time.</p>
       <div class="table-wrap"><table class="table dt dt-cards">
         <thead><tr><th>Product</th><th class="num">System</th><th>Counted</th></tr></thead>
         <tbody>
         <?php foreach ($takeItems as $t): ?>
           <tr><td data-label=""><?= e($t['product_name']) ?><br><span class="tiny dim"><?= e($t['name']) ?> · <?= e($t['sku']) ?></span></td>
             <td class="num" data-label="System"><?= (int) $t['system_qty'] ?></td>
-            <td data-label=""><input class="input" style="max-width:120px" type="number" min="0" inputmode="numeric" name="counts[<?= (int) $t['id'] ?>]" value="<?= $t['counted_qty'] !== null ? (int) $t['counted_qty'] : '' ?>"></td></tr>
+            <?php $cv = $t['counted_qty'] !== null ? (string) (int) $t['counted_qty'] : ''; ?>
+            <td data-label=""><input class="input" style="max-width:120px" type="number" min="0" inputmode="numeric" name="counts[<?= (int) $t['id'] ?>]" value="<?= e($cv) ?>" data-orig="<?= e($cv) ?>" aria-label="Counted: <?= e($t['product_name'] . ' ' . $t['name']) ?>"></td></tr>
         <?php endforeach; ?>
         </tbody>
       </table></div>

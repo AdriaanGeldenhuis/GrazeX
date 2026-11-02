@@ -14,26 +14,32 @@ $in = input_all();
 
 if (($in['action'] ?? '') === 'delete') {
     $id = (int) ($in['id'] ?? 0);
-    $hide = static function () use ($id): never {
+    $deleted = db_tx(static function () use ($id): bool {
+        // Lock the sizes first (checkout locks them too): an order placed right now lands either before the check
+        // (and the product is hidden) or after the delete (and finds it gone) — never lost in between
+        db_col('SELECT id FROM product_variants WHERE product_id = ? FOR UPDATE', [$id]);
+        // Sales, stock received or stock movements are part of the books: never delete those, hide the product
+        $history = (bool) db_val('SELECT 1 FROM product_variants v WHERE v.product_id = ? AND (
+                    EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = v.id)
+                 OR EXISTS (SELECT 1 FROM stock_receipt_items ri WHERE ri.variant_id = v.id)
+                 OR EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.variant_id = v.id)) LIMIT 1', [$id]);
+        if (!$history) {
+            try {
+                db_exec('DELETE FROM products WHERE id = ?', [$id]);
+                return true;
+            } catch (PDOException $e) {
+                if ((int) ($e->errorInfo[1] ?? 0) !== 1451) {
+                    throw $e;
+                }
+                // still referenced somewhere: hide instead
+            }
+        }
         db_exec('UPDATE products SET is_active = 0 WHERE id = ?', [$id]);
+        return false;
+    });
+    if (!$deleted) {
         audit('product.hidden', 'product', $id);
         json_ok(['redirect' => '/admin/products.php'], 'This product has sales or stock history, so it was hidden instead of deleted.');
-    };
-    // Sales, stock received or stock movements are part of the books: never delete those, hide the product
-    $history = (bool) db_val('SELECT 1 FROM product_variants v WHERE v.product_id = ? AND (
-                EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = v.id)
-             OR EXISTS (SELECT 1 FROM stock_receipt_items ri WHERE ri.variant_id = v.id)
-             OR EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.variant_id = v.id)) LIMIT 1', [$id]);
-    if ($history) {
-        $hide();
-    }
-    try {
-        db_exec('DELETE FROM products WHERE id = ?', [$id]);
-    } catch (PDOException $e) {
-        if ((int) ($e->errorInfo[1] ?? 0) === 1451) {
-            $hide(); // still referenced somewhere
-        }
-        throw $e;
     }
     audit('product.deleted', 'product', $id);
     json_ok(['redirect' => '/admin/products.php'], 'Product deleted.');

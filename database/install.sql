@@ -692,6 +692,7 @@ CREATE TABLE livestock_alerts (
   is_active          TINYINT(1)   NOT NULL DEFAULT 1,
   confirmed_at       DATETIME     NULL,
   confirm_token      CHAR(64)     NULL,
+  confirm_sent_at    DATETIME     NULL,
   unsubscribe_token  CHAR(64)     NOT NULL,
   last_notified_at   DATETIME     NULL,
   created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1398,9 +1399,9 @@ INSERT INTO email_templates (template_key, name, subject, body) VALUES
 ('enquiry_reply',       'Reply to enquiry',             'Re: your enquiry to GrazeX',                  '{{reply}}'),
 ('admin_new_order',     'Admin: new order',             'New {{division}} order {{order_no}} ({{total}})', 'A new order was placed: {{order_no}} — {{total}} — {{payment_method}}.\n\n{{link}}'),
 ('admin_pop_uploaded',  'Admin: POP uploaded',          'POP uploaded for {{order_no}}',               'A proof of payment was uploaded for {{order_no}}. Verify it here: {{link}}'),
-('admin_low_stock',     'Admin: low stock digest',      'Low stock: {{count}} items',                  'These items are at or below their low-stock level:\n\n{{items_md}}'),
+('admin_low_stock',     'Admin: low stock digest',      'Low stock: {{count}} items',                  'These items are at or below their low-stock level:\n\n{{items}}'),
 ('livestock_alert_confirm', 'Confirm livestock alert',   'Confirm your GrazeX Ranch livestock alert',   'Hi,\n\nPlease confirm that you want an email when new livestock matching your alert ({{alert}}) is available:\n\n{{link}}\n\nIf you did not ask for this, ignore this email — you will not get any alerts.'),
-('account_deleted',     'Account deleted',              'Your GrazeX account has been deleted',        'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices and other records that the law requires us to keep (5 years) are kept, without your contact details.\n\nIf you did not ask for this, please contact us.'),
+('account_deleted',     'Account deleted',              'Your GrazeX account has been deleted',        'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices that the law requires us to keep for 5 years are kept with only what a tax invoice must show (name, billing address and VAT number).\n\nIf you did not ask for this, please contact us.'),
 ('admin_password_reset','Admin: reset password',        'Reset your GrazeX admin password',            'Hi {{first_name}},\n\nUse this link to choose a new admin password (valid for 1 hour): {{link}}\n\nIf you did not ask for this, ignore this email and tell the owner.');
 
 -- Content blocks (everything on the gateway and storefront heroes is editable in Admin > Content)

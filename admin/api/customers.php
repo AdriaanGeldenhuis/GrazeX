@@ -43,15 +43,24 @@ switch ((string) input('action')) {
         $byEmail = customer_verified_email($c);
         $files = db_tx(static function () use ($cid, $byEmail): array {
             $files = array_filter([db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ? FOR UPDATE', [$cid])]);
+            // Saved PDFs still hold the old details: removed, and rebuilt from the cleaned snapshot when opened again
+            $files = array_merge($files, db_col('SELECT pdf_path FROM documents WHERE customer_id = ? AND pdf_path IS NOT NULL', [$cid]));
             $anon = 'deleted-' . $cid . '@deleted.invalid';
             db_exec("UPDATE customers SET email = ?, password_hash = '!', first_name = 'Deleted', last_name = 'Customer', phone = NULL, farm_name = NULL,
                      company_name = NULL, vat_no = NULL, vat_farmer_status = 'none', vat_farmer_doc_path = NULL, vat_farmer_verified_at = NULL,
                      marketing_opt_in = 0, marketing_opt_in_at = NULL, status = 'blocked', admin_notes = NULL, last_login_at = NULL,
                      session_version = session_version + 1 WHERE id = ?", [$anon, $cid]);
-            // Orders stay for the 5-year tax record. Invoices need the buyer's name, company, VAT number and billing address
-            // (and keep their own snapshot, as does the document of identification); everything else personal goes.
-            db_exec('UPDATE orders SET billing_email = ?, billing_phone = NULL, ship_phone = NULL, ship_directions = NULL, ship_gps_lat = NULL,
-                     ship_gps_lng = NULL, customer_note = NULL, transport_note = NULL, buyer_id_number = NULL WHERE customer_id = ?', [$anon, $cid]);
+            // Orders stay for the 5-year tax record. A tax invoice needs the buyer's name, company, VAT number and billing
+            // address; everything else personal goes (contact details, delivery address, notes, ID number).
+            db_exec('UPDATE orders SET billing_email = ?, billing_phone = NULL, ship_name = NULL, ship_phone = NULL, ship_farm_name = NULL,
+                     ship_line1 = NULL, ship_line2 = NULL, ship_province = NULL, ship_postal_code = NULL, ship_directions = NULL,
+                     ship_gps_lat = NULL, ship_gps_lng = NULL, customer_note = NULL, transport_note = NULL, buyer_id_number = NULL
+                     WHERE customer_id = ?', [$anon, $cid]);
+            // The documents' own copies of those details (an issued document keeps its numbers, lines and the invoice details).
+            // The document of identification keeps the buyer's ID number: it is the Stock Theft Act record of who received the animals.
+            db_exec("UPDATE documents SET snapshot = JSON_REMOVE(snapshot, '$.buyer.email', '$.buyer.phone', '$.buyer.ship', '$.order.customer_note', '$.order.transport_note'),
+                     pdf_path = NULL WHERE customer_id = ? AND snapshot IS NOT NULL", [$cid]);
+            db_exec("UPDATE documents SET snapshot = JSON_REMOVE(snapshot, '$.buyer.id_number') WHERE customer_id = ? AND doc_type <> 'doc_identification' AND snapshot IS NOT NULL", [$cid]);
             db_exec('DELETE FROM customer_addresses WHERE customer_id = ?', [$cid]);
             db_exec('DELETE FROM livestock_alerts WHERE customer_id = ? OR email = ?', [$cid, $byEmail]);
             db_exec('DELETE FROM enquiries WHERE customer_id = ? OR email = ?', [$cid, $byEmail]);
@@ -62,7 +71,7 @@ switch ((string) input('action')) {
             db_exec('DELETE FROM admin_notifications WHERE link = ?', ['/admin/customer.php?id=' . $cid]);
             return $files;
         });
-        // Uploaded VAT certificate (private storage)
+        // Uploaded VAT certificate and saved PDFs (private storage)
         $root = realpath(GX_ROOT . '/storage/private');
         foreach ($files as $rel) {
             $abs = realpath(GX_ROOT . '/' . ltrim((string) $rel, '/'));

@@ -1201,7 +1201,8 @@ function doc_html(int $docId): string
 {
     $doc = db_one('SELECT * FROM documents WHERE id = ?', [$docId]);
     return PdfService::html('document', ['doc' => $doc, 'lines' => db_all('SELECT * FROM document_lines WHERE document_id = ? ORDER BY sort_order, id', [$docId]),
-        'snap' => json_decode((string) $doc['snapshot'], true) ?: [], 'copy' => false]);
+        'snap' => json_decode((string) $doc['snapshot'], true) ?: [], 'copy' => false,
+        'live' => db_one('SELECT status, amount_paid_cents FROM orders WHERE id = ?', [$doc['order_id']])]); // same as DocumentService::pdf()
 }
 function last_mail(string $to, string $subjectLike): string
 {
@@ -1210,7 +1211,10 @@ function last_mail(string $to, string $subjectLike): string
 
 section('Phase 4: emails say which documents are attached');
 $pdfOk = PdfService::available();
-$depMail = (string) db_val("SELECT body_html FROM email_queue WHERE to_email = 'ranch@test.local' AND subject LIKE 'Payment received%' ORDER BY id LIMIT 1");
+// The deposit email of the first Ranch order (found by the deposit amount, not by position)
+$ro1 = db_one("SELECT * FROM orders WHERE customer_id = ? AND division_id = 2 ORDER BY id LIMIT 1", [$c2['id']]);
+$depMail = (string) db_val("SELECT body_html FROM email_queue WHERE to_email = 'ranch@test.local' AND subject = ? AND body_html LIKE ? ORDER BY id LIMIT 1",
+    ['Payment received for ' . $ro1['order_no'], '%' . str_replace(' ', '%', money((int) $ro1['deposit_due_cents'])) . '%']);
 check('deposit: "Your receipt is attached" — no invoice promised',
     $pdfOk ? str_contains($depMail, 'Your receipt is attached') && !str_contains($depMail, 'invoice') : str_contains($depMail, 'My orders'), strip_tags($depMail));
 $c5d = make_customer('docs@test.local');
@@ -1226,13 +1230,13 @@ db_exec('UPDATE product_variants SET stock_qty = 1, low_stock_threshold = 5 WHER
 setting_set('low_stock_email', 'stock@test.local');
 step('low-stock digest runs', static fn() => CronService::lowStockDigest(true));
 $lowMail = last_mail('stock@test.local', 'Low stock%');
-check('low-stock digest shows bold counts, not ∗∗ characters', $lowMail !== '' && !str_contains($lowMail, '∗') && str_contains($lowMail, '<strong'), strip_tags($lowMail));
+check('low-stock digest is a clean list (no ∗∗ characters)', $lowMail !== '' && !str_contains($lowMail, '∗') && str_contains($lowMail, '<li') && str_contains($lowMail, ' left'), strip_tags($lowMail));
 
 section('Phase 4: PDF documents');
 $ro = db_one('SELECT * FROM orders WHERE customer_id = ? AND division_id = 2 ORDER BY id LIMIT 1', [$c2['id']]); // the first Ranch order (deposit, then balance)
 $roInv = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$ro['id']]);
 $h = doc_html($roInv);
-check('invoice with a balance shows the bank details and reference', str_contains($h, 'Pay the balance by EFT') && str_contains($h, '62000000001') && str_contains($h, 'Reference: ' . $ro['order_no']));
+check('once the balance is paid, the invoice no longer asks for payment', $roInv > 0 && !str_contains($h, 'Pay the balance'));
 $foInv = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type = 'tax_invoice'", [$fo['id']]);
 check('paid invoice has no "pay the balance" note', $foInv > 0 && !str_contains(doc_html($foInv), 'Pay the balance'));
 check('tax invoice VAT label from its lines: "VAT (15%)"', $foInv > 0 && str_contains(doc_html($foInv), 'VAT (15%)'));
@@ -1251,9 +1255,13 @@ $rd = OrderService::place('ranch', ['billing_name' => 'Ranch Buyer', 'billing_ad
 $rdItem = db_one('SELECT * FROM order_items WHERE order_id = ?', [$rd['id']]);
 step('finalise (setup)', static fn() => OrderService::finalise((int) $rd['id'], [$rdItem['id'] => 40.0]));
 step('ready (setup)', static fn() => OrderService::transition((int) $rd['id'], 'ready_for_collection'));
+$rdInv = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$rd['id']]);
+$h = $rdInv ? doc_html($rdInv) : '';
+$rdBank = (string) (json_decode((string) db_val('SELECT snapshot FROM documents WHERE id = ?', [$rdInv]), true)['seller']['bank']['account_no'] ?? 'missing');
+check('invoice with a balance still owed shows the bank details and reference', str_contains($h, 'Pay the balance by EFT') && str_contains($h, 'Account no: ' . $rdBank) && str_contains($h, 'Reference: ' . $rd['order_no']));
 step('pay (setup)', static fn() => OrderService::recordPayment((int) $rd['id'], OrderService::amountDue(order_row((int) $rd['id'])), 'cash'));
 setting_set('ranch_brand_mark', '');
-check('"Mark collected" is refused while the ranch brand mark is empty', (string) throws(static fn() => OrderService::transition((int) $rd['id'], 'collected')) !== ''
+check('"Mark collected" is refused while the ranch brand mark is empty', str_contains((string) throws(static fn() => OrderService::transition((int) $rd['id'], 'collected')), 'brand')
     && order_row((int) $rd['id'])['status'] === 'ready_for_collection' && !db_val("SELECT 1 FROM documents WHERE order_id = ? AND doc_type = 'doc_identification'", [$rd['id']]));
 setting_set('ranch_brand_mark', 'GX1');
 step('collected with the mark set', static fn() => OrderService::transition((int) $rd['id'], 'collected'));
@@ -1262,6 +1270,23 @@ $h = $doi2 ? doc_html($doi2) : '';
 check('new DOI: kind of animal from the breed (Goat) and age (4–6 months)', str_contains($h, '>Goat<') && str_contains($h, '4–6 months'), $doi2 ? '' : 'no DOI');
 check("new DOI: seller's mark printed", str_contains($h, "Seller's mark: GX1") || str_contains($h, 'Seller&#039;s mark: GX1'));
 db_exec("UPDATE breeds SET kind = 'Sheep'");
+db_exec('UPDATE lots SET age_months_min = NULL, age_months_max = NULL WHERE id = 1');
+// Labels on documents made from scratch: mixed VAT rates, receipts, and old DOI snapshots without kind/age
+$fakeDoc = ['doc_type' => 'tax_invoice', 'doc_no' => 'T-1', 'issued_at' => now(), 'subtotal_excl_cents' => 0, 'vat_cents' => 0, 'total_cents' => 0, 'reason_code' => null, 'explanation' => null];
+$fakeLine = static fn(int $bp) => DocumentService::line('Item', 1, null, 11500, 11500, $bp, $bp === 0, null);
+$fakeSnap = ['seller' => ['vat_registered' => true, 'name' => 'S', 'code' => 'feeds'], 'buyer' => ['name' => 'B', 'company' => null, 'brand_mark' => null], 'order' => []];
+$hv = PdfService::html('document', ['doc' => $fakeDoc, 'lines' => [$fakeLine(1500), $fakeLine(0)], 'snap' => $fakeSnap, 'copy' => false]);
+check('VAT label: standard + zero-rated lines → "VAT (15%)"', str_contains($hv, 'VAT (15%)') && str_contains($hv, '(zero-rated)'));
+$hv = PdfService::html('document', ['doc' => $fakeDoc, 'lines' => [$fakeLine(1500), $fakeLine(1400)], 'snap' => $fakeSnap, 'copy' => false]);
+check('VAT label: two different rates → plain "VAT" (no wrong percentage)', !str_contains($hv, 'VAT (15%)') && !str_contains($hv, 'VAT (14%)') && str_contains($hv, '>VAT<'));
+$hv = PdfService::html('document', ['doc' => $fakeDoc, 'lines' => [$fakeLine(1500)], 'snap' => ['seller' => ['vat_registered' => false, 'name' => 'S', 'code' => 'feeds']] + $fakeSnap, 'copy' => false]);
+check('seller not VAT registered: no VAT rows at all', !str_contains($hv, 'Excl VAT') && !str_contains($hv, 'Total excl. VAT'));
+$oldDoi = ['lots' => [['qty' => 3, 'breed' => 'Dorper', 'sex' => 'ewe', 'category' => 'Weaner lambs', 'title' => 'Old lot', 'lot_no' => 'L1', 'tag_no' => null]]] + $fakeSnap;
+$warn = null;
+set_error_handler(static function (int $no, string $msg) use (&$warn): bool { $warn = $msg; return true; });
+$hv = PdfService::html('document', ['doc' => ['doc_type' => 'doc_identification'] + $fakeDoc, 'lines' => [], 'snap' => $oldDoi, 'copy' => false]);
+restore_error_handler();
+check('a DOI stored before this change (no kind/age) still renders: "Sheep", age "—", no warnings', $warn === null && str_contains($hv, '>Sheep<') && str_contains($hv, '>—<'), (string) $warn);
 
 section('Phase 4: scheduled jobs (cron)');
 $admin->query("SELECT GET_LOCK(SHA1(CONCAT(DATABASE(), ':', 'cron')), 0)")->fetchColumn();
@@ -1335,6 +1360,11 @@ check('alerts and enquiries under their (verified) email are deleted', !db_val("
 check('uploaded VAT certificate file is deleted', !is_file(GX_ROOT . '/' . $vatFile));
 check('push devices removed', !db_val('SELECT 1 FROM push_devices WHERE customer_id = ?', [$pc['id']]));
 check('queued emails to the old address removed', !db_val('SELECT 1 FROM email_queue WHERE id = ?', [$qOld]));
+$pcSnap = json_decode((string) db_val("SELECT snapshot FROM documents WHERE order_id = ? AND doc_type = 'order_confirmation'", [$po1['id']]), true) ?: [];
+check("documents' copies of email, phone, notes and delivery address are removed (invoice details kept)",
+    $pcSnap && !isset($pcSnap['buyer']['email']) && !isset($pcSnap['buyer']['phone']) && !isset($pcSnap['buyer']['ship']) && !isset($pcSnap['order']['customer_note'])
+    && ($pcSnap['buyer']['name'] ?? '') === 'Popia Person' && ($pcSnap['buyer']['vat_no'] ?? '') === '4222222222', json_encode($pcSnap['buyer'] ?? null));
+check('saved PDFs of their documents are removed (rebuilt from the cleaned copy)', !db_val('SELECT 1 FROM documents WHERE customer_id = ? AND pdf_path IS NOT NULL', [$pc['id']]));
 check('confirmation ("account deleted") emailed to the old address', (bool) db_val("SELECT 1 FROM email_queue WHERE to_email = 'popia@test.local' AND subject LIKE '%account has been deleted%'"));
 @rmdir(GX_ROOT . '/storage/private/vat/test');
 
@@ -1357,6 +1387,20 @@ check('verifying the email links the guest alert and enquiry to the account',
     (int) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'victim@test.local'") === $vid && (int) db_val("SELECT customer_id FROM enquiries WHERE email = 'victim@test.local'") === $vid);
 [$st, $res] = $vh->api('POST', '/account/api/privacy.php', ['action' => 'export']);
 check('… and the export now includes them', count($res['data']['download']['livestock_alerts'] ?? []) === 1 && count($res['data']['download']['enquiries'] ?? []) === 1, json_encode($res));
+
+// --- A new VAT certificate replaces the old file ---
+setting_set('zero_rating_enabled', '1');
+$pdfA = (string) tempnam(sys_get_temp_dir(), 'gxvat');
+file_put_contents($pdfA, "%PDF-1.4\n%test\n");
+[$st1] = $vh->api('POST', '/account/api/profile.php', ['action' => 'vat_doc'], ['vat_doc' => $pdfA]);
+$firstDoc = (string) db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ?', [$vid]);
+[$st2] = $vh->api('POST', '/account/api/profile.php', ['action' => 'vat_doc'], ['vat_doc' => $pdfA]);
+$secondDoc = (string) db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ?', [$vid]);
+check('uploading a new VAT certificate deletes the previous file', $st1 === 200 && $st2 === 200 && $firstDoc !== $secondDoc && !is_file(GX_ROOT . '/' . $firstDoc) && is_file(GX_ROOT . '/' . $secondDoc),
+    json_encode([$st1, $st2, $firstDoc, $secondDoc]));
+@unlink(GX_ROOT . '/' . $secondDoc);
+@unlink($pdfA);
+setting_set('zero_rating_enabled', '0');
 
 // --- Marketing consent date, terms acceptance ---
 [$st] = $vh->api('POST', '/account/api/profile.php', ['action' => 'details', 'first_name' => 'Vic', 'last_name' => 'Tim', 'phone' => '0821234567', 'marketing_opt_in' => '1']);
@@ -1405,18 +1449,50 @@ curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => 'List-Unsubs
     CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded']]);
 curl_exec($ch);
 $oneClick = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-check('one-click unsubscribe from the mail provider works (RFC 8058)', $oneClick === 200 && (int) db_val("SELECT is_active FROM livestock_alerts WHERE email = 'guest-alert@test.local'") === 0, (string) $oneClick);
+check('one-click unsubscribe from the mail provider works (RFC 8058) — the guest sign-up is deleted', $oneClick === 200 && !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'guest-alert@test.local'"), (string) $oneClick);
 LivestockService::subscribe('second@test.local', null, null, null, true);
 $utok2 = (string) db_val("SELECT unsubscribe_token FROM livestock_alerts WHERE email = 'second@test.local'");
 [$st] = $gh->api('POST', '/ranch/api/alerts.php', ['action' => 'unsubscribe', 'token' => $utok2]);
-check('the Unsubscribe button on the page works', $st === 200 && (int) db_val("SELECT is_active FROM livestock_alerts WHERE email = 'second@test.local'") === 0);
+check('the Unsubscribe button on the page works', $st === 200 && !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'second@test.local'"));
+// An account that has not verified its email can't take over (or learn about) someone's guest alert for that address
+LivestockService::subscribe('taken@test.local', null, null, null, true); // the real owner of the address, signed up as a guest
+db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone) VALUES (?,?,?,?,?)', ['taken@test.local', password_hash('x', PASSWORD_BCRYPT), 'Fake', 'Owner', '0821234567']);
+$tk = new TestHttp($base);
+$tk->page('/account/login.php');
+$tk->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'taken@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 10.44.0.9']);
+$tk->page('/account/alerts.php');
+[$st, $res] = $tk->api('POST', '/account/api/alerts.php', ['action' => 'create', 'breed' => '', 'category' => '']);
+check('unverified account: the guest\'s alert is not attached to it', (string) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'taken@test.local' AND confirmed_at IS NOT NULL") === ''
+    && !str_contains($tk->page('/account/alerts.php'), 'Last alert'), json_encode($res));
+check('… and the reply does not reveal that the address is subscribed', ($res['message'] ?? '') !== 'Alert added.', json_encode($res));
+// A pending confirmation link is not replaced by repeated sign-ups once the daily email limit is reached
+for ($i = 0; $i < 3; $i++) {
+    LivestockService::subscribe('pending@test.local', null, null, null, false);
+}
+$pendTok = (string) db_val("SELECT confirm_token FROM livestock_alerts WHERE email = 'pending@test.local'");
+LivestockService::subscribe('pending@test.local', null, null, null, false);
+check('after the daily limit no new email is sent and the last link keeps working', db_val("SELECT confirm_token FROM livestock_alerts WHERE email = 'pending@test.local'") === $pendTok
+    && (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'pending@test.local'") === 3);
 
 // --- Retention (POPIA: not kept longer than needed) ---
 db_exec("INSERT INTO audit_log (actor_type, action, created_at) VALUES ('system', 'old.entry', NOW() - INTERVAL 800 DAY), ('system', 'new.entry', NOW())");
 db_exec("INSERT INTO enquiries (name, email, message, created_at) VALUES ('Old', 'old@test.local', 'old', NOW() - INTERVAL 800 DAY)");
 db_exec("INSERT INTO email_queue (to_email, subject, body_html, status, created_at) VALUES ('old@test.local', 'Failed', '<p>x</p>', 'failed', NOW() - INTERVAL 100 DAY)");
 db_exec("INSERT INTO livestock_alerts (email, confirm_token, unsubscribe_token, created_at) VALUES ('never@test.local', ?, ?, NOW() - INTERVAL 8 DAY)", [random_token(32), random_token(32)]);
+// An alert saved by the old code between pasting the migration and merging (no link was ever sent) keeps working
+db_exec("INSERT INTO livestock_alerts (email, unsubscribe_token, created_at) VALUES ('window@test.local', ?, NOW() - INTERVAL 9 DAY)", [random_token(32)]);
+// Unsubscribing an address that never confirmed removes the sign-up altogether (no consent)
+LivestockService::subscribe('half@test.local', null, null, null, false);
+$utok3 = (string) db_val("SELECT unsubscribe_token FROM livestock_alerts WHERE email = 'half@test.local'");
+step('unsubscribe never-confirmed', static fn() => LivestockService::unsubscribe($utok3));
+check('unsubscribing a never-confirmed sign-up deletes it', !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'half@test.local'"));
 step('retention clean-up', static fn() => CronService::retention());
+step('alert consent job', static fn() => CronService::alertConsent());
+check('an alert saved without proof of consent is not sent — it gets one confirmation email instead',
+    db_val("SELECT confirmed_at FROM livestock_alerts WHERE email = 'window@test.local'") === null
+    && (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'window@test.local' AND subject LIKE 'Confirm your%'") === 1);
+step('alert consent job again', static fn() => CronService::alertConsent());
+check('… only once', (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'window@test.local' AND subject LIKE 'Confirm your%'") === 1);
 check('audit entries older than the retention period are deleted (recent ones kept)', !db_val("SELECT 1 FROM audit_log WHERE action = 'old.entry'") && (bool) db_val("SELECT 1 FROM audit_log WHERE action = 'new.entry'"));
 check('old enquiries, old failed emails and never-confirmed alerts are deleted',
     !db_val("SELECT 1 FROM enquiries WHERE email = 'old@test.local'") && !db_val("SELECT 1 FROM email_queue WHERE to_email = 'old@test.local'") && !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'never@test.local'"));
@@ -1447,6 +1523,18 @@ check('… and the media library shows it as "In use"', $at !== false && str_con
 db_exec('UPDATE categories SET media_id = NULL WHERE id = ?', [$catId]);
 [$st] = $p4->api('POST', '/admin/api/media.php', ['action' => 'delete', 'id' => $mid]);
 check('once unused it can be deleted (files removed)', $st === 200 && !is_file(GX_ROOT . '/' . $newWide[0]));
+$gd2 = imagecreatetruecolor(1700, 400);
+$mBase2 = 'uploads/media/test/' . random_token(6);
+$mid2 = db_insert("INSERT INTO media (base_path, original_name, mime, width, height, size_bytes, focal_x, focal_y, variants) VALUES (?, 'w.png', 'image/webp', 1700, 400, 1, .5, .5, ?)",
+    [$mBase2, json_encode(media_generate_variants($gd2, $mBase2, .5, .5), JSON_UNESCAPED_SLASHES)]);
+step('refocus a wide low image', static fn() => media_refocus($mid2, .3, .5));
+$v2 = json_decode((string) db_val('SELECT variants FROM media WHERE id = ?', [$mid2]), true);
+$onDisk = array_map(static fn($f) => 'uploads/media/test/' . basename($f), glob(GX_ROOT . '/' . $mBase2 . '-f*') ?: []);
+check('refocus leaves no unused crop files behind', $onDisk !== [] && !array_diff($onDisk, array_values($v2['wide'])), json_encode([$onDisk, $v2['wide']]));
+foreach (glob(GX_ROOT . '/' . $mBase2 . '*') ?: [] as $f) {
+    @unlink($f);
+}
+db_exec('DELETE FROM media WHERE id = ?', [$mid2]);
 @rmdir(GX_ROOT . '/uploads/media/test');
 
 // --- Activity log: what changed, not just "saved" ---
@@ -1485,6 +1573,12 @@ $csvLines = array_values(array_filter(explode("\n", trim($csvOrders))));
 check('staff with "View orders" (no Reports) can export the orders CSV', str_contains($csvLines[0] ?? '', 'Order,Division'), substr($csvOrders, 0, 120));
 check('the orders CSV uses the page filters (only cancelled orders)', count($csvLines) > 1 && !array_filter(array_slice($csvLines, 1), static fn($l) => !str_contains($l, ',cancelled,')));
 check('staff without "View customers" cannot export customers', !str_contains($sx4->page('/admin/reports.php?export=customers'), 'First name,Last name'));
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id IN (SELECT id FROM permissions WHERE slug IN ('orders.view','documents.view'))");
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug = 'reports.view'");
+check('a "Reports"-only role (bookkeeper) can export invoices', str_contains($sx4->page('/admin/reports.php?export=documents'), 'Date,Type,Number'));
+check('… but not the orders list with buyers\' email and phone', !str_contains($sx4->page('/admin/reports.php?export=orders'), 'Order,Division'));
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = (SELECT id FROM permissions WHERE slug = 'reports.view')");
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug IN ('orders.view','documents.view','customers.view')");
 $cnDoc = db_one("SELECT * FROM documents WHERE doc_type = 'credit_note' AND is_void = 0 ORDER BY id LIMIT 1");
 $csvDocs = $p4->page('/admin/reports.php?export=documents&q=' . rawurlencode($cnDoc['doc_no']));
 check('negative amounts stay numbers in the CSV (no leading quote)', str_contains($csvDocs, ',-' . number_format(abs((int) $cnDoc['total_cents']) / 100, 2, '.', '')) && !str_contains($csvDocs, "'-"), $csvDocs);
@@ -1513,6 +1607,15 @@ db_exec("UPDATE admin_users SET name = 'Staff', role_id = 3, division_scope = 'a
 check('the last owner cannot be demoted', $st === 409 && (int) db_val('SELECT role_id FROM admin_users WHERE id = ?', [$ownerId]) === 1, (string) $st);
 [$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $ownerId, 'name' => 'Owner', 'role_id' => 1, 'division_scope' => 'ranch']);
 check('… nor limited to one division', $st === 409 && db_val('SELECT division_scope FROM admin_users WHERE id = ?', [$ownerId]) === 'all');
+$feedsOwner = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (1, ?, ?, ?, ?)', ['feedsowner@test.local', admin_password_hash($ownerPw), 'Feeds Owner', 'feeds']);
+$fo2 = new TestHttp($base);
+$fo2->page('/admin/login.php');
+$fo2->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'feedsowner@test.local', 'password' => $ownerPw], null, ['X-Test-Remote-Addr: 10.44.0.11']);
+$fo2->page('/admin/');
+[$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'toggle', 'id' => $ownerId]);
+check('the only owner with full access cannot be disabled (even by another, limited owner)', $st === 409 && db_val('SELECT status FROM admin_users WHERE id = ?', [$ownerId]) === 'active', (string) $st);
+[$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $feedsOwner, 'name' => 'Feeds Owner', 'role_id' => 2, 'division_scope' => 'feeds']);
+check('an owner limited to one division can be made a manager', $st === 200 && (int) db_val('SELECT role_id FROM admin_users WHERE id = ?', [$feedsOwner]) === 2, (string) $st);
 db_exec("UPDATE admin_users a JOIN roles r ON r.id = a.role_id SET a.status = 'active' WHERE r.slug = 'owner'");
 
 // --- Admin "forgot password" ---
@@ -1549,6 +1652,8 @@ $take2 = db_one("SELECT * FROM stock_takes WHERE status = 'open' ORDER BY id DES
 $tl = db_one('SELECT * FROM stock_take_items WHERE stock_take_id = ? AND variant_id = 11', [$take2['id']]);
 [$st, $res] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'stocktake_complete', 'id' => $take2['id'], 'counts' => [(string) $tl['id'] => '7']]);
 check('"Complete stock take" also applies counts typed but not saved yet', $st === 200 && stock(11) === 7, $st . ' ' . json_encode($res) . ' stock ' . stock(11));
+[$st] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'stocktake_save', 'id' => $take2['id'], 'counts' => [(string) $tl['id'] => '2']]);
+check('counts can no longer be saved once the stock take is completed', $st === 409 && stock(11) === 7);
 [$st, $res] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'receive', 'lines' => [['variant_id' => 999999, 'qty' => 3]]]);
 check('receiving stock for an unknown product gives a clear message (no server error)', $st === 422, $st . ' ' . json_encode($res));
 setting_set('last_cron_run', date('Y-m-d H:i:s', time() - 5 * 3600));
@@ -1561,6 +1666,33 @@ db_exec("UPDATE pages SET show_in_footer = 0 WHERE slug = 'returns'");
 $home = (new TestHttp($base))->page('/pages/contact.php');
 check('a page switched off "Link in footer menu" leaves the footer', !str_contains($home, 'slug=returns') && str_contains($home, 'slug=terms'));
 db_exec("UPDATE pages SET show_in_footer = 1 WHERE slug = 'returns'");
+db_exec("UPDATE menu_items SET is_active = 0 WHERE url = '/pages/page.php?slug=returns'");
+check('a footer menu item switched off stays off', !str_contains((new TestHttp($base))->page('/pages/contact.php'), 'slug=returns'));
+db_exec("UPDATE menu_items SET is_active = 1 WHERE url = '/pages/page.php?slug=returns'");
+db_exec("UPDATE pages SET show_in_footer = 1 WHERE slug = 'returns'");
+
+section('Migrations');
+// Every migration must run on an up-to-date database without errors and without changing anything (safe to paste twice)
+$schemaOf = static fn(): string => json_encode([
+    db_all('SELECT table_name, column_name, column_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = DATABASE() ORDER BY 1, 2'),
+    db_all('SELECT table_name, index_name, column_name, non_unique FROM information_schema.statistics WHERE table_schema = DATABASE() ORDER BY 1, 2, 3'),
+    db_all('SELECT template_key, subject, body FROM email_templates ORDER BY 1'),
+    db_all('SELECT setting_key FROM settings ORDER BY 1'),
+]);
+$beforeSchema = $schemaOf();
+$migErr = '';
+foreach (glob(GX_ROOT . '/database/migrations/0*.sql') ?: [] as $mf) {
+    try {
+        $admin->exec((string) file_get_contents($mf));
+        $admin->exec((string) file_get_contents($mf));
+    } catch (Throwable $e) {
+        $migErr .= basename($mf) . ': ' . $e->getMessage() . ' ';
+    }
+}
+check('all migrations run twice on a current database without errors', $migErr === '', $migErr);
+check('… and leave the schema, email templates and settings exactly as install.sql made them', $schemaOf() === $beforeSchema);
+check('every migration is recorded in install.sql', db_col('SELECT version FROM schema_migrations ORDER BY version') === array_merge(['001_install'],
+    array_map(static fn($f) => basename($f, '.sql'), glob(GX_ROOT . '/database/migrations/0*.sql') ?: [])));
 
 section('PDF rendering');
 if (PdfService::available()) {

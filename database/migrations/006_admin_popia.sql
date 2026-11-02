@@ -33,8 +33,18 @@ SET @sql = (SELECT IF(COUNT(*) = 0,
   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'livestock_alerts' AND COLUMN_NAME = 'confirm_token');
 PREPARE gx_stmt FROM @sql; EXECUTE gx_stmt; DEALLOCATE PREPARE gx_stmt;
 
--- Alerts that existed before double opt-in keep working (an unconfirmed alert always has a confirm_token)
-UPDATE livestock_alerts SET confirmed_at = created_at WHERE confirmed_at IS NULL AND confirm_token IS NULL;
+SET @sql = (SELECT IF(COUNT(*) = 0,
+  'ALTER TABLE livestock_alerts ADD COLUMN confirm_sent_at DATETIME NULL AFTER confirm_token',
+  'SELECT 1') FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'livestock_alerts' AND COLUMN_NAME = 'confirm_sent_at');
+PREPARE gx_stmt FROM @sql; EXECUTE gx_stmt; DEALLOCATE PREPARE gx_stmt;
+
+-- Existing alerts of customers who verified that same email count as confirmed. Every other existing alert
+-- (anyone could have typed that address) gets ONE "confirm your alert" email from the cron and only continues
+-- if it is confirmed; switched-off ones without proof of consent are removed by the cron.
+UPDATE livestock_alerts a JOIN customers c ON c.id = a.customer_id
+   SET a.confirmed_at = a.created_at
+ WHERE a.confirmed_at IS NULL AND a.confirm_token IS NULL AND c.email_verified_at IS NOT NULL AND c.email = a.email;
 
 -- 3. Terms & conditions: which version a customer accepted at registration and on each order
 SET @sql = (SELECT IF(COUNT(*) = 0,
@@ -93,14 +103,11 @@ INSERT IGNORE INTO settings (setting_key, setting_value, value_type, group_name,
 --    "Payment received" says which documents are really attached (a receipt, or a receipt and tax invoice)
 UPDATE email_templates SET body = REPLACE(body, 'Your invoice is attached.', '{{docs_note_md}}')
  WHERE template_key = 'payment_received' AND body NOT LIKE '%{{docs_note_md}}%';
---    Low-stock digest: the list is markdown (no more ∗∗garbled∗∗ text)
-UPDATE email_templates SET body = REPLACE(body, '{{items}}', '{{items_md}}')
- WHERE template_key = 'admin_low_stock' AND body NOT LIKE '%{{items_md}}%';
 INSERT IGNORE INTO email_templates (template_key, name, subject, body) VALUES
 ('livestock_alert_confirm', 'Confirm livestock alert', 'Confirm your GrazeX Ranch livestock alert',
  'Hi,\n\nPlease confirm that you want an email when new livestock matching your alert ({{alert}}) is available:\n\n{{link}}\n\nIf you did not ask for this, ignore this email — you will not get any alerts.'),
 ('account_deleted', 'Account deleted', 'Your GrazeX account has been deleted',
- 'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices and other records that the law requires us to keep (5 years) are kept, without your contact details.\n\nIf you did not ask for this, please contact us.'),
+ 'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices that the law requires us to keep for 5 years are kept with only what a tax invoice must show (name, billing address and VAT number).\n\nIf you did not ask for this, please contact us.'),
 ('admin_password_reset', 'Admin: reset password', 'Reset your GrazeX admin password',
  'Hi {{first_name}},\n\nUse this link to choose a new admin password (valid for 1 hour): {{link}}\n\nIf you did not ask for this, ignore this email and tell the owner.');
 

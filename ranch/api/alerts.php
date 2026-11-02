@@ -14,6 +14,7 @@
 declare(strict_types=1);
 
 define('GX_IS_API', true);
+define('GX_SKIP_MAINTENANCE', true); // unsubscribing must work even while the shop is in maintenance mode
 require __DIR__ . '/../../includes/bootstrap.php';
 
 $token = query_str('unsubscribe');
@@ -21,7 +22,8 @@ if (request_method() === 'GET') {
     redirect('/ranch/alerts.php' . (preg_match('/^[a-f0-9]{64}$/', $token) ? '?unsubscribe=' . $token : ''));
 }
 if (request_method() === 'POST' && $token !== '' && trim((string) ($_POST['List-Unsubscribe'] ?? '')) === 'One-Click') {
-    rate_limit_or_fail('alert_unsubscribe', rate_limit_ip(), 60, 3600);
+    // No IP limit: these come from the mail providers' servers (many people share a few addresses), and the
+    // 256-bit token can't be guessed — at worst a request switches alerts off
     LivestockService::unsubscribe($token);
     json_ok([], 'You have been unsubscribed from livestock alerts.');
 }

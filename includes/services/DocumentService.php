@@ -335,7 +335,9 @@ final class DocumentService
         }
         $lines = db_all('SELECT * FROM document_lines WHERE document_id = ? ORDER BY sort_order, id', [$docId]);
         $snap = json_decode((string) $doc['snapshot'], true) ?: [];
-        $bytes = PdfService::render('document', ['doc' => $doc, 'lines' => $lines, 'snap' => $snap, 'copy' => $copy]);
+        // The issued document never changes; only the "how to pay" note follows the order as it is now
+        $live = db_one('SELECT status, amount_paid_cents FROM orders WHERE id = ?', [$doc['order_id']]);
+        $bytes = PdfService::render('document', ['doc' => $doc, 'lines' => $lines, 'snap' => $snap, 'copy' => $copy, 'live' => $live]);
         return ['bytes' => $bytes, 'filename' => $doc['doc_no'] . '.pdf', 'doc' => $doc];
     }
 

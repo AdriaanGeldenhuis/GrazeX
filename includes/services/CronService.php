@@ -34,6 +34,7 @@ final class CronService
             $job('email queue', static fn() => MailService::processQueue(250) . ' sent');
             $job('low stock digest', static fn() => self::lowStockDigest());
             $job('cleanup', static fn() => self::cleanup());
+            $job('alert consent', static fn() => self::alertConsent());
             $job('privacy retention', static fn() => self::retention());
             setting_set('last_cron_run', now());
             return sprintf('[%s] cron (PHP %s, %.1fs) — %s', date('Y-m-d H:i:s'), PHP_VERSION, microtime(true) - $started, implode(' | ', $out));
@@ -66,11 +67,9 @@ final class CronService
         }
         $to = setting('low_stock_email') ?: (string) env('mail.admin_email', '');
         if ($to !== '') {
-            // Markdown list (template uses {{items_md}}); product names are neutralised so they can't break the list
-            $clean = static fn(string $s): string => str_replace(['*', '[', ']', '_', '`'], ['∗', '(', ')', ' ', "'"], $s);
-            $itemsMd = implode("\n", array_map(static fn($r) => '- ' . $clean($r['name'] . ' (' . $r['size'] . ')') . ': **' . (int) $r['stock_qty'] . '**', $rows));
-            $itemsPlain = implode("\n", array_map(static fn($r) => '- ' . $r['name'] . ' (' . $r['size'] . '): ' . (int) $r['stock_qty'], $rows));
-            NotificationService::email('admin_low_stock', $to, 'GrazeX admin', ['count' => (string) count($rows), 'items_md' => $itemsMd, 'items' => $itemsPlain],
+            // A plain list ("- Name (size): 3 left"): it renders as a list without any ** that would show as ∗∗
+            $items = implode("\n", array_map(static fn($r) => '- ' . $r['name'] . ' (' . $r['size'] . '): ' . (int) $r['stock_qty'] . ' left', $rows));
+            NotificationService::email('admin_low_stock', $to, 'GrazeX admin', ['count' => (string) count($rows), 'items' => $items],
                 division_id('feeds'), [], ['label' => 'Open inventory', 'url' => app_url('/admin/inventory.php?filter=low')], false);
         }
         return count($rows) . ' items';
@@ -99,6 +98,22 @@ final class CronService
     }
 
     /**
+     * Alerts saved before double opt-in (or by the old code just before this version went live) have no proof of
+     * consent: switched-off ones are removed, live ones get ONE "confirm your alert" email and stop unless confirmed.
+     */
+    public static function alertConsent(): string
+    {
+        $removed = db_exec('DELETE FROM livestock_alerts WHERE confirmed_at IS NULL AND confirm_token IS NULL AND is_active = 0');
+        $asked = 0;
+        foreach (db_all('SELECT * FROM livestock_alerts WHERE confirmed_at IS NULL AND confirm_token IS NULL ORDER BY id LIMIT 40') as $row) {
+            if (LivestockService::requestConfirmation($row)) {
+                $asked++;
+            }
+        }
+        return "asked {$asked}, removed {$removed}";
+    }
+
+    /**
      * POPIA: personal information is kept no longer than needed. Orders, documents and payments are
      * financial records and are NOT touched here (kept 5 years for SARS).
      */
@@ -109,8 +124,9 @@ final class CronService
         $a = db_exec('DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL ? DAY', [$auditDays]);
         $b = db_exec('DELETE FROM enquiries WHERE created_at < NOW() - INTERVAL ? DAY', [$enquiryDays]);
         $c = db_exec("DELETE FROM email_queue WHERE status = 'failed' AND created_at < NOW() - INTERVAL 90 DAY");
-        // Alert sign-ups that were never confirmed: the email address was given without consent being proven
-        $d = db_exec('DELETE FROM livestock_alerts WHERE confirmed_at IS NULL AND created_at < NOW() - INTERVAL 7 DAY');
+        // Sign-ups whose confirmation link was not clicked within 7 days: consent was never given
+        $d = db_exec('DELETE FROM livestock_alerts WHERE confirmed_at IS NULL AND confirm_token IS NOT NULL
+                      AND COALESCE(confirm_sent_at, created_at) < NOW() - INTERVAL 7 DAY');
         return "audit {$a}, enquiries {$b}, failed emails {$c}, unconfirmed alerts {$d}";
     }
 }
