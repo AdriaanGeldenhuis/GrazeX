@@ -123,10 +123,12 @@ CREATE TABLE email_queue (
   body_html    MEDIUMTEXT   NOT NULL,
   body_text    MEDIUMTEXT   NULL,
   attachments  LONGTEXT     NULL,
+  list_unsubscribe VARCHAR(500) NULL,
   status       ENUM('queued','sending','sent','failed') NOT NULL DEFAULT 'queued',
   attempts     TINYINT UNSIGNED NOT NULL DEFAULT 0,
   last_error   VARCHAR(500) NULL,
   send_after   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  claimed_at   DATETIME     NULL,
   sent_at      DATETIME     NULL,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -157,7 +159,7 @@ CREATE TABLE schema_migrations (
   PRIMARY KEY (version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security'), ('005_checkout');
+INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security'), ('005_checkout'), ('006_admin_popia');
 
 -- ---------------------------------------------------------------------
 -- 2. ACCOUNTS (customers + admin users are separate on purpose)
@@ -179,6 +181,8 @@ CREATE TABLE customers (
   email_verified_at      DATETIME     NULL,
   marketing_opt_in       TINYINT(1)   NOT NULL DEFAULT 0,
   marketing_opt_in_at    DATETIME     NULL,
+  terms_accepted_at      DATETIME     NULL,
+  terms_version          VARCHAR(40)  NULL,
   status                 ENUM('active','blocked') NOT NULL DEFAULT 'active',
   admin_notes            TEXT         NULL,
   session_version        INT UNSIGNED NOT NULL DEFAULT 1,
@@ -278,6 +282,21 @@ CREATE TABLE admin_users (
   UNIQUE KEY uq_admin_users_email (email),
   KEY idx_admin_users_role (role_id),
   CONSTRAINT fk_admin_users_role FOREIGN KEY (role_id) REFERENCES roles (id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Admin "forgot password" links (hashed, one hour, single use)
+CREATE TABLE admin_tokens (
+  id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  admin_user_id  INT UNSIGNED NOT NULL,
+  purpose        ENUM('reset_password') NOT NULL DEFAULT 'reset_password',
+  token_hash     CHAR(64)     NOT NULL,
+  expires_at     DATETIME     NOT NULL,
+  used_at        DATETIME     NULL,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_admin_tokens_hash (token_hash),
+  KEY idx_admin_tokens_user (admin_user_id, purpose),
+  CONSTRAINT fk_admin_tokens_user FOREIGN KEY (admin_user_id) REFERENCES admin_users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
@@ -553,6 +572,7 @@ CREATE TABLE breeds (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   slug         VARCHAR(80)  NOT NULL,
   name         VARCHAR(100) NOT NULL,
+  kind         VARCHAR(40)  NOT NULL DEFAULT 'Sheep',
   description  TEXT         NULL,
   sort_order   INT          NOT NULL DEFAULT 0,
   is_active    TINYINT(1)   NOT NULL DEFAULT 1,
@@ -670,11 +690,14 @@ CREATE TABLE livestock_alerts (
   breed_id           INT UNSIGNED NULL,
   category_id        INT UNSIGNED NULL,
   is_active          TINYINT(1)   NOT NULL DEFAULT 1,
+  confirmed_at       DATETIME     NULL,
+  confirm_token      CHAR(64)     NULL,
   unsubscribe_token  CHAR(64)     NOT NULL,
   last_notified_at   DATETIME     NULL,
   created_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_livestock_alerts_token (unsubscribe_token),
+  UNIQUE KEY uq_livestock_alerts_confirm (confirm_token),
   KEY idx_livestock_alerts_email (email),
   KEY idx_livestock_alerts_match (is_active, breed_id, category_id),
   CONSTRAINT fk_livestock_alerts_customer FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
@@ -846,6 +869,8 @@ CREATE TABLE orders (
   buyer_id_number       VARCHAR(20)  NULL,
   buyer_brand_mark      VARCHAR(50)  NULL,
   transport_note        VARCHAR(500) NULL,
+  terms_accepted_at     DATETIME     NULL,
+  terms_version         VARCHAR(40)  NULL,
   vat_rate_bp           INT UNSIGNED NOT NULL DEFAULT 1500,
   zero_rated            TINYINT(1)   NOT NULL DEFAULT 0,
   subtotal_cents        INT          NOT NULL DEFAULT 0,
@@ -877,6 +902,7 @@ CREATE TABLE orders (
   KEY idx_orders_hold (status, hold_expires_at),
   KEY idx_orders_collection (collection_date, collection_slot_id),
   KEY idx_orders_placed (placed_at),
+  KEY idx_orders_delivery (delivery_date),
   CONSTRAINT fk_orders_division FOREIGN KEY (division_id) REFERENCES divisions (id) ON DELETE RESTRICT,
   CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE RESTRICT,
   CONSTRAINT fk_orders_collection_point FOREIGN KEY (collection_point_id) REFERENCES collection_points (id) ON DELETE SET NULL,
@@ -968,6 +994,7 @@ CREATE TABLE payments (
   UNIQUE KEY uq_payments_provider_payment (provider_payment_id),
   KEY idx_payments_order (order_id),
   KEY idx_payments_status (status, method),
+  KEY idx_payments_created (created_at),
   CONSTRAINT fk_payments_order FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE RESTRICT,
   CONSTRAINT fk_payments_division FOREIGN KEY (division_id) REFERENCES divisions (id) ON DELETE RESTRICT,
   CONSTRAINT fk_payments_verified_by FOREIGN KEY (verified_by) REFERENCES admin_users (id) ON DELETE SET NULL
@@ -1164,6 +1191,7 @@ CREATE TABLE enquiries (
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_enquiries_status (status, created_at),
+  KEY idx_enquiries_email (email),
   CONSTRAINT fk_enquiries_division FOREIGN KEY (division_id) REFERENCES divisions (id) ON DELETE SET NULL,
   CONSTRAINT fk_enquiries_lot FOREIGN KEY (lot_id) REFERENCES lots (id) ON DELETE SET NULL,
   CONSTRAINT fk_enquiries_product FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE SET NULL,
@@ -1241,6 +1269,8 @@ INSERT INTO settings (setting_key, setting_value, value_type, group_name, label)
 ('zero_rating_enabled',      '0',                              'bool',   'tax',      'Zero-rate eligible feed for verified VAT-registered farmers (confirm with accountant first)'),
 ('low_stock_email',          '',                               'string', 'notifications', 'Email for low stock & new order alerts'),
 ('email_hourly_cap',         '300',                            'int',    'notifications', 'Max emails sent per hour (Xneelo limit is 500)'),
+('retention_audit_days',     '730',                            'int',    'system',   'Days the admin activity log is kept'),
+('retention_enquiries_days', '730',                            'int',    'system',   'Days enquiries (contact messages) are kept'),
 ('ranch_brand_mark',         '',                               'string', 'ranch',    'Registered brand / tattoo mark of the ranch (printed on documents of identification)'),
 ('site_language',            'en',                             'string', 'general',  'Site language (en / af)'),
 ('meta_description',         'GrazeX Ranch & Feeds — quality livestock feed and finished lambs from productive South African pasture.', 'text', 'seo', 'Default meta description');
@@ -1352,7 +1382,7 @@ INSERT INTO faqs (division_id, question, answer, sort_order) VALUES
 
 INSERT INTO email_templates (template_key, name, subject, body) VALUES
 ('order_placed',        'Order placed',                 'Order {{order_no}} received — thank you!',  'Hi {{first_name}},\n\nThanks for your order **{{order_no}}**. Your order confirmation is attached.\n\n{{payment_instructions_md}}'),
-('payment_received',    'Payment received',             'Payment received for {{order_no}}',           'Hi {{first_name}},\n\nWe received your payment of **{{amount}}** for order {{order_no}}. Your invoice is attached.'),
+('payment_received',    'Payment received',             'Payment received for {{order_no}}',           'Hi {{first_name}},\n\nWe received your payment of **{{amount}}** for order {{order_no}}. {{docs_note_md}}'),
 ('payment_reminder',    'EFT payment reminder',         'Reminder: order {{order_no}} is waiting for payment', 'Hi {{first_name}},\n\nYour order {{order_no}} is reserved until **{{expires_at}}**. Please pay {{amount_due}} using {{order_no}} as reference and upload your proof of payment.\n\n{{bank_details_md}}'),
 ('pop_rejected',        'Proof of payment rejected',    'We could not verify your payment for {{order_no}}', 'Hi {{first_name}},\n\nWe could not match your proof of payment for {{order_no}}: {{reason}}. Please upload a new one or contact us.'),
 ('order_ready',         'Order ready for collection',   'Order {{order_no}} is ready',                 'Hi {{first_name}},\n\nGood news — order {{order_no}} is ready for collection on {{collection_date}}.'),
@@ -1368,7 +1398,10 @@ INSERT INTO email_templates (template_key, name, subject, body) VALUES
 ('enquiry_reply',       'Reply to enquiry',             'Re: your enquiry to GrazeX',                  '{{reply}}'),
 ('admin_new_order',     'Admin: new order',             'New {{division}} order {{order_no}} ({{total}})', 'A new order was placed: {{order_no}} — {{total}} — {{payment_method}}.\n\n{{link}}'),
 ('admin_pop_uploaded',  'Admin: POP uploaded',          'POP uploaded for {{order_no}}',               'A proof of payment was uploaded for {{order_no}}. Verify it here: {{link}}'),
-('admin_low_stock',     'Admin: low stock digest',      'Low stock: {{count}} items',                  'These items are at or below their low-stock level:\n\n{{items}}');
+('admin_low_stock',     'Admin: low stock digest',      'Low stock: {{count}} items',                  'These items are at or below their low-stock level:\n\n{{items_md}}'),
+('livestock_alert_confirm', 'Confirm livestock alert',   'Confirm your GrazeX Ranch livestock alert',   'Hi,\n\nPlease confirm that you want an email when new livestock matching your alert ({{alert}}) is available:\n\n{{link}}\n\nIf you did not ask for this, ignore this email — you will not get any alerts.'),
+('account_deleted',     'Account deleted',              'Your GrazeX account has been deleted',        'Hi {{first_name}},\n\nAs you asked, we have deleted your GrazeX account and the personal information linked to it.\n\nInvoices and other records that the law requires us to keep (5 years) are kept, without your contact details.\n\nIf you did not ask for this, please contact us.'),
+('admin_password_reset','Admin: reset password',        'Reset your GrazeX admin password',            'Hi {{first_name}},\n\nUse this link to choose a new admin password (valid for 1 hour): {{link}}\n\nIf you did not ask for this, ignore this email and tell the owner.');
 
 -- Content blocks (everything on the gateway and storefront heroes is editable in Admin > Content)
 INSERT INTO content_blocks (scope, block_key, type, label, value, sort_order) VALUES
