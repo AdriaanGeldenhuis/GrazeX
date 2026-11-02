@@ -37,7 +37,7 @@ admin_start('Documents', 'documents', ['perm' => 'documents.view']);
       <td data-label=""><a class="link" href="/admin/order.php?id=<?= (int) $d['order_id'] ?>"><?= e($d['order_no']) ?></a> · <?= e($d['billing_name']) ?></td>
       <td class="num" data-label=""><?= e(money((int) $d['total_cents'])) ?></td>
       <td class="num" data-label=""><?= e(money((int) $d['vat_cents'])) ?></td>
-      <td class="actions"><a class="btn btn-sm" href="/admin/api/documents.php?id=<?= (int) $d['id'] ?>" target="_blank" rel="noopener">PDF</a></td>
+      <td class="actions"><a class="btn btn-sm" href="/admin/api/documents.php?id=<?= (int) $d['id'] ?>" target="_blank" rel="noopener" data-download>PDF</a></td>
     </tr>
   <?php endforeach; ?>
   <?php if (!$docs): ?><tr><td colspan="7" class="muted">No documents yet.</td></tr><?php endif; ?>

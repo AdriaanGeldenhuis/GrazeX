@@ -21,6 +21,7 @@ require GX_ROOT . '/includes/layout/header.php';
       <input type="hidden" name="next" value="<?= e($next) ?>">
       <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="email" required autofocus></div>
       <div class="field"><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required></div>
+      <label class="check mb-2"><input type="checkbox" name="remember" value="1"<?= gx_in_app() ? ' checked' : '' ?>> Keep me logged in on this device</label>
       <button class="btn btn-primary btn-lg btn-block" type="submit">Log in</button>
     </form>
     <div class="row-between mt-2 small">

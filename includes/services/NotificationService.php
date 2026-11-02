@@ -11,10 +11,15 @@ final class NotificationService
     /**
      * Queue a templated email. Template subject/body live in email_templates (editable in Admin);
      * {{placeholders}} are replaced from $vars (values are escaped, except keys ending in _html).
+     * $pushTo: also tell this customer on their phone (the app), when there is a push text for this template.
      */
     public static function email(string $templateKey, string $toEmail, ?string $toName, array $vars = [],
-                                 ?int $divisionId = null, array $attachments = [], ?array $button = null, bool $sendNow = true): ?int
+                                 ?int $divisionId = null, array $attachments = [], ?array $button = null, bool $sendNow = true,
+                                 ?int $pushTo = null): ?int
     {
+        if ($pushTo) {
+            self::push($pushTo, $templateKey, $vars);
+        }
         $tpl = db_one('SELECT * FROM email_templates WHERE template_key = ? AND is_active = 1', [$templateKey]);
         if (!$tpl) {
             gx_log('warning', 'Missing/inactive email template: ' . $templateKey);
@@ -33,11 +38,32 @@ final class NotificationService
         return $id;
     }
 
-    /** In-admin notification + email to the admin inbox. */
+    /**
+     * Push notification to a customer's phone(s). Order news opens that order; the text is push.<key> in config/lang.
+     * A push problem never stops the email or the action that caused it.
+     */
+    public static function push(int $customerId, string $key, array $vars, ?string $url = null, ?string $tag = null, string $channel = 'orders'): void
+    {
+        try {
+            $no = (string) ($vars['order_no'] ?? '');
+            $url ??= $no !== '' ? '/account/order.php?no=' . rawurlencode($no) : '/account/';
+            $tag ??= $no !== '' ? 'order-' . $no : $key;
+            PushService::toCustomer($customerId, $key, $vars, $url, $tag, $channel);
+        } catch (Throwable $e) {
+            gx_log('warning', 'Push to customer failed', ['key' => $key, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /** In-admin notification + email to the admin inbox + a push to staff phones that may act on it. */
     public static function admin(string $type, string $title, ?string $body = null, ?string $link = null, ?int $divisionId = null, bool $email = true): void
     {
         db_exec('INSERT INTO admin_notifications (division_id, type, title, body, link) VALUES (?, ?, ?, ?, ?)',
             [$divisionId, $type, mb_substr($title, 0, 191), $body ? mb_substr($body, 0, 500) : null, $link]);
+        try {
+            PushService::toStaff($type, $title, $body, $link, $divisionId);
+        } catch (Throwable $e) {
+            gx_log('warning', 'Push to staff failed', ['type' => $type, 'error' => $e->getMessage()]);
+        }
         $to = setting('low_stock_email') ?: (string) env('mail.admin_email', '');
         if ($email && $to !== '') {
             $html = self::layout($title, '<p>' . nl2br(e((string) $body)) . '</p>', $divisionId ? division($divisionId) : null,

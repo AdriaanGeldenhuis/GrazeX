@@ -25,6 +25,11 @@ switch ((string) input('action')) {
                                 billing_company, billing_vat_no, billing_address, buyer_id_number, ship_town FROM orders WHERE customer_id = ? ORDER BY placed_at', [$cid]),
             'livestock_alerts' => db_all('SELECT email, breed_id, category_id, is_active, confirmed_at, created_at FROM livestock_alerts WHERE customer_id = ? OR email = ?', [$cid, $email]),
             'enquiries' => db_all('SELECT type, name, email, phone, message, created_at FROM enquiries WHERE customer_id = ? OR email = ?', [$cid, $email]),
+            // Phones with the app that get your notifications (the device token itself is a secret and is not shown)
+            'app_devices' => db_all('SELECT platform, app_version, created_at, last_seen_at FROM push_devices WHERE customer_id = ?', [$cid]),
+            'app_notifications' => db_all("SELECT q.title, q.body, q.status, q.created_at, q.sent_at FROM push_queue q JOIN push_devices d ON d.id = q.device_id
+                                           WHERE d.customer_id = ? AND q.channel <> 'staff' ORDER BY q.id", [$cid]),
+            'remembered_logins' => db_all('SELECT user_agent, created_at, last_used_at, expires_at FROM customer_remember_tokens WHERE customer_id = ?', [$cid]),
         ];
         audit('customer.data_export', 'customer', $cid);
         json_ok(['download' => $data, 'filename' => 'grazex-my-data-' . date('Y-m-d') . '.json'], 'Your data is downloading.');

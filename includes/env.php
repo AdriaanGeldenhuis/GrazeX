@@ -45,6 +45,10 @@ const GX_ENV_ALIASES = [
     // Single-key forms that follow YOCO_MODE
     'yoco._secret_key'     => ['YOCO_SECRET_KEY', 'YOCO_KEY'],
     'yoco._webhook_secret' => ['YOCO_WEBHOOK_SECRET'],
+    // Android app (appfiles/README.md): push notifications and App Links
+    'firebase.credentials' => ['FIREBASE_CREDENTIALS', 'FIREBASE_SERVICE_ACCOUNT', 'GOOGLE_APPLICATION_CREDENTIALS'],
+    'android.package'      => ['ANDROID_PACKAGE', 'ANDROID_PACKAGE_NAME'],
+    'android.sha256'       => ['ANDROID_SHA256', 'ANDROID_SHA256_FINGERPRINTS', 'ANDROID_CERT_SHA256'],
 ];
 
 /** Example / empty values that must never be used. */

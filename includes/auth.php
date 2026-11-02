@@ -59,13 +59,24 @@ function customer_password_hash(string $password): string
         : password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
 }
 
-function login_customer(array $customer): void
+/**
+ * Log a customer in on this device.
+ * $remember: true = "keep me logged in" (60 days), false = only this browser session,
+ * null = keep this device's earlier choice (used after a password change or "log out everywhere else").
+ */
+function login_customer(array $customer, ?bool $remember = null): void
 {
+    $remember ??= remember_current_customer_id() === (int) $customer['id'];
+    remember_forget_current(); // an older token on this device (another customer, or an older login) goes
     session_rotate();
     $_SESSION['customer_id'] = (int) $customer['id'];
     $_SESSION['customer_sv'] = (int) $customer['session_version'];
+    unset($_SESSION['push_device_customer']); // the app links this login to the phone again
     db_exec('UPDATE customers SET last_login_at = NOW() WHERE id = ?', [(int) $customer['id']]);
     current_customer(true);
+    if ($remember) {
+        remember_issue((int) $customer['id'], (int) $customer['session_version']);
+    }
     // Attach any guest carts to the account
     if (class_exists('CartService')) {
         CartService::mergeGuestCarts((int) $customer['id']);
@@ -74,8 +85,163 @@ function login_customer(array $customer): void
 
 function logout_customer(): void
 {
-    unset($_SESSION['customer_id'], $_SESSION['customer_sv']);
+    remember_forget_current();
+    // This phone stops getting the customer's push notifications
+    if (!empty($_SESSION['push_device_customer']) && class_exists('PushService')) {
+        PushService::detach((int) $_SESSION['push_device_customer'], 'customer');
+    }
+    unset($_SESSION['customer_id'], $_SESSION['customer_sv'], $_SESSION['push_device_customer']);
     session_rotate();
+}
+
+// ---------------------------------------------------------------------
+// "Keep me logged in" — a long-lived cookie "selector.secret". Only an HMAC of the secret is stored; the secret
+// changes every time the cookie logs someone in, and a password change, "log out everywhere", blocking or
+// anonymising the account (all raise customers.session_version) makes every token useless.
+// ---------------------------------------------------------------------
+const GX_REMEMBER_COOKIE = 'GXREMEMBER';
+const GX_REMEMBER_DAYS = 60;
+/** Seconds the value just replaced still works (requests that left the phone before the new cookie arrived). */
+const GX_REMEMBER_GRACE = 120;
+
+/** [selector, secret] from this request's cookie, or null. */
+function remember_cookie(): ?array
+{
+    $v = (string) ($_COOKIE[GX_REMEMBER_COOKIE] ?? '');
+    return preg_match('/^([a-f0-9]{24})\.([a-f0-9]{64})$/', $v, $m) ? [$m[1], $m[2]] : null;
+}
+
+function remember_set_cookie(string $value, int $expires): void
+{
+    if (headers_sent()) {
+        return;
+    }
+    setcookie(GX_REMEMBER_COOKIE, $value, ['expires' => $expires, 'path' => '/', 'secure' => is_https(), 'httponly' => true, 'samesite' => 'Lax']);
+    if ($expires > time()) {
+        $_COOKIE[GX_REMEMBER_COOKIE] = $value;
+    } else {
+        unset($_COOKIE[GX_REMEMBER_COOKIE]);
+    }
+}
+
+/** Does $secret match one of the stored hashes? (Any key in the ring: tokens survive an APP_KEY change.) */
+function remember_secret_matches(string $secret, ?string $storedHash): bool
+{
+    if ($storedHash === null || $storedHash === '') {
+        return false;
+    }
+    foreach (gx_key_ring() as $k) {
+        if (hash_equals($storedHash, hash_hmac('sha256', $secret, $k))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** New token for this device (the cookie is set on this response). */
+function remember_issue(int $customerId, int $sessionVersion): void
+{
+    $selector = random_token(12);
+    $secret = random_token(32);
+    $expires = time() + GX_REMEMBER_DAYS * 86400;
+    db_exec('INSERT INTO customer_remember_tokens (customer_id, selector, validator_hash, session_version, user_agent, expires_at, last_used_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW())',
+        [$customerId, $selector, token_hash($secret), $sessionVersion, user_agent() ?: null, date('Y-m-d H:i:s', $expires)]);
+    remember_set_cookie($selector . '.' . $secret, $expires);
+}
+
+/** The customer this request's remember cookie belongs to (valid secret; the account state is not checked here). */
+function remember_current_customer_id(): ?int
+{
+    $ck = remember_cookie();
+    if (!$ck) {
+        return null;
+    }
+    $row = db_one('SELECT customer_id, validator_hash, prev_validator_hash, rotated_at FROM customer_remember_tokens WHERE selector = ?', [$ck[0]]);
+    if (!$row) {
+        return null;
+    }
+    $prevOk = $row['rotated_at'] !== null && strtotime((string) $row['rotated_at']) >= time() - GX_REMEMBER_GRACE
+        && remember_secret_matches($ck[1], $row['prev_validator_hash']);
+    return remember_secret_matches($ck[1], $row['validator_hash']) || $prevOk ? (int) $row['customer_id'] : null;
+}
+
+/** Forget this device: its token row is deleted (only with the right secret) and the cookie removed. */
+function remember_forget_current(): void
+{
+    $ck = remember_cookie();
+    if ($ck && remember_current_customer_id() !== null) {
+        db_exec('DELETE FROM customer_remember_tokens WHERE selector = ?', [$ck[0]]);
+    }
+    if (isset($_COOKIE[GX_REMEMBER_COOKIE])) {
+        remember_set_cookie('', time() - 86400);
+    }
+}
+
+/**
+ * Called by the bootstrap on every request with a session: no logged-in customer but a remember cookie →
+ * log them in again with a fresh secret. A value that was replaced more than GX_REMEMBER_GRACE seconds ago
+ * means the cookie was copied (the real owner and a thief both used it): the token is destroyed.
+ */
+function remember_autologin(): void
+{
+    $ck = remember_cookie();
+    if (!$ck) {
+        if (isset($_COOKIE[GX_REMEMBER_COOKIE])) {
+            remember_set_cookie('', time() - 86400); // malformed
+        }
+        return;
+    }
+    if (headers_sent() || session_status() !== PHP_SESSION_ACTIVE || current_customer()) {
+        return;
+    }
+    [$selector, $secret] = $ck;
+    $result = db_tx(static function () use ($selector, $secret): array {
+        $row = db_one('SELECT r.*, c.status, c.session_version AS current_sv FROM customer_remember_tokens r
+                       JOIN customers c ON c.id = r.customer_id WHERE r.selector = ? FOR UPDATE', [$selector]);
+        if (!$row) {
+            return ['clear'];
+        }
+        $current = remember_secret_matches($secret, $row['validator_hash']);
+        $recent = !$current && $row['rotated_at'] !== null && strtotime((string) $row['rotated_at']) >= time() - GX_REMEMBER_GRACE
+            && remember_secret_matches($secret, $row['prev_validator_hash']);
+        $valid = ($current || $recent) && $row['status'] === 'active' && strtotime((string) $row['expires_at']) > time()
+            && (int) $row['session_version'] === (int) $row['current_sv'];
+        if (!$valid) {
+            db_exec('DELETE FROM customer_remember_tokens WHERE id = ?', [$row['id']]);
+            if (!$current && !$recent) {
+                gx_log('warning', 'Remember-me token reused after it was replaced — token destroyed', ['customer' => (int) $row['customer_id']]);
+            }
+            return ['clear'];
+        }
+        if ($recent) {
+            // A request that was already on its way: log in, the newer cookie is already with the device
+            return ['login', (int) $row['customer_id'], null];
+        }
+        $newSecret = random_token(32);
+        $expires = time() + GX_REMEMBER_DAYS * 86400;
+        db_exec('UPDATE customer_remember_tokens SET prev_validator_hash = validator_hash, validator_hash = ?, rotated_at = NOW(),
+                 last_used_at = NOW(), expires_at = ?, user_agent = ? WHERE id = ?',
+            [token_hash($newSecret), date('Y-m-d H:i:s', $expires), user_agent() ?: null, $row['id']]);
+        return ['login', (int) $row['customer_id'], [$selector . '.' . $newSecret, $expires]];
+    });
+    if ($result[0] === 'clear') {
+        remember_set_cookie('', time() - 86400);
+        return;
+    }
+    $customer = db_one('SELECT * FROM customers WHERE id = ?', [$result[1]]);
+    session_rotate();
+    $_SESSION['customer_id'] = (int) $customer['id'];
+    $_SESSION['customer_sv'] = (int) $customer['session_version'];
+    unset($_SESSION['push_device_customer']);
+    if ($result[2]) {
+        remember_set_cookie($result[2][0], $result[2][1]);
+    }
+    db_exec('UPDATE customers SET last_login_at = NOW() WHERE id = ?', [(int) $customer['id']]);
+    current_customer(true);
+    if (class_exists('CartService')) {
+        CartService::mergeGuestCarts((int) $customer['id']);
+    }
 }
 
 /** Page guard: redirect to login and come back afterwards. */

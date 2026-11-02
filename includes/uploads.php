@@ -251,8 +251,8 @@ function media_refocus(int $mediaId, float $fx, float $fy): void
     }
 }
 
-/** Stream a private file (after the caller checked access). */
-function stream_private_file(string $relPath, string $downloadName): never
+/** Stream a private file (after the caller checked access). $download: always as an attachment (the app saves it). */
+function stream_private_file(string $relPath, string $downloadName, bool $download = false): never
 {
     $abs = realpath(GX_ROOT . '/' . $relPath);
     $root = realpath(GX_ROOT . '/storage/private');
@@ -264,7 +264,7 @@ function stream_private_file(string $relPath, string $downloadName): never
     header('Content-Type: ' . $mime);
     header('Content-Length: ' . filesize($abs));
     $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $downloadName);
-    if ($mime === 'application/pdf') {
+    if ($mime === 'application/pdf' || $download) {
         // Uploaded PDFs are downloaded and opened outside the site (a customer's PDF never runs on our domain)
         header('Content-Disposition: attachment; filename="' . $safeName . '"');
     } else {

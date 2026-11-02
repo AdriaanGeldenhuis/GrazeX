@@ -32,6 +32,8 @@ final class CronService
             $job('expire unpaid orders', static fn() => OrderService::runExpiry(200));
             $job('stuck emails', static fn() => self::requeueStuckEmails() . ' re-queued');
             $job('email queue', static fn() => MailService::processQueue(250) . ' sent');
+            $job('stuck pushes', static fn() => PushService::requeueStuck() . ' re-queued');
+            $job('push queue', static fn() => PushService::sendQueued(500) . ' sent');
             $job('low stock digest', static fn() => self::lowStockDigest());
             $job('cleanup', static fn() => self::cleanup());
             $job('alert consent', static fn() => self::alertConsent());
@@ -84,6 +86,10 @@ final class CronService
            + db_exec('DELETE FROM admin_tokens WHERE expires_at < NOW() - INTERVAL 7 DAY');
         $d = db_exec("DELETE FROM email_queue WHERE status = 'sent' AND sent_at < NOW() - INTERVAL 90 DAY");
         $e = db_exec('DELETE FROM admin_notifications WHERE is_read = 1 AND created_at < NOW() - INTERVAL 60 DAY');
+        // "Keep me logged in" tokens that expired or can no longer work (password changed, logged out everywhere, blocked)
+        $r = db_exec("DELETE r FROM customer_remember_tokens r JOIN customers c ON c.id = r.customer_id
+                      WHERE r.expires_at < NOW() OR r.session_version <> c.session_version OR c.status <> 'active'");
+        $p = PushService::cleanup();
         foreach (glob(GX_ROOT . '/storage/private/documents/resend-*') ?: [] as $f) {
             if (filemtime($f) < time() - 86400 * 7) {
                 @unlink($f);
@@ -94,7 +100,7 @@ final class CronService
                 @unlink($f);
             }
         }
-        return "rate {$a}, carts {$b}, tokens {$c}, emails {$d}, notices {$e}";
+        return "rate {$a}, carts {$b}, tokens {$c}, emails {$d}, notices {$e}, remembered logins {$r}, push {$p}";
     }
 
     /**

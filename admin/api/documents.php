@@ -4,6 +4,7 @@
  *   GET ?id=   → PDF (original rendering)
  *   GET ?pop=  → proof-of-payment file
  *   GET ?vat=  → customer's VAT registration document
+ *   … &dl=1    → as a download (the GrazeX app saves it to the phone)
  *   POST {action: resend, id} → email the document to the customer again (marked COPY)
  */
 declare(strict_types=1);
@@ -39,7 +40,7 @@ if (isset($_GET['pop'])) {
         http_response_code(404);
         exit('Not found.');
     }
-    stream_private_file($p['pop_path'], 'POP-' . $p['reference'] . '.' . pathinfo($p['pop_path'], PATHINFO_EXTENSION));
+    stream_private_file($p['pop_path'], 'POP-' . $p['reference'] . '.' . pathinfo($p['pop_path'], PATHINFO_EXTENSION), query_str('dl') === '1');
 }
 if (isset($_GET['vat'])) {
     require_admin('customers.manage');
@@ -48,7 +49,7 @@ if (isset($_GET['vat'])) {
         http_response_code(404);
         exit('Not found.');
     }
-    stream_private_file($c['vat_farmer_doc_path'], 'VAT-registration-' . $c['id'] . '.' . pathinfo($c['vat_farmer_doc_path'], PATHINFO_EXTENSION));
+    stream_private_file($c['vat_farmer_doc_path'], 'VAT-registration-' . $c['id'] . '.' . pathinfo($c['vat_farmer_doc_path'], PATHINFO_EXTENSION), query_str('dl') === '1');
 }
 $doc = db_one('SELECT * FROM documents WHERE id = ?', [query_int('id')]);
 if (!$doc || !in_array((int) $doc['division_id'], admin_division_ids(), true)) {
@@ -62,4 +63,4 @@ try {
     http_response_code(503);
     exit('PDF could not be generated: ' . (GX_SHOW_ERRORS ? e($e->getMessage()) : 'please check the server log.'));
 }
-PdfService::stream($pdf['bytes'], $pdf['filename']);
+PdfService::stream($pdf['bytes'], $pdf['filename'], query_str('dl') === '1');

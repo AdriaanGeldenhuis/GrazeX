@@ -161,6 +161,10 @@ final class LivestockService
         $n = 0;
         foreach ($byEmail as $rows) {
             $s = $rows[0];
+            // Customers with the app get it on their phone too (alerts linked to their account = address proven)
+            foreach (array_unique(array_filter(array_map(static fn($r) => (int) $r['customer_id'], $rows))) as $cid) {
+                NotificationService::push($cid, 'livestock_alert', ['lot_title' => $l['title']], lot_url($l['slug']), 'lot-' . $l['id'], 'livestock');
+            }
             $qid = NotificationService::email('livestock_alert', $s['email'], null, ['lot_title' => $l['title'], 'link' => $url],
                 division_id('ranch'), [], ['label' => 'View the lot', 'url' => $url], false);
             if (!$qid) {

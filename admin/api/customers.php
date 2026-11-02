@@ -18,6 +18,7 @@ switch ((string) input('action')) {
         json_ok([], 'Notes saved.');
     case 'block':
         db_exec("UPDATE customers SET status = 'blocked', session_version = session_version + 1 WHERE id = ?", [$cid]);
+        db_exec('DELETE FROM customer_remember_tokens WHERE customer_id = ?', [$cid]);
         audit('customer.blocked', 'customer', $cid);
         json_ok([], 'Customer blocked.');
     case 'unblock':
@@ -80,7 +81,11 @@ switch ((string) input('action')) {
             db_exec('DELETE FROM carts WHERE customer_id = ?', [$cid]);
             db_exec('DELETE FROM wishlists WHERE customer_id = ?', [$cid]);
             db_exec('DELETE FROM customer_tokens WHERE customer_id = ?', [$cid]);
-            db_exec('DELETE FROM push_devices WHERE customer_id = ?', [$cid]);
+            db_exec('DELETE FROM customer_remember_tokens WHERE customer_id = ?', [$cid]);
+            // Their phones stop getting pushes (a phone also used by a staff member stays linked to that staff member)
+            PushService::forgetCustomer($cid);
+            // Staff pushes that name them or their orders
+            db_exec('DELETE FROM push_queue WHERE url IN (' . db_placeholders($links) . ')', $links);
             return $files;
         });
         // Uploaded VAT certificate and saved PDFs (private storage)
@@ -97,6 +102,8 @@ switch ((string) input('action')) {
         db_exec("DELETE FROM email_queue WHERE status <> 'sending' AND (to_email = ? OR body_html LIKE ?)", [$oldEmail, $like($oldEmail)]);
         foreach (array_chunk($orderNos, 50) as $chunk) {
             db_exec("DELETE FROM email_queue WHERE status <> 'sending' AND (" . implode(' OR ', array_fill(0, count($chunk), 'body_html LIKE ? OR subject LIKE ?')) . ')',
+                array_merge(...array_map(static fn($n) => [$like($n), $like($n)], $chunk)));
+            db_exec('DELETE FROM push_queue WHERE ' . implode(' OR ', array_fill(0, count($chunk), 'title LIKE ? OR body LIKE ?')),
                 array_merge(...array_map(static fn($n) => [$like($n), $like($n)], $chunk)));
         }
         // Confirm to the person, at the address they used (the request said we would)

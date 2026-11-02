@@ -575,7 +575,7 @@ final class OrderService
             NotificationService::email('payment_received', $o['billing_email'], $o['billing_name'], [
                 'first_name' => $customer['first_name'] ?? '', 'order_no' => $o['order_no'], 'amount' => money((int) $pay['amount_cents']),
                 'docs_note_md' => $docsNote,
-            ], (int) $o['division_id'], $attach, ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))]);
+            ], (int) $o['division_id'], $attach, ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], pushTo: (int) $o['customer_id']);
         } catch (Throwable $e) {
             gx_log('error', 'After-payment tasks failed', ['order' => $o['order_no'], 'error' => $e->getMessage()]);
         }
@@ -639,17 +639,17 @@ final class OrderService
             } elseif ($to === 'ready_for_collection') {
                 DocumentService::issue($orderId, 'collection_slip');
                 NotificationService::email('order_ready', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no'],
-                    'collection_date' => fmt_date($o['collection_date'])], (int) $o['division_id'], [], $btn);
+                    'collection_date' => fmt_date($o['collection_date'])], (int) $o['division_id'], [], $btn, pushTo: (int) $o['customer_id']);
             } elseif ($to === 'out_for_delivery') {
-                NotificationService::email('order_out_for_delivery', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']], (int) $o['division_id'], [], $btn);
+                NotificationService::email('order_out_for_delivery', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']], (int) $o['division_id'], [], $btn, pushTo: (int) $o['customer_id']);
             } elseif ($to === 'collected') {
                 if ((int) $o['division_id'] === division_id('ranch')) {
                     $doiId = DocumentService::issue($orderId, 'doc_identification');
                     NotificationService::email('order_completed', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']],
-                        (int) $o['division_id'], DocumentService::attachment($doiId), $btn);
+                        (int) $o['division_id'], DocumentService::attachment($doiId), $btn, pushTo: (int) $o['customer_id']);
                 }
             } elseif ($to === 'completed' && $o['status'] === 'completed') {
-                NotificationService::email('order_completed', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']], (int) $o['division_id'], [], $btn);
+                NotificationService::email('order_completed', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']], (int) $o['division_id'], [], $btn, pushTo: (int) $o['customer_id']);
             }
         } catch (Throwable $e) {
             gx_log('error', 'Transition side effects failed', ['order' => $o['order_no'], 'to' => $to, 'error' => $e->getMessage()]);
@@ -755,7 +755,7 @@ final class OrderService
             $template = match ($finalStatus) { 'expired' => 'order_expired', 'refunded' => 'order_refunded', default => 'order_cancelled' };
             NotificationService::email($template, $o['billing_email'], $o['billing_name'],
                 ['first_name' => $first, 'order_no' => $o['order_no'], 'reason' => $reason], (int) $o['division_id'],
-                $cnId ? DocumentService::attachment($cnId) : []);
+                $cnId ? DocumentService::attachment($cnId) : [], pushTo: (int) $o['customer_id']);
             if ((int) $o['amount_paid_cents'] > 0 && $finalStatus !== 'refunded') {
                 NotificationService::admin('refund_due', 'Refund due on ' . $o['order_no'], money((int) $o['amount_paid_cents']) . ' was paid before the order was ' . $finalStatus . '.',
                     '/admin/order.php?id=' . $orderId, (int) $o['division_id']);
@@ -816,7 +816,7 @@ final class OrderService
             $first = (string) db_val('SELECT first_name FROM customers WHERE id = ?', [$o['customer_id']]);
             NotificationService::email('order_finalised', $o['billing_email'], $o['billing_name'], [
                 'first_name' => $first, 'order_no' => $o['order_no'], 'balance_due' => money(self::amountDue($o)),
-            ], (int) $o['division_id'], DocumentService::attachment($invId), ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))]);
+            ], (int) $o['division_id'], DocumentService::attachment($invId), ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], pushTo: (int) $o['customer_id']);
             if ((int) $o['amount_paid_cents'] > (int) $o['total_cents']) {
                 NotificationService::admin('refund_due', 'Overpayment on ' . $o['order_no'], 'Final total is lower than the amount paid — refund ' . money((int) $o['amount_paid_cents'] - (int) $o['total_cents']) . '.',
                     '/admin/order.php?id=' . $orderId, (int) $o['division_id']);
@@ -854,6 +854,7 @@ final class OrderService
                 gx_unlock('expiry');
             }
             MailService::processQueue(5);
+            PushService::sendQueued(20); // pushes that could not go straight away (Google busy)
         } catch (Throwable $e) {
             gx_log('error', 'Expiry run failed: ' . $e->getMessage());
         }
@@ -929,7 +930,7 @@ final class OrderService
             NotificationService::email('payment_reminder', $o['billing_email'], $o['billing_name'], [
                 'first_name' => $o['first_name'], 'order_no' => $o['order_no'], 'expires_at' => fmt_datetime($o['hold_expires_at']),
                 'amount_due' => money(self::amountDue($o)), 'bank_details_md' => self::bankDetailsMd($o),
-            ], (int) $o['division_id'], [], ['label' => 'Upload proof of payment', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], false);
+            ], (int) $o['division_id'], [], ['label' => 'Upload proof of payment', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], false, pushTo: (int) $o['customer_id']);
         }
         return $sent;
     }

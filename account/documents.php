@@ -30,7 +30,7 @@ require GX_ROOT . '/includes/layout/header.php';
               <td class="nowrap"><?= e($d['doc_no']) ?></td>
               <td><a class="link" href="/account/order.php?no=<?= e(rawurlencode($d['order_no'])) ?>"><?= e($d['order_no']) ?></a></td>
               <td class="num"><?= in_array($d['doc_type'], ['doc_identification'], true) ? '—' : e(money((int) $d['total_cents'])) ?></td>
-              <td class="num"><a class="btn btn-sm" href="/account/api/document.php?id=<?= (int) $d['id'] ?>" target="_blank" rel="noopener"><svg class="icon icon-sm"><use href="#i-download"/></svg>PDF</a></td>
+              <td class="num"><a class="btn btn-sm" href="/account/api/document.php?id=<?= (int) $d['id'] ?>" target="_blank" rel="noopener" data-download><svg class="icon icon-sm"><use href="#i-download"/></svg>PDF</a></td>
             </tr>
           <?php endforeach; ?>
           </tbody>

@@ -50,4 +50,13 @@ return [
         'test_webhook_secret' => '',      // whsec_... (shown once when the webhook is registered)
         'live_webhook_secret' => '',
     ],
+
+    // GrazeX Android app (see appfiles/README.md)
+    'firebase' => [
+        'credentials' => '',              // empty = storage/private/firebase-service-account.json (never in git; chmod 600)
+    ],
+    'android' => [
+        'package' => 'za.co.grazex.app',
+        'sha256'  => '',                  // signing-key fingerprint(s), comma-separated: AB:CD:…
+    ],
 ];

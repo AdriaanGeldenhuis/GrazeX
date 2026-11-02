@@ -51,7 +51,7 @@ try {
             $o = db_one('SELECT o.*, c.first_name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.id = ?', [$p['order_id']]);
             OrderService::history((int) $o['id'], $o['status'], $o['status'], 'Proof of payment rejected: ' . $reason, 'admin', $aid);
             NotificationService::email('pop_rejected', $o['billing_email'], $o['billing_name'], ['first_name' => $o['first_name'], 'order_no' => $o['order_no'], 'reason' => $reason],
-                (int) $o['division_id'], [], ['label' => 'Upload again', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))]);
+                (int) $o['division_id'], [], ['label' => 'Upload again', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], pushTo: (int) $o['customer_id']);
             audit('payment.rejected', 'payment', (int) $p['id'], ['reason' => $reason]);
             json_ok([], 'POP rejected — the customer has been told.');
 

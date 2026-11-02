@@ -103,6 +103,17 @@ admin_start('Settings', 'settings', ['perm' => 'settings.manage']);
         <?= af_check('s[maintenance_mode]', 'Maintenance mode — only logged-in admins can browse the site', $v('maintenance_mode') === '1', ['span' => true]) ?>
         <div class="span-2 alert alert-info small"><div>Emails waiting: <?= (int) db_val("SELECT COUNT(*) FROM email_queue WHERE status = 'queued'") ?> · failed: <?= (int) db_val("SELECT COUNT(*) FROM email_queue WHERE status = 'failed'") ?> ·
           SMTP <?= MailService::configured() ? 'configured' : '<strong>not configured</strong> (config/env.php)' ?> · PDF library <?= PdfService::available() ? 'installed' : '<strong>missing</strong>' ?> · PHP <?= e(PHP_VERSION) ?></div></div>
+        <?php $ps = PushService::stats(); ?>
+        <div class="span-2 alert alert-info small"><div>
+          <strong>App push notifications:</strong>
+          <?php if ($ps['configured']): ?>on · phones: <?= $ps['customer_devices'] ?> customer, <?= $ps['staff_devices'] ?> staff ·
+            last 7 days: <?= $ps['sent'] ?> sent, <?= $ps['failed'] ?> failed · waiting: <?= $ps['queued'] ?>
+          <?php else: ?><strong>off</strong> — add the Firebase service-account file to <code>storage/private/firebase-service-account.json</code> (see <code>appfiles/README.md</code>).
+            Until then the app works without notifications.<?php endif; ?>
+          <?php if ($ps['configured']): ?>
+            <div class="mt-1"><button class="btn btn-sm" type="button" data-admin-act="/admin/api/push.php" data-payload='{"action":"test"}' data-no-reload>Send a test notification to my phones</button></div>
+          <?php endif; ?>
+        </div></div>
       <?php endif; ?>
       </div>
     </section>

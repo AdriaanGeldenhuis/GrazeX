@@ -1,8 +1,8 @@
 <?php
 /**
  * Customer auth API.
- *   POST {action: register, first_name, last_name, email, phone, password, marketing_opt_in}
- *   POST {action: login, email, password}
+ *   POST {action: register, first_name, last_name, email, phone, password, marketing_opt_in, remember}
+ *   POST {action: login, email, password, remember}   — remember: "keep me logged in" on this device (60 days)
  *   POST {action: logout}
  *   POST {action: forgot, email}
  *   POST {action: reset, token, password, password_confirm}
@@ -21,7 +21,7 @@ switch ($action) {
         rate_limit_or_fail('register', rate_limit_ip(), 6, 3600);
         $d = validate_or_fail(input_all(), [
             'first_name' => 'required|max:100', 'last_name' => 'required|max:100', 'email' => 'required|email|max:191',
-            'phone' => 'required|phone', 'password' => 'required|password', 'marketing_opt_in' => 'nullable|bool',
+            'phone' => 'required|phone', 'password' => 'required|password', 'marketing_opt_in' => 'nullable|bool', 'remember' => 'nullable|bool',
         ]);
         if (db_val('SELECT id FROM customers WHERE email = ?', [$d['email']])) {
             json_error(t('error.validation'), 422, ['email' => 'An account with this email already exists — log in instead.']);
@@ -33,7 +33,7 @@ switch ($action) {
             $d['marketing_opt_in'] ? 1 : 0, $d['marketing_opt_in'] ? now() : null, terms_version(),
         ]);
         $c = db_one('SELECT * FROM customers WHERE id = ?', [$id]);
-        login_customer($c);
+        login_customer($c, (bool) $d['remember']);
         $token = customer_token_create($id, 'verify_email', 60 * 24 * 7);
         NotificationService::email('verify_email', $c['email'], $c['first_name'], ['first_name' => $c['first_name'], 'link' => app_url('/account/verify.php?token=' . $token)],
             null, [], ['label' => 'Confirm my email', 'url' => app_url('/account/verify.php?token=' . $token)]);
@@ -41,7 +41,7 @@ switch ($action) {
         json_ok(['redirect' => safe_next((string) input('next', ''), '/account/')], 'Welcome to GrazeX, ' . $c['first_name'] . '!');
 
     case 'login':
-        $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191', 'password' => 'required|max:200']);
+        $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191', 'password' => 'required|max:200', 'remember' => 'nullable|bool']);
         rate_limit_or_fail('login_ip', rate_limit_ip(), 20, 900);
         // Per account AND address (counted before checking, cleared on success): a stranger cannot lock someone else out
         $acct = $d['email'] . '|' . rate_limit_ip();
@@ -58,7 +58,7 @@ switch ($action) {
         }
         rate_limit_clear('login_email', $acct);
         rate_limit_clear('login_account', $d['email']);
-        login_customer($c);
+        login_customer($c, (bool) $d['remember']);
         json_ok(['redirect' => safe_next((string) input('next', ''), '/account/')], 'Welcome back, ' . $c['first_name'] . '!');
 
     case 'logout':
@@ -94,7 +94,8 @@ switch ($action) {
         db_exec('UPDATE customers SET password_hash = ?, session_version = session_version + 1, email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = ?',
             [customer_password_hash($d['password']), $cid]);
         rate_limit_clear('login_account', (string) db_val('SELECT email FROM customers WHERE id = ?', [$cid]));
-        login_customer(db_one('SELECT * FROM customers WHERE id = ?', [$cid]));
+        // In the app a reset link opens the app: stay logged in there, as when logging in
+        login_customer(db_one('SELECT * FROM customers WHERE id = ?', [$cid]), gx_in_app() ?: null);
         audit('customer.password_reset', 'customer', $cid);
         json_ok(['redirect' => '/account/'], 'Your password has been changed.');
 
