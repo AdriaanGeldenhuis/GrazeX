@@ -28,7 +28,7 @@ $lastOrder = $customer ? db_one('SELECT billing_name, billing_phone, billing_com
 $prefill = [
     'billing_name' => $lastOrder['billing_name'] ?? ($customer ? trim($customer['first_name'] . ' ' . $customer['last_name']) : ''),
     'billing_phone' => $lastOrder['billing_phone'] ?? ($customer['phone'] ?? ''),
-    'billing_company' => $lastOrder['billing_company'] ?? ($customer['farm_name'] ?? ''),
+    'billing_company' => $lastOrder['billing_company'] ?? ($customer['company_name'] ?? ''),
     'billing_vat_no' => $lastOrder['billing_vat_no'] ?? ($customer['vat_no'] ?? ''),
     'billing_address' => $lastOrder['billing_address'] ?? '',
     'buyer_id_number' => $lastOrder['buyer_id_number'] ?? '',
@@ -51,7 +51,7 @@ $page = [
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';
 ?>
-<main id="main" class="container page-top checkout" data-division="<?= e($division) ?>">
+<main id="main" class="container page-top checkout" data-division="<?= e($division) ?>" data-expected-total="<?= (int) $quote['total'] ?>">
   <div class="row-between mb-2">
     <h1 class="display-3"><?= $isRanch ? 'Reserve your livestock' : 'Checkout' ?></h1>
     <a class="link small" href="/<?= e($division) ?>/cart.php">← Back to <?= $isRanch ? 'selection' : 'cart' ?></a>

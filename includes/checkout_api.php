@@ -29,6 +29,7 @@ if ($action === 'quote') {
     $q = OrderService::quote($division, ['fulfilment' => $all['fulfilment'] ?? 'collection', 'town' => $town, 'payment_method' => $all['payment_method'] ?? ''], $customer);
     json_ok([
         'notices' => checkout_notices($q),
+        'lines' => array_map(static fn($l) => ['qty' => (int) $l['qty'], 'name' => $l['name'], 'variant' => $l['variant'], 'total' => (int) $l['total']], $q['lines']),
         'subtotal' => $q['subtotal'], 'discount' => $q['discount'], 'delivery' => $q['delivery'], 'total' => $q['total'], 'vat' => $q['vat'],
         'deposit' => $q['deposit'], 'due_now' => $q['due_now'], 'balance' => $q['balance'], 'errors' => $q['errors'],
         'zone' => $q['zone'], 'methods' => OrderService::allowedPaymentMethods($division, $q['fulfilment'], $q['deposit']),
@@ -108,6 +109,11 @@ $q = OrderService::quote($division, $data, $customer);
 if ($changed = checkout_notices($q)) {
     json_error(implode(' ', $changed) . ' Please check your order and place it again.', 409, ['notices' => implode(' ', $changed)]);
 }
+// The page sends the total it showed; a different total now (price, special, coupon, stock) must be seen first
+if (isset($all['expected_total']) && is_numeric($all['expected_total']) && (int) $all['expected_total'] !== (int) $q['total']) {
+    $msg = 'Your total is now ' . money((int) $q['total']) . ' (it was ' . money((int) $all['expected_total']) . '). Please check your order and place it again.';
+    json_error($msg, 409, ['notices' => $msg]);
+}
 if (PricingService::divisionVatBp(division_id($division)) > 0 && $q['total'] > 500000 && empty($data['billing_address'])) {
     json_error(t('error.validation'), 422, ['billing_address' => 'Your billing address is required for tax invoices over R5 000.']);
 }
@@ -124,9 +130,17 @@ db_exec('UPDATE customers SET phone = COALESCE(NULLIF(phone, \'\'), ?), company_
 // "Save this address": only now that the order exists, never twice, at most 20 per customer
 if (!empty($saveAddress)) {
     try {
-        $dup = db_val('SELECT 1 FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND town = ?', [$customer['id'], $saveAddress['line1'], $saveAddress['town']]);
+        $dup = db_val('SELECT id FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND town = ?', [$customer['id'], $saveAddress['line1'], $saveAddress['town']]);
         $count = (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$customer['id']]);
-        if (!$dup && $count < 20) {
+        if ($dup) {
+            // Same address again: keep it current (new directions / GPS pin / contact), never blank out what was there
+            db_exec('UPDATE customer_addresses SET recipient_name = COALESCE(NULLIF(?, \'\'), recipient_name), phone = COALESCE(NULLIF(?, \'\'), phone),
+                     farm_name = COALESCE(NULLIF(?, \'\'), farm_name), postal_code = COALESCE(NULLIF(?, \'\'), postal_code),
+                     directions = COALESCE(NULLIF(?, \'\'), directions), gps_lat = COALESCE(?, gps_lat), gps_lng = COALESCE(?, gps_lng) WHERE id = ?', [
+                $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['postal_code'], $saveAddress['directions'],
+                $saveAddress['gps_lat'], $saveAddress['gps_lng'], $dup,
+            ]);
+        } elseif ($count < 20) {
             db_insert('INSERT INTO customer_addresses (customer_id, recipient_name, phone, farm_name, line1, town, postal_code, directions, gps_lat, gps_lng, is_default)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?)', [
                 $customer['id'], $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['line1'], $saveAddress['town'],

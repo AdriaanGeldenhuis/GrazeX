@@ -73,6 +73,13 @@
     };
     try {
       const q = await GX.api(api, { body, quiet: true, signal: ctrl.signal });
+      // What the customer now sees is what the server will check on "Place order"
+      const main = document.querySelector('main[data-expected-total]');
+      if (main) main.dataset.expectedTotal = String(q.total);
+      const list = $('.co-lines');
+      if (list && Array.isArray(q.lines)) {
+        list.innerHTML = q.lines.map((l) => `<li><span class="co-q">${l.qty}×</span><span class="co-n">${GX.esc(l.name)}<small>${GX.esc(l.variant || '')}</small></span><span class="co-t">${GX.esc(GX.money(l.total))}</span></li>`).join('');
+      }
       if (q.notices && q.notices.length) {
         const key = q.notices.join('|');
         if (key !== form.dataset.noticeShown) { form.dataset.noticeShown = key; GX.toast(q.notices.join(' '), 'error'); }
@@ -133,7 +140,8 @@
     GX.clearErrors(form);
     const btn = form.querySelector('.co-submit');
     const fd = new FormData(form);
-    const body = { action: 'place', address: {} };
+    const main = document.querySelector('main[data-expected-total]');
+    const body = { action: 'place', address: {}, expected_total: main ? main.dataset.expectedTotal : undefined };
     for (const [k, v] of fd.entries()) {
       const m = k.match(/^address\[(\w+)\]$/);
       if (m) body.address[m[1]] = v; else body[k] = v;
@@ -147,6 +155,8 @@
       GX.setLoading(btn, false);
       GX.showErrors(form, err.errors);
       GX.toast(err.message, 'error');
+      // The order changed (stock, price, coupon): show the new lines and totals right away
+      if (err.status === 409) quote();
       const first = form.querySelector('.has-error');
       first?.scrollIntoView({ behavior: GX.reduceMotion ? 'auto' : 'smooth', block: 'center' });
     }

@@ -259,7 +259,7 @@ final class CartService
             }
         }
 
-        if ($cart['coupon_id']) {
+        if ($cart['coupon_id'] ?? null) {
             $coupon = db_one('SELECT * FROM coupons WHERE id = ?', [$cart['coupon_id']]);
             $check = $coupon ? PricingService::checkCoupon($coupon['code'], division_id($div), $out['subtotal'], customer_id()) : ['ok' => false];
             if ($check['ok']) {
@@ -272,6 +272,8 @@ final class CartService
                 }
             }
         }
+        // The deposit can never be more than what the cart costs (same rule as checkout)
+        $out['deposit'] = min($out['deposit'], max(0, $out['subtotal'] - $out['discount']));
         return $out;
     }
 

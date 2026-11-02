@@ -726,6 +726,8 @@ CartService::add('ranch', 5, 1);
 CartService::setCoupon('ranch', $big);
 $dq = OrderService::quote('ranch', ['fulfilment' => 'collection'], current_customer());
 check('the deposit is never more than the order total', $dq['deposit'] <= $dq['total'] && $dq['discount'] > 0, $dq['deposit'] . ' vs ' . $dq['total']);
+$ds = CartService::summary('ranch');
+check('… and the cart shows the same deposit as checkout', $ds['deposit'] === $dq['deposit'], $ds['deposit'] . ' vs ' . $dq['deposit']);
 CartService::clear('ranch');
 db_exec('UPDATE lots SET deposit_pct = 20 WHERE id = 5');
 setting_set('zero_rating_enabled', '1');
@@ -751,6 +753,37 @@ CartService::setCoupon('feeds', $hundred);
 $fo = OrderService::place('feeds', ['billing_name' => 'Free', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
 check('an order that costs nothing is paid as placed (never expires)', $fo['status'] === 'paid' && $fo['payment_status'] === 'paid' && $fo['hold_expires_at'] === null, $fo['status'] . '/' . $fo['payment_status']);
 check('… and gets its invoice', (bool) db_val("SELECT 1 FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$fo['id']]));
+check('… with exactly R0.00 VAT on the order and on the invoice', (int) db_val('SELECT vat_cents FROM orders WHERE id = ?', [$fo['id']]) === 0
+    && (int) db_val("SELECT vat_cents FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$fo['id']]) === 0);
+check('… and its email does not ask for payment', str_contains((string) db_val("SELECT body_html FROM email_queue WHERE subject LIKE ? ORDER BY id DESC LIMIT 1", ['%' . $fo['order_no'] . ' received%']), 'Nothing to pay'));
+// Free delivery on zero-rated feed: no VAT is charged at all (the delivery discount is not spread over the feed)
+setting_set('zero_rating_enabled', '1');
+as_customer(db_one('SELECT * FROM customers WHERE id = ?', [$vf['id']]));
+CartService::add('feeds', 2, 2);
+CartService::setCoupon('feeds', $fd);
+$rz = DeliveryService::zoneForTown('Riverside');
+$fdo = OrderService::place('feeds', ['billing_name' => 'VAT Farmer', 'billing_address' => 'Farm', 'payment_method' => 'eft', 'fulfilment' => 'delivery', 'town' => 'Riverside',
+    'delivery_date' => DeliveryService::deliveryDates($rz, 10)[0], 'address' => ['recipient_name' => 'VF', 'phone' => '0821234567', 'line1' => '1 Farm']], current_customer());
+OrderService::recordPayment((int) $fdo['id'], (int) $fdo['total_cents'], 'eft');
+$fdinv = (int) db_val("SELECT vat_cents FROM documents WHERE order_id = ? AND doc_type = 'tax_invoice'", [$fdo['id']]);
+check('free delivery on zero-rated feed: no VAT on the order or the invoice', (int) $fdo['delivery_cents'] > 0 && (int) db_val('SELECT vat_cents FROM orders WHERE id = ?', [$fdo['id']]) === 0 && $fdinv === 0,
+    db_val('SELECT vat_cents FROM orders WHERE id = ?', [$fdo['id']]) . ' / ' . $fdinv);
+setting_set('zero_rating_enabled', '0');
+// Finalising a livestock order with a coupon keeps the order VAT equal to the invoice VAT
+db_exec("UPDATE divisions SET vat_registered = 1, vat_no = '4222222222' WHERE id = 2");
+$GLOBALS['GX_DIV_CACHE'] = [];
+$fv = make_customer('finalvat@test.local');
+as_customer($fv);
+CartService::add('ranch', 1, 2);
+CartService::setCoupon('ranch', $big);
+$fvo = OrderService::place('ranch', ['billing_name' => 'Final VAT', 'billing_address' => 'Farm', 'buyer_id_number' => '8001015009087', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(2), current_customer());
+$fvi = db_one('SELECT * FROM order_items WHERE order_id = ?', [$fvo['id']]);
+OrderService::finalise((int) $fvo['id'], [$fvi['id'] => 71.3]);
+check('after weighing, the order VAT still equals the tax invoice VAT (coupon included)', (int) db_val('SELECT vat_cents FROM orders WHERE id = ?', [$fvo['id']])
+    === (int) db_val("SELECT vat_cents FROM documents WHERE order_id = ? AND doc_type = 'tax_invoice'", [$fvo['id']]),
+    db_val('SELECT vat_cents FROM orders WHERE id = ?', [$fvo['id']]) . ' vs ' . db_val("SELECT vat_cents FROM documents WHERE order_id = ? AND doc_type = 'tax_invoice'", [$fvo['id']]));
+db_exec("UPDATE divisions SET vat_registered = 0, vat_no = NULL WHERE id = 2");
+$GLOBALS['GX_DIV_CACHE'] = [];
 
 section('Checkout: holds, payment methods and the checkout API');
 $uv = db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone) VALUES (?,?,?,?,?)', ['unverified@test.local', password_hash('x', PASSWORD_BCRYPT), 'Un', 'Verified', '0821234567']);
@@ -781,6 +814,18 @@ $placeBody = ['action' => 'place', 'billing_name' => 'Pay Test', 'billing_phone'
 check('when stock ran low the order is not placed with a silently smaller quantity', $st === 409 && str_contains((string) ($res['error'] ?? ''), 'Only 2'), $st . ' ' . json_encode($res));
 [$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $placeBody);
 check('… the second attempt (customer has seen it) goes through with the 2 left', $st === 200, $st . ' ' . json_encode($res));
+as_customer($c3);
+CartService::add('feeds', 12, 3);
+db_exec('UPDATE cart_items ci JOIN carts c ON c.id = ci.cart_id SET ci.qty = 999 WHERE c.customer_id = ? AND ci.variant_id = 12', [$c3['id']]);
+$msg = throws(static fn() => OrderService::place('feeds', ['billing_name' => 'Direct', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer()));
+check('place() itself refuses when its own look at the cart changed something', $msg !== null && str_contains($msg, 'quantity changed'), (string) $msg);
+CartService::clear('feeds');
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 6, 'qty' => 1]);
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $placeBody + ['expected_total' => 1]);
+check('a total different from the one on screen is refused (409) with the new total', $st === 409 && str_contains((string) ($res['error'] ?? ''), 'Your total is now'), $st . ' ' . json_encode($res));
+[$st, $qres] = $co->api('POST', '/feeds/api/checkout.php', ['action' => 'quote', 'fulfilment' => 'collection', 'payment_method' => 'eft']);
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', $placeBody + ['expected_total' => $qres['data']['total'] ?? 0]);
+check('… and the order goes through once the page shows the right total', $st === 200, $st . ' ' . json_encode($res));
 db_exec('UPDATE product_variants SET stock_qty = 1 WHERE id = 10');
 $co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 10, 'qty' => 1]);
 db_exec('UPDATE cart_items ci JOIN carts c ON c.id = ci.cart_id SET ci.qty = 3 WHERE c.customer_id = ? AND ci.variant_id = 10', [$c3['id']]);
@@ -804,6 +849,11 @@ $co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 2, 'q
 $co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 6, 'qty' => 1]);
 [$st] = $co->api('POST', '/feeds/api/checkout.php', $delBody);
 check('… and the same address is not saved twice', $st === 200 && (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$c3['id']]) === $addrCount + 1, (string) $st);
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 2, 'qty' => 2]);
+$delBody2 = $delBody;
+$delBody2['address']['directions'] = 'Second gate after the silo';
+[$st] = $co->api('POST', '/feeds/api/checkout.php', $delBody2);
+check('… but new directions for the same address are kept', $st === 200 && db_val("SELECT directions FROM customer_addresses WHERE customer_id = ? AND line1 = '12 Farm Road'", [$c3['id']]) === 'Second gate after the silo', (string) $st);
 $cc3 = db_one('SELECT company_name, farm_name FROM customers WHERE id = ?', [$c3['id']]);
 check('the billing company is kept as the company name (not the farm name)', $cc3['company_name'] === 'Pay Farms (Pty) Ltd' && $cc3['farm_name'] !== 'Pay Farms (Pty) Ltd', json_encode($cc3));
 

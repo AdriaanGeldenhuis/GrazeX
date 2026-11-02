@@ -108,6 +108,7 @@ final class OrderService
             $discount = $coupon && $coupon['type'] !== 'free_delivery' ? PricingService::couponDiscount($coupon, $subtotal, 0) : 0;
         }
 
+        $deliveryDiscount = 0;
         $fulfilment = $div === 'ranch' ? 'collection' : (($in['fulfilment'] ?? 'collection') === 'delivery' ? 'delivery' : 'collection');
         if ($fulfilment === 'delivery') {
             $zone = DeliveryService::zoneForTown((string) ($in['town'] ?? ''));
@@ -119,25 +120,16 @@ final class OrderService
                     $errors['fulfilment'] = 'The minimum order for delivery to ' . $zone['name'] . ' is ' . money((int) $zone['min_order_cents']) . '.';
                 }
                 if ($summary['coupon'] && $summary['coupon']['type'] === 'free_delivery') {
+                    $deliveryDiscount = $delivery;
                     $discount += $delivery;
                 }
             }
         }
 
         $total = $subtotal - $discount + $delivery;
-        // VAT exactly as the invoice will show it: per line, delivery at the standard rate, and the discount
-        // split across the VAT rates in the same way (DocumentService::allocateDiscount)
-        $vat = 0;
-        $byRate = [];
-        foreach ($lines as $l) {
-            $rate = $l['zero_rated'] ? 0 : $vatBp;
-            $vat += vat_from_incl($l['total'], $rate);
-            $byRate[$rate] = ($byRate[$rate] ?? 0) + $l['total'];
-        }
-        foreach (DocumentService::allocateDiscount($byRate, $discount) as $rate => $share) {
-            $vat -= vat_from_incl($share, $rate);
-        }
-        $vat += vat_from_incl($delivery, $vatBp);
+        // VAT exactly as the invoice will show it (DocumentService::orderVat is shared with the invoice and finalise)
+        $vat = DocumentService::orderVat(array_map(static fn($l) => [(int) $l['total'], $l['zero_rated'] ? 0 : $vatBp], $lines),
+            $discount - $deliveryDiscount, $delivery, $deliveryDiscount, $vatBp);
         // The deposit can never be more than the order (e.g. a coupon on a high-deposit lot)
         $deposit = $div === 'ranch' ? min((int) $summary['deposit'], max(0, $total)) : 0;
         $dueNow = $div === 'ranch' ? $deposit : (($in['payment_method'] ?? '') === 'cash_on_collection' ? 0 : $total);
@@ -145,7 +137,7 @@ final class OrderService
         return [
             'division' => $div, 'lines' => $lines, 'notices' => $summary['notices'], 'coupon' => $summary['coupon'],
             'subtotal' => $subtotal, 'discount' => $discount, 'delivery' => $delivery, 'total' => max(0, $total),
-            'vat' => max(0, $vat), 'vat_bp' => $vatBp, 'deposit' => $deposit, 'due_now' => $dueNow,
+            'vat' => $vat, 'vat_bp' => $vatBp, 'deposit' => $deposit, 'due_now' => $dueNow,
             'balance' => max(0, $total - $dueNow), 'zone' => $zone ? DeliveryService::describe($zone) : null,
             'fulfilment' => $fulfilment, 'errors' => $errors, 'zero_rated' => $savings > 0, 'savings' => $savings,
             'est_weight_kg' => $summary['est_weight_kg'],
@@ -169,6 +161,9 @@ final class OrderService
         }
         if ($quote['errors']) {
             throw new DomainException(reset($quote['errors']));
+        }
+        if ($changes = CartService::changes($quote)) {
+            throw new DomainException(implode(' ', $changes) . ' Please check your order and place it again.');
         }
         foreach ($quote['lines'] as $l) {
             // Safety net: never sell at R0 (e.g. a per-kg lot without an average weight)
@@ -420,6 +415,9 @@ final class OrderService
     public static function paymentInstructions(array $o): string
     {
         $due = self::amountDue($o);
+        if ($due <= 0 && $o['payment_status'] === 'paid') {
+            return '**Nothing to pay — your order is confirmed.** Your tax invoice is attached.';
+        }
         if ($o['payment_method'] === 'eft') {
             $bank = self::bankDetailsMd($o);
             return "**Please pay " . money($due) . " by EFT** before " . fmt_datetime($o['hold_expires_at']) . " to keep your stock reserved.\n\n{$bank}\n\nThen upload your proof of payment in your account.";
@@ -758,14 +756,13 @@ final class OrderService
     public static function finalise(int $orderId, array $weights, ?int $adminId = null): array
     {
         $o = db_tx(static function () use ($orderId, $weights, $adminId): array {
-            $o = db_one('SELECT * FROM orders WHERE id = ? FOR UPDATE', [$orderId]);
+            $o = db_one('SELECT o.*, c.type AS coupon_type FROM orders o LEFT JOIN coupons c ON c.id = o.coupon_id WHERE o.id = ? FOR UPDATE', [$orderId]);
             if (!$o || !in_array($o['status'], ['reserved', 'deposit_paid'], true)) {
                 throw new DomainException('Only reserved livestock orders can be finalised.');
             }
             $subtotal = 0;
             $vatBp = (int) $o['vat_rate_bp'];
-            $vatOn = PricingService::divisionVatBp((int) $o['division_id']) > 0;
-            $vat = 0;
+            $lineRates = [];
             foreach (db_all('SELECT * FROM order_items WHERE order_id = ?', [$orderId]) as $it) {
                 $line = (int) $it['line_total_cents'];
                 if ($it['pricing_mode'] === 'per_kg') {
@@ -780,9 +777,15 @@ final class OrderService
                     db_exec('UPDATE order_items SET actual_weight_kg = ?, line_total_cents = ? WHERE id = ?', [$kg, $line, $it['id']]);
                 }
                 $subtotal += $line;
-                $vat += $vatOn ? vat_from_incl($line, $vatBp) : 0;
+                $lineRates[] = [$line, (int) $it['zero_rated'] ? 0 : (int) $it['vat_rate_bp']];
             }
-            $total = $subtotal - (int) $o['discount_cents'] + (int) $o['delivery_cents'];
+            [$goodsDiscount, $deliveryDiscount] = DocumentService::splitDiscount((int) $o['discount_cents'], (int) $o['delivery_cents'], $o['coupon_type']);
+            $goodsDiscount = min($goodsDiscount, $subtotal); // a lighter final weight can never make the total negative
+            $vat = DocumentService::orderVat($lineRates, $goodsDiscount, (int) $o['delivery_cents'], $deliveryDiscount, $vatBp);
+            $total = $subtotal - $goodsDiscount - $deliveryDiscount + (int) $o['delivery_cents'];
+            if ($goodsDiscount + $deliveryDiscount !== (int) $o['discount_cents']) {
+                db_exec('UPDATE orders SET discount_cents = ? WHERE id = ?', [$goodsDiscount + $deliveryDiscount, $orderId]);
+            }
             $paid = (int) $o['amount_paid_cents'];
             db_exec('UPDATE orders SET subtotal_cents = ?, vat_cents = ?, total_cents = ?, status = ?, finalised_at = NOW(),
                      payment_status = ?, hold_expires_at = NULL WHERE id = ?',
