@@ -10,6 +10,8 @@ require __DIR__ . '/../../includes/bootstrap.php';
 api_post();
 $customer = require_customer_api();
 $cid = (int) $customer['id'];
+// Records made without logging in (alerts, enquiries) belong to this account only once its email is verified
+$email = customer_verified_email($customer);
 rate_limit_or_fail('privacy', 'c' . $cid, 5, 3600);
 
 switch ((string) input('action')) {
@@ -17,12 +19,12 @@ switch ((string) input('action')) {
         $data = [
             'exported_at' => now(),
             'profile' => db_one('SELECT email, first_name, last_name, phone, farm_name, company_name, vat_no, vat_farmer_status, email_verified_at,
-                                 marketing_opt_in, marketing_opt_in_at, created_at, last_login_at FROM customers WHERE id = ?', [$cid]),
+                                 marketing_opt_in, marketing_opt_in_at, terms_accepted_at, terms_version, created_at, last_login_at FROM customers WHERE id = ?', [$cid]),
             'addresses' => db_all('SELECT label, recipient_name, phone, farm_name, line1, line2, town, province, postal_code, directions, gps_lat, gps_lng FROM customer_addresses WHERE customer_id = ?', [$cid]),
             'orders' => db_all('SELECT order_no, status, payment_method, fulfilment, total_cents, placed_at, billing_name, billing_email, billing_phone,
                                 billing_company, billing_vat_no, billing_address, buyer_id_number, ship_town FROM orders WHERE customer_id = ? ORDER BY placed_at', [$cid]),
-            'livestock_alerts' => db_all('SELECT email, breed_id, category_id, is_active, created_at FROM livestock_alerts WHERE customer_id = ? OR email = ?', [$cid, $customer['email']]),
-            'enquiries' => db_all('SELECT type, message, created_at FROM enquiries WHERE customer_id = ? OR email = ?', [$cid, $customer['email']]),
+            'livestock_alerts' => db_all('SELECT email, breed_id, category_id, is_active, confirmed_at, created_at FROM livestock_alerts WHERE customer_id = ? OR email = ?', [$cid, $email]),
+            'enquiries' => db_all('SELECT type, name, email, phone, message, created_at FROM enquiries WHERE customer_id = ? OR email = ?', [$cid, $email]),
         ];
         audit('customer.data_export', 'customer', $cid);
         json_ok(['download' => $data, 'filename' => 'grazex-my-data-' . date('Y-m-d') . '.json'], 'Your data is downloading.');

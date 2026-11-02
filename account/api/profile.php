@@ -21,8 +21,9 @@ switch ((string) input('action')) {
             'first_name' => 'required|max:100', 'last_name' => 'required|max:100', 'phone' => 'required|phone',
             'farm_name' => 'nullable|max:150', 'company_name' => 'nullable|max:150', 'vat_no' => 'nullable|regex:/^4\d{9}$/', 'marketing_opt_in' => 'nullable|bool',
         ]);
+        // MySQL applies SET left to right: the opt-in date must be worked out BEFORE marketing_opt_in changes
         db_exec('UPDATE customers SET first_name = ?, last_name = ?, phone = ?, farm_name = ?, company_name = ?, vat_no = ?,
-                 marketing_opt_in = ?, marketing_opt_in_at = IF(? = 1 AND marketing_opt_in = 0, NOW(), marketing_opt_in_at) WHERE id = ?',
+                 marketing_opt_in_at = IF(? = 1 AND marketing_opt_in = 0, NOW(), marketing_opt_in_at), marketing_opt_in = ? WHERE id = ?',
             [$d['first_name'], $d['last_name'], $d['phone'], $d['farm_name'], $d['company_name'], $d['vat_no'],
              $d['marketing_opt_in'] ? 1 : 0, $d['marketing_opt_in'] ? 1 : 0, $cid]);
         audit('customer.profile_updated', 'customer', $cid);

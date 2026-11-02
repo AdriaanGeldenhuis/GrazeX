@@ -152,7 +152,8 @@ if (!empty($saveAddress)) {
     }
 }
 if (!empty($data['marketing_opt_in'])) {
-    db_exec('UPDATE customers SET marketing_opt_in = 1, marketing_opt_in_at = NOW() WHERE id = ?', [$customer['id']]);
+    // Keep the date of the first opt-in (SET runs left to right: date first)
+    db_exec('UPDATE customers SET marketing_opt_in_at = IF(marketing_opt_in = 1 AND marketing_opt_in_at IS NOT NULL, marketing_opt_in_at, NOW()), marketing_opt_in = 1 WHERE id = ?', [$customer['id']]);
 }
 
 $redirect = $order['payment_method'] === 'yoco' && OrderService::amountDue($order) > 0

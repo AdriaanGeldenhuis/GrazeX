@@ -26,9 +26,11 @@ switch ($action) {
         if (db_val('SELECT id FROM customers WHERE email = ?', [$d['email']])) {
             json_error(t('error.validation'), 422, ['email' => 'An account with this email already exists — log in instead.']);
         }
-        $id = db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone, marketing_opt_in, marketing_opt_in_at) VALUES (?,?,?,?,?,?,?)', [
+        // Creating an account accepts the terms shown on the form; remember which version
+        $id = db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone, marketing_opt_in, marketing_opt_in_at, terms_accepted_at, terms_version)
+                         VALUES (?,?,?,?,?,?,?,NOW(),?)', [
             $d['email'], customer_password_hash($d['password']), $d['first_name'], $d['last_name'], $d['phone'],
-            $d['marketing_opt_in'] ? 1 : 0, $d['marketing_opt_in'] ? now() : null,
+            $d['marketing_opt_in'] ? 1 : 0, $d['marketing_opt_in'] ? now() : null, terms_version(),
         ]);
         $c = db_one('SELECT * FROM customers WHERE id = ?', [$id]);
         login_customer($c);
