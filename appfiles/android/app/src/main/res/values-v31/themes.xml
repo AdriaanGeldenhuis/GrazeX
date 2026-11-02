@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GrazeX" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/gx_orange</item>
+        <item name="colorAccent">@color/gx_orange</item>
+        <item name="android:colorBackground">@color/gx_black</item>
+        <item name="android:windowBackground">@color/gx_black</item>
+        <item name="android:textColorPrimary">@color/gx_text</item>
+        <item name="android:textColorSecondary">@color/gx_muted</item>
+        <item name="android:statusBarColor">@color/gx_black</item>
+        <item name="android:navigationBarColor">@color/gx_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <!-- Android 12+ start screen: the GrazeX X on black -->
+        <item name="android:windowSplashScreenBackground">@color/gx_black</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+</resources>

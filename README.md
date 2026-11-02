@@ -31,7 +31,11 @@ templates/pdf/        document.php (faktuur, kwitansie, kredietnota, pick list, 
 cron/run.php          een cron-taak vir alles (Xneelo: elke 2 uur)
 database/             install.sql (skema + seed) · demo.sql (opsionele voorbeelddata) · migrations/
 tests/                run.php (enjin- + API-toetse) · js/ (admin-JS-toetse) · http/smoke.sh (na-deploy-toets) · dev-router.php (plaaslike bediener)
+appfiles/             Android-app (Kotlin, Android Studio) — word NIE gedeploy nie. Sien appfiles/README.md
+assetlinks.php        /.well-known/assetlinks.json vir die app se App Links (ANDROID_PACKAGE / ANDROID_SHA256)
 ```
+
+**Android-app:** die bou, die release-sleutel, App Links, en Firebase-push stap vir stap staan in [`appfiles/README.md`](appfiles/README.md).
 
 ---
 

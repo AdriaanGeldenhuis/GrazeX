@@ -1,0 +1,20 @@
+# Secrets — never commit (see README.md)
+android/app/google-services.json
+android/keystore.properties
+*.jks
+*.keystore
+# The Firebase service account belongs on the server in storage/private/, never here
+*firebase-adminsdk*.json
+*service-account*.json
+
+# Build output and local settings
+android/local.properties
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/app/release/
+android/.idea/
+*.iml
+captures/
+.DS_Store

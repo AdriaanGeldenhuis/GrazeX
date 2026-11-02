@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: a white X (Android shows notification icons as a silhouette) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:scaleX="0.4"
+        android:scaleY="0.4"
+        android:translateX="-0.8"
+        android:translateY="-0.8">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M10,14h13l9,13 9,-13h13L38.5,32 54,50H41l-9,-13 -9,13H10l15.5,-18z" />
+    </group>
+</vector>
