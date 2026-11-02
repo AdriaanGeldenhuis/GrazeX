@@ -111,3 +111,32 @@ function admin_password_hash(string $password): string
 {
     return customer_password_hash($password);
 }
+
+/** One-hour, single-use "reset your admin password" link. Earlier unused links stop working. Returns the raw token. */
+function admin_token_create(int $adminId, int $ttlMinutes = 60): string
+{
+    $token = random_token(32);
+    db_exec("UPDATE admin_tokens SET used_at = NOW() WHERE admin_user_id = ? AND purpose = 'reset_password' AND used_at IS NULL", [$adminId]);
+    db_exec("INSERT INTO admin_tokens (admin_user_id, purpose, token_hash, expires_at) VALUES (?, 'reset_password', ?, ?)",
+        [$adminId, token_hash($token), date('Y-m-d H:i:s', time() + $ttlMinutes * 60)]);
+    return $token;
+}
+
+/** Use a reset link once. Returns the admin user id, or null when it is invalid, expired or used. */
+function admin_token_consume(string $token): ?int
+{
+    if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+        return null;
+    }
+    $hashes = array_map(static fn(string $k) => hash_hmac('sha256', $token, $k), gx_key_ring());
+    return db_tx(static function () use ($hashes): ?int {
+        $row = db_one("SELECT t.id, t.admin_user_id FROM admin_tokens t JOIN admin_users a ON a.id = t.admin_user_id
+                       WHERE t.token_hash IN (" . db_placeholders($hashes) . ") AND t.purpose = 'reset_password' AND t.used_at IS NULL
+                       AND t.expires_at > NOW() AND a.status = 'active' LIMIT 1 FOR UPDATE", $hashes);
+        if (!$row) {
+            return null;
+        }
+        db_exec('UPDATE admin_tokens SET used_at = NOW() WHERE id = ?', [$row['id']]);
+        return (int) $row['admin_user_id'];
+    });
+}

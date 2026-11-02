@@ -87,6 +87,8 @@ $GLOBALS['GX_ENV']['yoco']['test_secret_key'] = (string) env('yoco.test_secret_k
 
 // Fixture: EFT is only offered once a division's bank details are filled in
 $admin->exec("UPDATE divisions SET bank_name = 'FNB', bank_account_name = 'GrazeX (Pty) Ltd', bank_account_no = '62000000001', bank_branch_code = '250655'");
+// Fixture: animals may only be handed over with a document of identification, which needs the ranch's brand mark
+$admin->exec("UPDATE settings SET setting_value = 'GX1' WHERE setting_key = 'ranch_brand_mark'");
 
 $pass = 0;
 $fail = 0;
@@ -1191,6 +1193,549 @@ $_SERVER['HTTP_HOST'] = 'grazex.example';
 check('… and not when already on the right host', canonical_host_redirect() === null);
 unset($_SERVER['HTTP_HOST'], $_SERVER['REQUEST_METHOD']);
 $_SERVER['REQUEST_URI'] = '/tests';
+
+// =====================================================================
+// Phase 4 — emails, documents, cron
+// =====================================================================
+function doc_html(int $docId): string
+{
+    $doc = db_one('SELECT * FROM documents WHERE id = ?', [$docId]);
+    return PdfService::html('document', ['doc' => $doc, 'lines' => db_all('SELECT * FROM document_lines WHERE document_id = ? ORDER BY sort_order, id', [$docId]),
+        'snap' => json_decode((string) $doc['snapshot'], true) ?: [], 'copy' => false,
+        'live' => db_one('SELECT status, amount_paid_cents FROM orders WHERE id = ?', [$doc['order_id']])]); // same as DocumentService::pdf()
+}
+function last_mail(string $to, string $subjectLike): string
+{
+    return (string) db_val('SELECT body_html FROM email_queue WHERE to_email = ? AND subject LIKE ? ORDER BY id DESC LIMIT 1', [$to, $subjectLike]);
+}
+
+section('Phase 4: emails say which documents are attached');
+$pdfOk = PdfService::available();
+// The deposit email of the first Ranch order (found by the deposit amount, not by position)
+$ro1 = db_one("SELECT * FROM orders WHERE customer_id = ? AND division_id = 2 ORDER BY id LIMIT 1", [$c2['id']]);
+$depMail = (string) db_val("SELECT body_html FROM email_queue WHERE to_email = 'ranch@test.local' AND subject = ? AND body_html LIKE ? ORDER BY id LIMIT 1",
+    ['Payment received for ' . $ro1['order_no'], '%' . str_replace(' ', '%', money((int) $ro1['deposit_due_cents'])) . '%']);
+check('deposit: "Your receipt is attached" — no invoice promised',
+    $pdfOk ? str_contains($depMail, 'Your receipt is attached') && !str_contains($depMail, 'invoice') : str_contains($depMail, 'My orders'), strip_tags($depMail));
+$c5d = make_customer('docs@test.local');
+as_customer($c5d);
+CartService::add('feeds', 5, 1);
+$fo = OrderService::place('feeds', ['billing_name' => 'Docs Buyer', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+OrderService::recordPayment((int) $fo['id'], (int) $fo['total_cents'], 'eft');
+$fullMail = last_mail('docs@test.local', 'Payment received%');
+check('full payment: "Your receipt and tax invoice are attached"',
+    $pdfOk ? str_contains($fullMail, 'Your receipt and tax invoice are attached') : str_contains($fullMail, 'My orders'), strip_tags($fullMail));
+// Low-stock digest: markdown list, no ∗∗garbled∗∗ stars
+db_exec('UPDATE product_variants SET stock_qty = 1, low_stock_threshold = 5 WHERE id = 2');
+setting_set('low_stock_email', 'stock@test.local');
+step('low-stock digest runs', static fn() => CronService::lowStockDigest(true));
+$lowMail = last_mail('stock@test.local', 'Low stock%');
+check('low-stock digest is a clean list (no ∗∗ characters)', $lowMail !== '' && !str_contains($lowMail, '∗') && str_contains($lowMail, '<li') && str_contains($lowMail, ' left'), strip_tags($lowMail));
+
+section('Phase 4: PDF documents');
+$ro = db_one('SELECT * FROM orders WHERE customer_id = ? AND division_id = 2 ORDER BY id LIMIT 1', [$c2['id']]); // the first Ranch order (deposit, then balance)
+$roInv = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$ro['id']]);
+$h = doc_html($roInv);
+check('once the balance is paid, the invoice no longer asks for payment', $roInv > 0 && !str_contains($h, 'Pay the balance'));
+$foInv = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type = 'tax_invoice'", [$fo['id']]);
+check('paid invoice has no "pay the balance" note', $foInv > 0 && !str_contains(doc_html($foInv), 'Pay the balance'));
+check('tax invoice VAT label from its lines: "VAT (15%)"', $foInv > 0 && str_contains(doc_html($foInv), 'VAT (15%)'));
+$foRc = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type = 'receipt'", [$fo['id']]);
+$h = doc_html($foRc);
+check('receipt shows no VAT columns or VAT total', $foRc > 0 && !str_contains($h, 'Excl VAT') && !str_contains($h, 'Total excl. VAT') && str_contains($h, 'Amount received'));
+$doi = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type = 'doc_identification'", [$ro['id']]);
+db_exec("UPDATE breeds SET kind = 'Goat' WHERE id = (SELECT breed_id FROM lots WHERE id = 1)");
+db_exec('UPDATE lots SET age_months_min = 4, age_months_max = 6 WHERE id = 1');
+check('DOI keeps its snapshot (later breed edits do not change it)', $doi > 0 && !str_contains(doc_html($doi), 'Goat'));
+// A new DOI takes the kind and age from the breed and lot
+as_customer($c2);
+CartService::add('ranch', 1, 1);
+$rd = OrderService::place('ranch', ['billing_name' => 'Ranch Buyer', 'billing_address' => 'Farm 1', 'buyer_id_number' => '8001015009087',
+    'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(2), current_customer());
+$rdItem = db_one('SELECT * FROM order_items WHERE order_id = ?', [$rd['id']]);
+step('finalise (setup)', static fn() => OrderService::finalise((int) $rd['id'], [$rdItem['id'] => 40.0]));
+step('ready (setup)', static fn() => OrderService::transition((int) $rd['id'], 'ready_for_collection'));
+$rdInv = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$rd['id']]);
+$h = $rdInv ? doc_html($rdInv) : '';
+$rdBank = (string) (json_decode((string) db_val('SELECT snapshot FROM documents WHERE id = ?', [$rdInv]), true)['seller']['bank']['account_no'] ?? 'missing');
+check('invoice with a balance still owed shows the bank details and reference', str_contains($h, 'Pay the balance by EFT') && str_contains($h, 'Account no: ' . $rdBank) && str_contains($h, 'Reference: ' . $rd['order_no']));
+step('pay (setup)', static fn() => OrderService::recordPayment((int) $rd['id'], OrderService::amountDue(order_row((int) $rd['id'])), 'cash'));
+setting_set('ranch_brand_mark', '');
+check('"Mark collected" is refused while the ranch brand mark is empty', str_contains((string) throws(static fn() => OrderService::transition((int) $rd['id'], 'collected')), 'brand')
+    && order_row((int) $rd['id'])['status'] === 'ready_for_collection' && !db_val("SELECT 1 FROM documents WHERE order_id = ? AND doc_type = 'doc_identification'", [$rd['id']]));
+setting_set('ranch_brand_mark', 'GX1');
+step('collected with the mark set', static fn() => OrderService::transition((int) $rd['id'], 'collected'));
+$doi2 = (int) db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type = 'doc_identification'", [$rd['id']]);
+$h = $doi2 ? doc_html($doi2) : '';
+check('new DOI: kind of animal from the breed (Goat) and age (4–6 months)', str_contains($h, '>Goat<') && str_contains($h, '4–6 months'), $doi2 ? '' : 'no DOI');
+check("new DOI: seller's mark printed", str_contains($h, "Seller's mark: GX1") || str_contains($h, 'Seller&#039;s mark: GX1'));
+db_exec("UPDATE breeds SET kind = 'Sheep'");
+db_exec('UPDATE lots SET age_months_min = NULL, age_months_max = NULL WHERE id = 1');
+// Labels on documents made from scratch: mixed VAT rates, receipts, and old DOI snapshots without kind/age
+$fakeDoc = ['doc_type' => 'tax_invoice', 'doc_no' => 'T-1', 'issued_at' => now(), 'subtotal_excl_cents' => 0, 'vat_cents' => 0, 'total_cents' => 0, 'reason_code' => null, 'explanation' => null];
+$fakeLine = static fn(int $bp) => DocumentService::line('Item', 1, null, 11500, 11500, $bp, $bp === 0, null);
+$fakeSnap = ['seller' => ['vat_registered' => true, 'name' => 'S', 'code' => 'feeds'], 'buyer' => ['name' => 'B', 'company' => null, 'brand_mark' => null], 'order' => []];
+$hv = PdfService::html('document', ['doc' => $fakeDoc, 'lines' => [$fakeLine(1500), $fakeLine(0)], 'snap' => $fakeSnap, 'copy' => false]);
+check('VAT label: standard + zero-rated lines → "VAT (15%)"', str_contains($hv, 'VAT (15%)') && str_contains($hv, '(zero-rated)'));
+$hv = PdfService::html('document', ['doc' => $fakeDoc, 'lines' => [$fakeLine(1500), $fakeLine(1400)], 'snap' => $fakeSnap, 'copy' => false]);
+check('VAT label: two different rates → plain "VAT" (no wrong percentage)', !str_contains($hv, 'VAT (15%)') && !str_contains($hv, 'VAT (14%)') && str_contains($hv, '>VAT<'));
+$hv = PdfService::html('document', ['doc' => $fakeDoc, 'lines' => [$fakeLine(1500)], 'snap' => ['seller' => ['vat_registered' => false, 'name' => 'S', 'code' => 'feeds']] + $fakeSnap, 'copy' => false]);
+check('seller not VAT registered: no VAT rows at all', !str_contains($hv, 'Excl VAT') && !str_contains($hv, 'Total excl. VAT'));
+$oldDoi = ['lots' => [['qty' => 3, 'breed' => 'Dorper', 'sex' => 'ewe', 'category' => 'Weaner lambs', 'title' => 'Old lot', 'lot_no' => 'L1', 'tag_no' => null]]] + $fakeSnap;
+$warn = null;
+set_error_handler(static function (int $no, string $msg) use (&$warn): bool { $warn = $msg; return true; });
+$hv = PdfService::html('document', ['doc' => ['doc_type' => 'doc_identification'] + $fakeDoc, 'lines' => [], 'snap' => $oldDoi, 'copy' => false]);
+restore_error_handler();
+check('a DOI stored before this change (no kind/age) still renders: "Sheep", age "—", no warnings', $warn === null && str_contains($hv, '>Sheep<') && str_contains($hv, '>—<'), (string) $warn);
+
+section('Phase 4: scheduled jobs (cron)');
+$admin->query("SELECT GET_LOCK(SHA1(CONCAT(DATABASE(), ':', 'cron')), 0)")->fetchColumn();
+check('a second cron run is skipped while one is busy', step('cron while locked', static fn() => CronService::run()) === null && class_exists('CronService', false));
+$admin->query("SELECT RELEASE_LOCK(SHA1(CONCAT(DATABASE(), ':', 'cron')))")->fetchColumn();
+$line = step('cron run', static fn() => CronService::run());
+check('cron runs once the lock is free (and records last_cron_run)', is_string($line) && str_contains($line, 'privacy retention') && setting('last_cron_run') !== null, (string) $line);
+// Page-load expiry never overlaps a running expiry
+as_customer($c5d);
+CartService::add('feeds', 5, 1);
+$xo = OrderService::place('feeds', ['billing_name' => 'Late Payer', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+db_exec('UPDATE orders SET hold_expires_at = NOW() - INTERVAL 1 MINUTE WHERE id = ?', [$xo['id']]);
+setting_set('last_expiry_run', '0');
+$admin->query("SELECT GET_LOCK(SHA1(CONCAT(DATABASE(), ':', 'expiry')), 0)")->fetchColumn();
+OrderService::maybeExpire();
+check('page-load expiry waits while another expiry run holds the lock', order_row((int) $xo['id'])['status'] === 'pending_payment');
+$admin->query("SELECT RELEASE_LOCK(SHA1(CONCAT(DATABASE(), ':', 'expiry')))")->fetchColumn();
+// Expiry is done by "the system", even when a customer's page load triggered it
+setting_set('last_expiry_run', '0');
+OrderService::maybeExpire();
+check('lazy expiry ran', order_row((int) $xo['id'])['status'] === 'expired');
+check('expiry is logged as the system, not the customer who loaded the page',
+    db_val("SELECT actor_type FROM audit_log WHERE action = 'order.expired' AND entity_id = ? ORDER BY id DESC LIMIT 1", [$xo['id']]) === 'system');
+// EFT reminder is sent exactly once
+CartService::add('feeds', 5, 1);
+$rm = OrderService::place('feeds', ['billing_name' => 'Reminder', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+db_exec('UPDATE orders SET placed_at = NOW() - INTERVAL 30 HOUR WHERE id = ?', [$rm['id']]);
+OrderService::sendReminders();
+OrderService::sendReminders();
+check('EFT reminder sent exactly once', (int) db_val('SELECT COUNT(*) FROM email_queue WHERE subject LIKE ?', ['%' . $rm['order_no'] . ' is waiting for payment%']) === 1);
+// An email stuck in "sending" (the sender died) goes back in the queue
+$stuck = db_insert("INSERT INTO email_queue (to_email, subject, body_html, status, attempts, created_at) VALUES ('stuck@test.local', 'Stuck', '<p>x</p>', 'sending', 1, NOW() - INTERVAL 1 HOUR)");
+$fresh = db_insert("INSERT INTO email_queue (to_email, subject, body_html, status, attempts) VALUES ('busy@test.local', 'Busy', '<p>x</p>', 'sending', 1)");
+step('requeue stuck emails', static fn() => CronService::requeueStuckEmails());
+check('email stuck in "sending" for an hour is queued again', db_val('SELECT status FROM email_queue WHERE id = ?', [$stuck]) === 'queued');
+check('an email being sent right now is left alone', db_val('SELECT status FROM email_queue WHERE id = ?', [$fresh]) === 'sending');
+// The age that counts is when sending started (claimed_at), not when the email was queued
+$oldQueued = db_insert("INSERT INTO email_queue (to_email, subject, body_html, status, attempts, created_at, claimed_at) VALUES ('q@test.local', 'Q', '<p>x</p>', 'sending', 1, NOW() - INTERVAL 3 HOUR, NOW() - INTERVAL 1 MINUTE)");
+$stuck2 = db_insert("INSERT INTO email_queue (to_email, subject, body_html, status, attempts, created_at, claimed_at) VALUES ('q@test.local', 'Q2', '<p>x</p>', 'sending', 5, NOW(), NOW() - INTERVAL 30 MINUTE)");
+step('requeue stuck emails (claimed_at)', static fn() => CronService::requeueStuckEmails());
+check('an old email that only just started sending is left alone', db_val('SELECT status FROM email_queue WHERE id = ?', [$oldQueued]) === 'sending');
+check('a stuck email that already had 5 tries is marked failed', db_val('SELECT status FROM email_queue WHERE id = ?', [$stuck2]) === 'failed');
+db_exec('DELETE FROM email_queue WHERE id IN (?, ?)', [$oldQueued, $stuck2]);
+db_exec('DELETE FROM email_queue WHERE id IN (?, ?)', [$stuck, $fresh]);
+
+section('Phase 4: POPIA');
+$p4 = new TestHttp($base);
+$p4->page('/admin/login.php');
+$p4->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'owner@test.local', 'password' => $ownerPw], null, ['X-Test-Remote-Addr: 10.44.0.1']);
+$p4->page('/admin/');
+// --- Anonymise: everything personal goes, the tax record stays ---
+$pc = make_customer('popia@test.local');
+db_exec("UPDATE customers SET farm_name = 'Popia Farm', vat_no = '4111111111', deletion_requested_at = NOW() WHERE id = ?", [$pc['id']]);
+as_customer($pc);
+CartService::add('feeds', 5, 1);
+$po1 = OrderService::place('feeds', ['billing_name' => 'Popia Person', 'billing_phone' => '0829999999', 'billing_company' => 'Popia (Pty) Ltd', 'billing_vat_no' => '4222222222',
+    'billing_address' => '1 Farm Road', 'customer_note' => 'Gate code 1234', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
+[$st, $res] = $p4->api('POST', '/admin/api/customers.php', ['action' => 'anonymise', 'id' => $pc['id']]);
+check('anonymise is refused while the customer has an open order', $st === 409 && db_val('SELECT email FROM customers WHERE id = ?', [$pc['id']]) === 'popia@test.local', $st . ' ' . json_encode($res));
+db_exec("UPDATE orders SET status = 'completed' WHERE id = ?", [$po1['id']]);
+@mkdir(GX_ROOT . '/storage/private/vat/test', 0755, true);
+$vatFile = 'storage/private/vat/test/popia-' . $pc['id'] . '.pdf';
+file_put_contents(GX_ROOT . '/' . $vatFile, '%PDF-1.4 test');
+db_exec('UPDATE customers SET vat_farmer_doc_path = ? WHERE id = ?', [$vatFile, $pc['id']]);
+LivestockService::subscribe('popia@test.local', null, null, null, true); // signed up as a guest earlier
+db_exec("INSERT INTO enquiries (name, email, phone, message) VALUES ('Popia', 'popia@test.local', '0829999999', 'Do you deliver?')");
+db_exec("INSERT INTO push_devices (customer_id, token_hash, token) VALUES (?, ?, 'fcm-token')", [$pc['id'], hash('sha256', 'fcm-token-' . $pc['id'])]);
+$qOld = MailService::queue('popia@test.local', 'Popia', 'Old news', '<p>x</p>');
+[$st, $res] = $p4->api('POST', '/admin/api/customers.php', ['action' => 'anonymise', 'id' => $pc['id']]);
+check('anonymise works once orders are closed', $st === 200, $st . ' ' . json_encode($res));
+$pcRow = db_one('SELECT * FROM customers WHERE id = ?', [$pc['id']]);
+$po1Row = order_row((int) $po1['id']);
+check('customer row: no name, email, farm or VAT number left', str_ends_with($pcRow['email'], '@deleted.invalid') && $pcRow['first_name'] === 'Deleted' && $pcRow['farm_name'] === null && $pcRow['vat_no'] === null);
+check('order: phone, email, note and ID removed', $po1Row['billing_phone'] === null && $po1Row['customer_note'] === null && str_ends_with($po1Row['billing_email'], '@deleted.invalid'));
+check('order: invoice details kept for the tax record (name, company, VAT no, address)', $po1Row['billing_name'] === 'Popia Person' && $po1Row['billing_company'] === 'Popia (Pty) Ltd'
+    && $po1Row['billing_vat_no'] === '4222222222' && $po1Row['billing_address'] === '1 Farm Road');
+check('alerts and enquiries under their (verified) email are deleted', !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'popia@test.local'") && !db_val("SELECT 1 FROM enquiries WHERE email = 'popia@test.local'"));
+check('uploaded VAT certificate file is deleted', !is_file(GX_ROOT . '/' . $vatFile));
+check('push devices removed', !db_val('SELECT 1 FROM push_devices WHERE customer_id = ?', [$pc['id']]));
+check('queued emails to the old address removed', !db_val('SELECT 1 FROM email_queue WHERE id = ?', [$qOld]));
+$pcSnap = json_decode((string) db_val("SELECT snapshot FROM documents WHERE order_id = ? AND doc_type = 'order_confirmation'", [$po1['id']]), true) ?: [];
+check("documents' copies of email, phone, notes and delivery address are removed (invoice details kept)",
+    $pcSnap && !isset($pcSnap['buyer']['email']) && !isset($pcSnap['buyer']['phone']) && !isset($pcSnap['buyer']['ship']) && !isset($pcSnap['order']['customer_note'])
+    && ($pcSnap['buyer']['name'] ?? '') === 'Popia Person' && ($pcSnap['buyer']['vat_no'] ?? '') === '4222222222', json_encode($pcSnap['buyer'] ?? null));
+check('saved PDFs of their documents are removed (rebuilt from the cleaned copy)', !db_val('SELECT 1 FROM documents WHERE customer_id = ? AND pdf_path IS NOT NULL', [$pc['id']]));
+check('confirmation ("account deleted") emailed to the old address', (bool) db_val("SELECT 1 FROM email_queue WHERE to_email = 'popia@test.local' AND subject LIKE '%account has been deleted%'"));
+@rmdir(GX_ROOT . '/storage/private/vat/test');
+
+// --- Guest data belongs to an account only once its email is verified ---
+$vid = db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone) VALUES (?,?,?,?,?)',
+    ['victim@test.local', password_hash('x', PASSWORD_BCRYPT), 'Vic', 'Tim', '0821234567']);
+LivestockService::subscribe('victim@test.local', null, null, null, true);
+db_exec("INSERT INTO enquiries (name, email, message) VALUES ('Real Victim', 'victim@test.local', 'My private question')");
+$vh = new TestHttp($base);
+$vh->page('/account/login.php');
+$vh->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'victim@test.local', 'password' => 'x']);
+$vh->page('/account/');
+[$st, $res] = $vh->api('POST', '/account/api/privacy.php', ['action' => 'export']);
+check('unverified account: data export does not include guest alerts/enquiries for that email',
+    $st === 200 && ($res['data']['download']['livestock_alerts'] ?? null) === [] && ($res['data']['download']['enquiries'] ?? null) === [], $st . ' ' . json_encode($res));
+check('unverified account: alerts page does not list them', !str_contains($vh->page('/account/alerts.php'), 'Pause'));
+$vtok = customer_token_create($vid, 'verify_email', 60);
+$vh->page('/account/verify.php?token=' . $vtok);
+check('verifying the email links the guest alert and enquiry to the account',
+    (int) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'victim@test.local'") === $vid && (int) db_val("SELECT customer_id FROM enquiries WHERE email = 'victim@test.local'") === $vid);
+[$st, $res] = $vh->api('POST', '/account/api/privacy.php', ['action' => 'export']);
+check('… and the export now includes them', count($res['data']['download']['livestock_alerts'] ?? []) === 1 && count($res['data']['download']['enquiries'] ?? []) === 1, json_encode($res));
+
+// --- A new VAT certificate replaces the old file ---
+setting_set('zero_rating_enabled', '1');
+$pdfA = (string) tempnam(sys_get_temp_dir(), 'gxvat');
+file_put_contents($pdfA, "%PDF-1.4\n%test\n");
+[$st1] = $vh->api('POST', '/account/api/profile.php', ['action' => 'vat_doc'], ['vat_doc' => $pdfA]);
+$firstDoc = (string) db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ?', [$vid]);
+[$st2] = $vh->api('POST', '/account/api/profile.php', ['action' => 'vat_doc'], ['vat_doc' => $pdfA]);
+$secondDoc = (string) db_val('SELECT vat_farmer_doc_path FROM customers WHERE id = ?', [$vid]);
+check('uploading a new VAT certificate deletes the previous file', $st1 === 200 && $st2 === 200 && $firstDoc !== $secondDoc && !is_file(GX_ROOT . '/' . $firstDoc) && is_file(GX_ROOT . '/' . $secondDoc),
+    json_encode([$st1, $st2, $firstDoc, $secondDoc]));
+@unlink(GX_ROOT . '/' . $secondDoc);
+@unlink($pdfA);
+setting_set('zero_rating_enabled', '0');
+
+// --- Marketing consent date, terms acceptance ---
+[$st] = $vh->api('POST', '/account/api/profile.php', ['action' => 'details', 'first_name' => 'Vic', 'last_name' => 'Tim', 'phone' => '0821234567', 'marketing_opt_in' => '1']);
+check('opting in to marketing records the date', $st === 200 && db_val('SELECT marketing_opt_in_at FROM customers WHERE id = ?', [$vid]) !== null);
+$rh = new TestHttp($base);
+$rh->page('/account/register.php');
+[$st] = $rh->api('POST', '/account/api/auth.php', ['action' => 'register', 'first_name' => 'New', 'last_name' => 'Person', 'email' => 'terms@test.local',
+    'phone' => '0821234567', 'password' => 'Correct-Horse-9']);
+$tc = db_one("SELECT terms_accepted_at, terms_version FROM customers WHERE email = 'terms@test.local'");
+check('registration records the terms accepted and their version', $st === 200 && $tc && $tc['terms_accepted_at'] !== null
+    && $tc['terms_version'] === (string) db_val("SELECT updated_at FROM pages WHERE slug = 'terms'"), json_encode($tc));
+as_customer($c5d);
+CartService::add('feeds', 5, 1);
+$to = step('place with accepted terms', static fn() => OrderService::place('feeds', ['billing_name' => 'Terms', 'payment_method' => 'eft', 'fulfilment' => 'collection', 'accept_terms' => true] + slot(1), current_customer()));
+check('an order records the terms accepted at checkout', $to && order_row((int) $to['id'])['terms_accepted_at'] !== null && order_row((int) $to['id'])['terms_version'] !== null);
+
+// --- Livestock alerts: double opt-in, unsubscribe ---
+db_exec('UPDATE livestock_alerts SET is_active = 0');
+$gh = new TestHttp($base);
+$gh->page('/ranch/');
+[$st, $res] = $gh->api('POST', '/ranch/api/alerts.php', ['email' => 'guest-alert@test.local']);
+$ga = db_one("SELECT * FROM livestock_alerts WHERE email = 'guest-alert@test.local'");
+check('guest sign-up waits for email confirmation', $st === 200 && $ga && $ga['confirmed_at'] === null, $st . ' ' . json_encode($res));
+$cm = last_mail('guest-alert@test.local', 'Confirm your%');
+preg_match('#/ranch/alerts\.php\?confirm=([a-f0-9]{64})#', $cm, $m);
+$ctok = $m[1] ?? '';
+check('a confirmation email with a link is sent', $ctok !== '');
+db_exec("UPDATE lots SET status = 'available' WHERE id = 1");
+step('announce lot (unconfirmed)', static fn() => LivestockService::notifySubscribers(1));
+check('an unconfirmed address gets no livestock alert', !db_val("SELECT 1 FROM email_queue WHERE to_email = 'guest-alert@test.local' AND subject LIKE 'New on GrazeX Ranch%'"));
+$gh->page('/ranch/alerts.php?confirm=' . $ctok);
+check('opening the confirmation link alone changes nothing (link scanners)', db_val("SELECT confirmed_at FROM livestock_alerts WHERE email = 'guest-alert@test.local'") === null);
+[$st] = $gh->api('POST', '/ranch/api/alerts.php', ['action' => 'confirm', 'token' => $ctok]);
+check('pressing "Yes, send me alerts" confirms it', $st === 200 && db_val("SELECT confirmed_at FROM livestock_alerts WHERE email = 'guest-alert@test.local'") !== null);
+step('announce lot (confirmed)', static fn() => LivestockService::notifySubscribers(1));
+$am = db_one("SELECT * FROM email_queue WHERE to_email = 'guest-alert@test.local' AND subject LIKE 'New on GrazeX Ranch%' ORDER BY id DESC LIMIT 1");
+$utok = (string) db_val("SELECT unsubscribe_token FROM livestock_alerts WHERE email = 'guest-alert@test.local'");
+check('after confirming, the alert is sent', (bool) $am);
+check('the alert carries its own unsubscribe link and one-click header', $am && str_contains((string) $am['body_html'], '/ranch/alerts.php?unsubscribe=' . $utok)
+    && str_contains((string) ($am['list_unsubscribe'] ?? ''), '/ranch/api/alerts.php?unsubscribe=' . $utok)
+    && (MailService::extraHeaders($am)['List-Unsubscribe-Post'] ?? '') === 'List-Unsubscribe=One-Click');
+[$st] = $gh->headers('/ranch/api/alerts.php?unsubscribe=' . $utok);
+check('an unsubscribe GET (old links, scanners) only shows the page — nothing changes', (int) db_val("SELECT is_active FROM livestock_alerts WHERE email = 'guest-alert@test.local'") === 1);
+$ch = curl_init($base . '/ranch/api/alerts.php?unsubscribe=' . $utok);
+curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => 'List-Unsubscribe=One-Click', CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded']]);
+curl_exec($ch);
+$oneClick = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+check('one-click unsubscribe from the mail provider works (RFC 8058) — the guest sign-up is deleted', $oneClick === 200 && !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'guest-alert@test.local'"), (string) $oneClick);
+LivestockService::subscribe('second@test.local', null, null, null, true);
+$utok2 = (string) db_val("SELECT unsubscribe_token FROM livestock_alerts WHERE email = 'second@test.local'");
+[$st] = $gh->api('POST', '/ranch/api/alerts.php', ['action' => 'unsubscribe', 'token' => $utok2]);
+check('the Unsubscribe button on the page works', $st === 200 && !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'second@test.local'"));
+// An account that has not verified its email can't take over (or learn about) someone's guest alert for that address
+LivestockService::subscribe('taken@test.local', null, null, null, true); // the real owner of the address, signed up as a guest
+db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone) VALUES (?,?,?,?,?)', ['taken@test.local', password_hash('x', PASSWORD_BCRYPT), 'Fake', 'Owner', '0821234567']);
+$tk = new TestHttp($base);
+$tk->page('/account/login.php');
+$tk->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'taken@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 10.44.0.9']);
+$tk->page('/account/alerts.php');
+[$st, $res] = $tk->api('POST', '/account/api/alerts.php', ['action' => 'create', 'breed' => '', 'category' => '']);
+$tkId = (int) db_val("SELECT id FROM customers WHERE email = 'taken@test.local'");
+check('unverified account: the guest\'s alert is not attached to it', (string) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'taken@test.local' AND confirmed_at IS NOT NULL") === ''
+    && !db_val('SELECT 1 FROM livestock_alerts WHERE customer_id = ? AND confirmed_at IS NOT NULL', [$tkId]), json_encode($res));
+check('… and the reply does not reveal that the address is subscribed', ($res['message'] ?? '') !== 'Alert added.', json_encode($res));
+// The inbox owner confirms the account's alert (thinking it is theirs), then unsubscribes: the unverified account can't switch it back on
+preg_match('#/ranch/alerts\.php\?confirm=([a-f0-9]{64})#', last_mail('taken@test.local', 'Confirm your%'), $m);
+step('inbox owner confirms', static fn() => LivestockService::confirmAlert($m[1] ?? ''));
+$tkAlert = (int) db_val('SELECT id FROM livestock_alerts WHERE customer_id = ?', [$tkId]);
+step('inbox owner unsubscribes', static fn() => LivestockService::unsubscribe((string) db_val('SELECT unsubscribe_token FROM livestock_alerts WHERE id = ?', [$tkAlert])));
+check("unsubscribing removes an unverified account's alert for that inbox", $tkAlert > 0 && !db_val('SELECT 1 FROM livestock_alerts WHERE id = ?', [$tkAlert]));
+db_exec('INSERT INTO livestock_alerts (customer_id, email, is_active, confirmed_at, unsubscribe_token) VALUES (?, ?, 0, NOW(), ?)', [$tkId, 'taken@test.local', random_token(32)]);
+[$st] = $tk->api('POST', '/account/api/alerts.php', ['action' => 'toggle', 'id' => (int) db_val('SELECT MAX(id) FROM livestock_alerts WHERE customer_id = ?', [$tkId])]);
+check('an unverified account cannot switch a paused alert back on', $st === 409 && (int) db_val('SELECT is_active FROM livestock_alerts WHERE customer_id = ? ORDER BY id DESC LIMIT 1', [$tkId]) === 0, (string) $st);
+// The site-wide hourly cap is checked first, so a busy hour doesn't use up anyone's own 3-a-day allowance
+for ($i = 0; $i < 40; $i++) {
+    rate_limit_hit('alert_confirm_site', 'all', 40, 3600);
+}
+LivestockService::subscribe('capped@test.local', null, null, null, false);
+check('when the hourly cap is reached no confirmation is sent', !db_val("SELECT 1 FROM email_queue WHERE to_email = 'capped@test.local'"));
+rate_limit_clear('alert_confirm_site', 'all');
+for ($i = 0; $i < 3; $i++) {
+    LivestockService::subscribe('capped@test.local', null, null, null, false);
+}
+check('… and the address still has its full daily allowance afterwards', (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'capped@test.local'") === 3);
+// A pending confirmation link is not replaced by repeated sign-ups once the daily email limit is reached
+for ($i = 0; $i < 3; $i++) {
+    LivestockService::subscribe('pending@test.local', null, null, null, false);
+}
+$pendTok = (string) db_val("SELECT confirm_token FROM livestock_alerts WHERE email = 'pending@test.local'");
+LivestockService::subscribe('pending@test.local', null, null, null, false);
+check('after the daily limit no new email is sent and the last link keeps working', db_val("SELECT confirm_token FROM livestock_alerts WHERE email = 'pending@test.local'") === $pendTok
+    && (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'pending@test.local'") === 3);
+
+// --- Retention (POPIA: not kept longer than needed) ---
+db_exec("INSERT INTO audit_log (actor_type, action, created_at) VALUES ('system', 'old.entry', NOW() - INTERVAL 800 DAY), ('system', 'new.entry', NOW())");
+db_exec("INSERT INTO enquiries (name, email, message, created_at) VALUES ('Old', 'old@test.local', 'old', NOW() - INTERVAL 800 DAY)");
+db_exec("INSERT INTO email_queue (to_email, subject, body_html, status, created_at) VALUES ('old@test.local', 'Failed', '<p>x</p>', 'failed', NOW() - INTERVAL 100 DAY)");
+db_exec("INSERT INTO livestock_alerts (email, confirm_token, unsubscribe_token, created_at) VALUES ('never@test.local', ?, ?, NOW() - INTERVAL 8 DAY)", [random_token(32), random_token(32)]);
+// An alert saved by the old code between pasting the migration and merging (no link was ever sent) keeps working
+db_exec("INSERT INTO livestock_alerts (email, unsubscribe_token, created_at) VALUES ('window@test.local', ?, NOW() - INTERVAL 9 DAY)", [random_token(32)]);
+// Unsubscribing an address that never confirmed removes the sign-up altogether (no consent)
+LivestockService::subscribe('half@test.local', null, null, null, false);
+$utok3 = (string) db_val("SELECT unsubscribe_token FROM livestock_alerts WHERE email = 'half@test.local'");
+step('unsubscribe never-confirmed', static fn() => LivestockService::unsubscribe($utok3));
+check('unsubscribing a never-confirmed sign-up deletes it', !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'half@test.local'"));
+step('retention clean-up', static fn() => CronService::retention());
+step('alert consent job', static fn() => CronService::alertConsent());
+check('an alert saved without proof of consent is not sent — it gets one confirmation email instead',
+    db_val("SELECT confirmed_at FROM livestock_alerts WHERE email = 'window@test.local'") === null
+    && (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'window@test.local' AND subject LIKE 'Confirm your%'") === 1);
+step('alert consent job again', static fn() => CronService::alertConsent());
+check('… only once', (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'window@test.local' AND subject LIKE 'Confirm your%'") === 1);
+check('audit entries older than the retention period are deleted (recent ones kept)', !db_val("SELECT 1 FROM audit_log WHERE action = 'old.entry'") && (bool) db_val("SELECT 1 FROM audit_log WHERE action = 'new.entry'"));
+check('old enquiries, old failed emails and never-confirmed alerts are deleted',
+    !db_val("SELECT 1 FROM enquiries WHERE email = 'old@test.local'") && !db_val("SELECT 1 FROM email_queue WHERE to_email = 'old@test.local'") && !db_val("SELECT 1 FROM livestock_alerts WHERE email = 'never@test.local'"));
+
+section('Phase 4: media, activity log, CSV exports, products');
+// --- Media: a new focal point gives new file names (no stale cached crops) and removes the old crops ---
+$gd = imagecreatetruecolor(1000, 700);
+imagefill($gd, 0, 0, imagecolorallocate($gd, 90, 140, 40));
+$mBase = 'uploads/media/test/' . random_token(6);
+@mkdir(GX_ROOT . '/uploads/media/test', 0755, true);
+$mVariants = media_generate_variants($gd, $mBase, .5, .5);
+$mid = db_insert("INSERT INTO media (base_path, original_name, mime, width, height, size_bytes, focal_x, focal_y, variants) VALUES (?, 't.png', 'image/webp', 1000, 700, 1, .5, .5, ?)",
+    [$mBase, json_encode($mVariants, JSON_UNESCAPED_SLASHES)]);
+$oldWide = array_values($mVariants['wide']);
+step('refocus', static fn() => media_refocus($mid, .2, .3));
+$newWide = array_values(json_decode((string) db_val('SELECT variants FROM media WHERE id = ?', [$mid]), true)['wide'] ?? []);
+check('refocused crops get new file names', $newWide && !array_intersect($oldWide, $newWide) && is_file(GX_ROOT . '/' . $newWide[0]));
+check('the old crops are deleted (originals kept)', !array_filter($oldWide, static fn($p) => is_file(GX_ROOT . '/' . $p)) && is_file(GX_ROOT . '/' . array_values($mVariants['orig'])[0]));
+media_forget($mid);
+check('media URLs come from the cache after a refocus', media_url($mid, 480, 'wide') === '/' . $newWide[0]);
+$catId = (int) db_val('SELECT id FROM categories ORDER BY id LIMIT 1');
+db_exec('UPDATE categories SET media_id = ? WHERE id = ?', [$mid, $catId]);
+[$st] = $p4->api('POST', '/admin/api/media.php', ['action' => 'delete', 'id' => $mid]);
+check('an image used by a category cannot be deleted', $st === 409 && (bool) db_val('SELECT 1 FROM media WHERE id = ?', [$mid]), (string) $st);
+$lib = $p4->page('/admin/media.php');
+$at = strpos($lib, 'data-id="' . $mid . '"');
+check('… and the media library shows it as "In use"', $at !== false && str_contains(substr($lib, $at, 700), 'In use'));
+db_exec('UPDATE categories SET media_id = NULL WHERE id = ?', [$catId]);
+[$st] = $p4->api('POST', '/admin/api/media.php', ['action' => 'delete', 'id' => $mid]);
+check('once unused it can be deleted (files removed)', $st === 200 && !is_file(GX_ROOT . '/' . $newWide[0]));
+$gd2 = imagecreatetruecolor(1700, 400);
+$mBase2 = 'uploads/media/test/' . random_token(6);
+$mid2 = db_insert("INSERT INTO media (base_path, original_name, mime, width, height, size_bytes, focal_x, focal_y, variants) VALUES (?, 'w.png', 'image/webp', 1700, 400, 1, .5, .5, ?)",
+    [$mBase2, json_encode(media_generate_variants($gd2, $mBase2, .5, .5), JSON_UNESCAPED_SLASHES)]);
+step('refocus a wide low image', static fn() => media_refocus($mid2, .3, .5));
+$v2 = json_decode((string) db_val('SELECT variants FROM media WHERE id = ?', [$mid2]), true);
+$onDisk = array_map(static fn($f) => 'uploads/media/test/' . basename($f), glob(GX_ROOT . '/' . $mBase2 . '-f*') ?: []);
+check('refocus leaves no unused crop files behind', $onDisk !== [] && !array_diff($onDisk, array_values($v2['wide'])), json_encode([$onDisk, $v2['wide']]));
+foreach (glob(GX_ROOT . '/' . $mBase2 . '*') ?: [] as $f) {
+    @unlink($f);
+}
+db_exec('DELETE FROM media WHERE id = ?', [$mid2]);
+@rmdir(GX_ROOT . '/uploads/media/test');
+
+// --- Activity log: what changed, not just "saved" ---
+$prod = db_one('SELECT * FROM products WHERE id = 1');
+$pv = db_all('SELECT * FROM product_variants WHERE product_id = 1 ORDER BY sort_order, id');
+$payload = ['action' => 'save', 'id' => 1, 'name' => $prod['name'], 'slug' => $prod['slug'], 'category_id' => $prod['category_id'], 'brand_id' => $prod['brand_id'],
+    'is_active' => 1, 'variants' => array_map(static fn($v) => ['id' => $v['id'], 'name' => $v['name'], 'sku' => $v['sku'], 'is_active' => $v['is_active'],
+        'price' => number_format(((int) $v['price_cents'] + ($v === $pv[0] ? 1000 : 0)) / 100, 2, '.', ''), 'weight_kg' => (string) ((int) $v['weight_grams'] / 1000),
+        'low_stock_threshold' => $v['low_stock_threshold'], 'cost' => $v['cost_cents'] !== null ? number_format((int) $v['cost_cents'] / 100, 2, '.', '') : ''], $pv)];
+[$st, $res] = $p4->api('POST', '/admin/api/products.php', $payload);
+$ad = json_decode((string) db_val("SELECT details FROM audit_log WHERE action = 'product.saved' AND entity_id = 1 ORDER BY id DESC LIMIT 1"), true) ?: [];
+check('price change is logged with the old and new price', $st === 200 && ($ad['sizes'][$pv[0]['id']]['price_cents'] ?? null) === [(int) $pv[0]['price_cents'], (int) $pv[0]['price_cents'] + 1000],
+    $st . ' ' . json_encode($ad ?: $res));
+$breed = db_one('SELECT * FROM breeds ORDER BY id LIMIT 1');
+[$st] = $p4->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'breeds', 'id' => $breed['id'], 'name' => $breed['name'], 'kind' => 'Goat', 'slug' => $breed['slug'], 'is_active' => 1, 'sort_order' => $breed['sort_order']]);
+$ad = json_decode((string) db_val("SELECT details FROM audit_log WHERE action = 'manage.saved' AND entity_type = 'breeds' ORDER BY id DESC LIMIT 1"), true) ?: [];
+check('list edits are logged with before/after (breed kind Sheep → Goat)', $st === 200 && ($ad['changes']['kind'] ?? null) === ['Sheep', 'Goat'], json_encode($ad));
+db_exec("UPDATE breeds SET kind = 'Sheep'");
+[$st] = $p4->api('POST', '/admin/api/settings.php', ['action' => 'settings', 's' => ['eft_hold_hours' => '72', 'social_facebook' => 'http://not-https.example']]);
+check('settings: one invalid value saves nothing', $st === 422 && db_val("SELECT setting_value FROM settings WHERE setting_key = 'eft_hold_hours'") === '48');
+[$st] = $p4->api('POST', '/admin/api/settings.php', ['action' => 'settings', 's' => ['eft_hold_hours' => '72']]);
+$ad = json_decode((string) db_val("SELECT details FROM audit_log WHERE action = 'settings.saved' ORDER BY id DESC LIMIT 1"), true) ?: [];
+check('settings changes are logged with before/after', $st === 200 && ($ad['changes']['eft_hold_hours'] ?? null) === ['48', '72'], json_encode($ad));
+db_exec("UPDATE settings SET setting_value = '48' WHERE setting_key = 'eft_hold_hours'");
+
+// --- CSV exports ---
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = (SELECT id FROM permissions WHERE slug = 'reports.view')");
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = (SELECT id FROM permissions WHERE slug = 'customers.view')");
+$sx4 = new TestHttp($base);
+$sx4->page('/admin/login.php');
+// (from another address: the earlier tests used up 127.0.0.1's login allowance)
+$sx4->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'staff@test.local', 'password' => $ownerPw], null, ['X-Test-Remote-Addr: 10.44.0.4']);
+$sx4->page('/admin/');
+$csvOrders = $sx4->page('/admin/reports.php?export=orders&status=cancelled');
+$csvLines = array_values(array_filter(explode("\n", trim($csvOrders))));
+check('staff with "View orders" (no Reports) can export the orders CSV', str_contains($csvLines[0] ?? '', 'Order,Division'), substr($csvOrders, 0, 120));
+check('the orders CSV uses the page filters (only cancelled orders)', count($csvLines) > 1 && !array_filter(array_slice($csvLines, 1), static fn($l) => !str_contains($l, ',cancelled,')));
+check('staff without "View customers" cannot export customers', str_contains($sx4->page('/admin/reports.php?export=customers'), 'You do not have permission for this export.'));
+check('… while the owner can (header present)', str_contains($p4->page('/admin/reports.php?export=customers'), '"First name","Last name",Email,Phone'));
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id IN (SELECT id FROM permissions WHERE slug IN ('orders.view','documents.view'))");
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug = 'reports.view'");
+check('a "Reports"-only role (bookkeeper) can export invoices', str_contains($sx4->page('/admin/reports.php?export=documents'), 'Date,Type,Number'));
+check('… but not the orders list with buyers\' email and phone', str_contains($sx4->page('/admin/reports.php?export=orders'), 'You do not have permission for this export.'));
+check('… nor the customers list', str_contains($sx4->page('/admin/reports.php?export=customers'), 'You do not have permission for this export.'));
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = (SELECT id FROM permissions WHERE slug = 'reports.view')");
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug IN ('orders.view','documents.view','customers.view')");
+$cnDoc = db_one("SELECT * FROM documents WHERE doc_type = 'credit_note' AND is_void = 0 ORDER BY id LIMIT 1");
+$csvDocs = $p4->page('/admin/reports.php?export=documents&q=' . rawurlencode($cnDoc['doc_no']));
+check('negative amounts stay numbers in the CSV (no leading quote)', str_contains($csvDocs, ',-' . number_format(abs((int) $cnDoc['total_cents']) / 100, 2, '.', '')) && !str_contains($csvDocs, "'-"), $csvDocs);
+db_exec('UPDATE documents SET is_void = 1 WHERE id = ?', [$cnDoc['id']]);
+check('voided documents are left out of the CSV', !str_contains($p4->page('/admin/reports.php?export=documents&q=' . rawurlencode($cnDoc['doc_no'])), $cnDoc['doc_no']));
+db_exec('UPDATE documents SET is_void = 0 WHERE id = ?', [$cnDoc['id']]);
+
+// --- Deleting a product with stock history hides it instead of failing ---
+$np = db_insert("INSERT INTO products (category_id, slug, name) VALUES (?, 'receipt-test', 'Receipt Test')", [$catId]);
+$nv = db_insert("INSERT INTO product_variants (product_id, sku, name, price_cents, stock_qty) VALUES (?, 'RCPT-1', '25kg', 10000, 0)", [$np]);
+$rcpt = db_insert("INSERT INTO stock_receipts (division_id, supplier_name, received_on) VALUES (1, 'Co-op', CURDATE())");
+db_exec('INSERT INTO stock_receipt_items (receipt_id, variant_id, qty) VALUES (?, ?, 5)', [$rcpt, $nv]);
+[$st, $res] = $p4->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => $np]);
+check('product with received stock is hidden, not deleted (no error)', $st === 200 && (string) db_val('SELECT is_active FROM products WHERE id = ?', [$np]) === '0', $st . ' ' . json_encode($res));
+$np2 = db_insert("INSERT INTO products (category_id, slug, name) VALUES (?, 'no-history', 'No History')", [$catId]);
+db_insert("INSERT INTO product_variants (product_id, sku, name, price_cents, stock_qty) VALUES (?, 'NOHIST-1', '5kg', 5000, 0)", [$np2]);
+[$st] = $p4->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => $np2]);
+check('a product without any history is really deleted', $st === 200 && !db_val('SELECT 1 FROM products WHERE id = ?', [$np2]));
+
+section('Phase 4: admin users, password reset, small fixes');
+// --- Owner edits an admin user; the last owner can't be demoted ---
+db_exec("UPDATE admin_users a JOIN roles r ON r.id = a.role_id SET a.status = 'disabled' WHERE r.slug = 'owner' AND a.email <> 'owner@test.local'");
+$staffId = (int) db_val("SELECT id FROM admin_users WHERE email = 'staff@test.local'");
+$ownerId = (int) db_val("SELECT id FROM admin_users WHERE email = 'owner@test.local'");
+[$st, $res] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $staffId, 'name' => 'Staff Renamed', 'role_id' => 2, 'division_scope' => 'feeds']);
+$su = db_one('SELECT name, role_id, division_scope FROM admin_users WHERE id = ?', [$staffId]);
+check('owner can change an admin user\'s name, role and divisions', $st === 200 && $su['name'] === 'Staff Renamed' && (int) $su['role_id'] === 2 && $su['division_scope'] === 'feeds', $st . ' ' . json_encode($res));
+db_exec("UPDATE admin_users SET name = 'Staff', role_id = 3, division_scope = 'all' WHERE id = ?", [$staffId]);
+[$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $ownerId, 'name' => 'Owner', 'role_id' => 2, 'division_scope' => 'all']);
+check('the last owner cannot be demoted', $st === 409 && (int) db_val('SELECT role_id FROM admin_users WHERE id = ?', [$ownerId]) === 1, (string) $st);
+[$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $ownerId, 'name' => 'Owner', 'role_id' => 1, 'division_scope' => 'ranch']);
+check('… nor limited to one division', $st === 409 && db_val('SELECT division_scope FROM admin_users WHERE id = ?', [$ownerId]) === 'all');
+$feedsOwner = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (1, ?, ?, ?, ?)', ['feedsowner@test.local', admin_password_hash($ownerPw), 'Feeds Owner', 'feeds']);
+$fo2 = new TestHttp($base);
+$fo2->page('/admin/login.php');
+$fo2->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'feedsowner@test.local', 'password' => $ownerPw], null, ['X-Test-Remote-Addr: 10.44.0.11']);
+$fo2->page('/admin/');
+[$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'toggle', 'id' => $ownerId]);
+check('an owner limited to one division cannot disable the full owner', $st === 403 && db_val('SELECT status FROM admin_users WHERE id = ?', [$ownerId]) === 'active', (string) $st);
+[$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $feedsOwner, 'name' => 'Feeds Owner', 'role_id' => 1, 'division_scope' => 'all']);
+check('… nor give themselves access to both divisions', $st === 403 && db_val('SELECT division_scope FROM admin_users WHERE id = ?', [$feedsOwner]) === 'feeds', (string) $st);
+[$st] = $fo2->api('POST', '/admin/api/users.php', ['action' => 'create', 'name' => 'Sneaky', 'email' => 'sneaky@test.local', 'role_id' => 1, 'division_scope' => 'all', 'password' => 'Sneaky-Pass-99']);
+check('… nor create a new full owner', $st === 403 && !db_val("SELECT 1 FROM admin_users WHERE email = 'sneaky@test.local'"), (string) $st);
+db_exec("UPDATE admin_users a JOIN roles r ON r.id = a.role_id SET a.status = 'disabled' WHERE r.slug = 'owner' AND a.email NOT IN ('owner@test.local', 'feedsowner@test.local')");
+$secondFull = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (1, ?, ?, ?, ?)', ['second@owner.local', admin_password_hash($ownerPw), 'Second Owner', 'all']);
+[$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'toggle', 'id' => $secondFull]);
+check('a full owner can disable another full owner', $st === 200 && db_val('SELECT status FROM admin_users WHERE id = ?', [$secondFull]) === 'disabled', (string) $st);
+[$st] = $p4->api('POST', '/admin/api/users.php', ['action' => 'update', 'id' => $feedsOwner, 'name' => 'Feeds Owner', 'role_id' => 2, 'division_scope' => 'feeds']);
+check('an owner limited to one division can be made a manager', $st === 200 && (int) db_val('SELECT role_id FROM admin_users WHERE id = ?', [$feedsOwner]) === 2, (string) $st);
+db_exec("UPDATE admin_users a JOIN roles r ON r.id = a.role_id SET a.status = 'active' WHERE r.slug = 'owner'");
+
+// --- Admin "forgot password" ---
+$rpId = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (3, ?, ?, ?, ?)', ['resetme@test.local', admin_password_hash('Old-Password-1'), 'Reset Me', 'all']);
+$fh = new TestHttp($base);
+$fh->page('/admin/forgot.php');
+[$st, $res] = $fh->api('POST', '/admin/api/auth.php', ['action' => 'forgot', 'email' => 'resetme@test.local'], null, ['X-Test-Remote-Addr: 10.44.0.7']);
+[$st2, $res2] = $fh->api('POST', '/admin/api/auth.php', ['action' => 'forgot', 'email' => 'nobody-admin@test.local'], null, ['X-Test-Remote-Addr: 10.44.0.7']);
+check('forgot password: same answer whether or not the admin exists', $st === 200 && $st2 === 200 && ($res['message'] ?? 'a') === ($res2['message'] ?? 'b'), json_encode([$res, $res2]));
+$rm = last_mail('resetme@test.local', 'Reset your GrazeX admin password%');
+preg_match('#/admin/reset\.php\?token=([a-f0-9]{64})#', $rm, $m);
+$rtok = $m[1] ?? '';
+check('a reset link is emailed', $rtok !== '' && !db_val("SELECT 1 FROM email_queue WHERE to_email = 'nobody-admin@test.local'"));
+check('the reset page shows the new-password form', str_contains($fh->page('/admin/reset.php?token=' . $rtok), 'name="password_confirm"'));
+$svBefore = (int) db_val('SELECT session_version FROM admin_users WHERE id = ?', [$rpId]);
+[$st, $res] = $fh->api('POST', '/admin/api/auth.php', ['action' => 'reset', 'token' => $rtok, 'password' => 'New-Password-22', 'password_confirm' => 'New-Password-22'], null, ['X-Test-Remote-Addr: 10.44.0.7']);
+check('the link sets a new password and logs out other sessions', $st === 200 && password_verify('New-Password-22', (string) db_val('SELECT password_hash FROM admin_users WHERE id = ?', [$rpId]))
+    && (int) db_val('SELECT session_version FROM admin_users WHERE id = ?', [$rpId]) === $svBefore + 1, $st . ' ' . json_encode($res));
+[$st] = $fh->api('POST', '/admin/api/auth.php', ['action' => 'reset', 'token' => $rtok, 'password' => 'Another-Pass-33', 'password_confirm' => 'Another-Pass-33'], null, ['X-Test-Remote-Addr: 10.44.0.7']);
+check('a reset link works only once', $st === 422 && password_verify('New-Password-22', (string) db_val('SELECT password_hash FROM admin_users WHERE id = ?', [$rpId])));
+$old = step('make a token', static fn() => admin_token_create($rpId));
+db_exec('UPDATE admin_tokens SET expires_at = NOW() - INTERVAL 1 MINUTE WHERE admin_user_id = ? AND used_at IS NULL', [$rpId]);
+[$st] = $fh->api('POST', '/admin/api/auth.php', ['action' => 'reset', 'token' => (string) $old, 'password' => 'Another-Pass-33', 'password_confirm' => 'Another-Pass-33'], null, ['X-Test-Remote-Addr: 10.44.0.7']);
+check('an expired reset link is refused', $st === 422);
+[$st] = $fh->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'resetme@test.local', 'password' => 'New-Password-22'], null, ['X-Test-Remote-Addr: 10.44.0.7']);
+check('… and the admin can log in with the new password', $st === 200);
+
+// --- Small fixes ---
+db_exec("UPDATE lots SET lot_no = 'GXR-L050' WHERE id = (SELECT id FROM (SELECT MAX(id) id FROM lots) t)");
+$maxNo = (int) db_val("SELECT MAX(CAST(SUBSTRING(lot_no, 6) AS UNSIGNED)) FROM lots WHERE lot_no REGEXP '^GXR-L[0-9]+$'");
+check('new lot number continues after the highest one in use', str_contains($p4->page('/admin/lot.php'), 'value="GXR-L' . str_pad((string) ($maxNo + 1), 3, '0', STR_PAD_LEFT) . '"'));
+[$st] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'stocktake_start']);
+$take2 = db_one("SELECT * FROM stock_takes WHERE status = 'open' ORDER BY id DESC LIMIT 1");
+$tl = db_one('SELECT * FROM stock_take_items WHERE stock_take_id = ? AND variant_id = 11', [$take2['id']]);
+[$st, $res] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'stocktake_complete', 'id' => $take2['id'], 'counts' => [(string) $tl['id'] => '7']]);
+check('"Complete stock take" also applies counts typed but not saved yet', $st === 200 && stock(11) === 7, $st . ' ' . json_encode($res) . ' stock ' . stock(11));
+[$st] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'stocktake_save', 'id' => $take2['id'], 'counts' => [(string) $tl['id'] => '2']]);
+check('counts can no longer be saved once the stock take is completed', $st === 409 && stock(11) === 7);
+[$st, $res] = $p4->api('POST', '/admin/api/inventory.php', ['action' => 'receive', 'lines' => [['variant_id' => 999999, 'qty' => 3]]]);
+check('receiving stock for an unknown product gives a clear message (no server error)', $st === 422, $st . ' ' . json_encode($res));
+setting_set('last_cron_run', date('Y-m-d H:i:s', time() - 5 * 3600));
+$dash = $p4->page('/admin/');
+check('dashboard warns when scheduled jobs have not run for hours', str_contains($dash, 'data-cron-warning'));
+check('dashboard greeting is in English', (bool) preg_match('/Good (morning|afternoon|evening),/', $dash));
+setting_set('last_cron_run', now());
+check('… and the warning goes once cron runs again', !str_contains($p4->page('/admin/'), 'data-cron-warning'));
+db_exec("UPDATE pages SET show_in_footer = 0 WHERE slug = 'returns'");
+$home = (new TestHttp($base))->page('/pages/contact.php');
+check('a page switched off "Link in footer menu" leaves the footer', !str_contains($home, 'slug=returns') && str_contains($home, 'slug=terms'));
+db_exec("UPDATE pages SET show_in_footer = 1 WHERE slug = 'returns'");
+db_exec("UPDATE menu_items SET is_active = 0 WHERE url = '/pages/page.php?slug=returns'");
+check('a footer menu item switched off stays off', !str_contains((new TestHttp($base))->page('/pages/contact.php'), 'slug=returns'));
+db_exec("UPDATE menu_items SET is_active = 1 WHERE url = '/pages/page.php?slug=returns'");
+db_exec("UPDATE pages SET show_in_footer = 1 WHERE slug = 'returns'");
+
+section('Migrations');
+// Every migration must run on an up-to-date database without errors and without changing anything (safe to paste twice)
+$schemaOf = static fn(): string => json_encode([
+    db_all('SELECT table_name, column_name, column_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = DATABASE() ORDER BY 1, 2'),
+    db_all('SELECT table_name, index_name, column_name, non_unique FROM information_schema.statistics WHERE table_schema = DATABASE() ORDER BY 1, 2, 3'),
+    db_all('SELECT template_key, subject, body FROM email_templates ORDER BY 1'),
+    db_all('SELECT setting_key FROM settings ORDER BY 1'),
+]);
+$beforeSchema = $schemaOf();
+$installedVersions = db_col('SELECT version FROM schema_migrations ORDER BY version'); // as install.sql seeded them
+$migErr = '';
+foreach (glob(GX_ROOT . '/database/migrations/0*.sql') ?: [] as $mf) {
+    try {
+        $admin->exec((string) file_get_contents($mf));
+        $admin->exec((string) file_get_contents($mf));
+    } catch (Throwable $e) {
+        $migErr .= basename($mf) . ': ' . $e->getMessage() . ' ';
+    }
+}
+check('all migrations run twice on a current database without errors', $migErr === '', $migErr);
+check('… and leave the schema, email templates and settings exactly as install.sql made them', $schemaOf() === $beforeSchema);
+check('every migration is recorded in install.sql', $installedVersions === array_merge(['001_install'],
+    array_map(static fn($f) => basename($f, '.sql'), glob(GX_ROOT . '/database/migrations/0*.sql') ?: [])));
 
 section('PDF rendering');
 if (PdfService::available()) {

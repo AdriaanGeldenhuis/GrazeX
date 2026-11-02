@@ -56,6 +56,46 @@ function gx_after_response(string $label, callable $task): void
     PHP_SAPI === 'cli' ? $run() : register_shutdown_function($run);
 }
 
+/** Version of the terms & conditions in force: when the Terms page was last changed (stored with each acceptance). */
+function terms_version(): ?string
+{
+    $v = db_val("SELECT updated_at FROM pages WHERE slug = 'terms'");
+    return $v === null ? null : (string) $v;
+}
+
+/**
+ * Named database lock (scoped to this database), so two runs of the same job never overlap.
+ * Returns false at once when someone else holds it. Released by gx_unlock() or when the connection closes.
+ */
+function gx_lock(string $name, int $waitSeconds = 0): bool
+{
+    return (int) db_val('SELECT GET_LOCK(SHA1(CONCAT(DATABASE(), \':\', ?)), ?)', [$name, $waitSeconds]) === 1;
+}
+
+function gx_unlock(string $name): void
+{
+    db_val('SELECT RELEASE_LOCK(SHA1(CONCAT(DATABASE(), \':\', ?)))', [$name]);
+}
+
+/**
+ * Run background work as "the system": the activity log and stock ledger then never credit it to
+ * whichever admin or customer happened to load the page that triggered it (e.g. lazy order expiry).
+ */
+function gx_as_system(callable $fn): mixed
+{
+    $GLOBALS['GX_SYSTEM_ACTOR'] = ($GLOBALS['GX_SYSTEM_ACTOR'] ?? 0) + 1;
+    try {
+        return $fn();
+    } finally {
+        $GLOBALS['GX_SYSTEM_ACTOR']--;
+    }
+}
+
+function gx_is_system(): bool
+{
+    return !empty($GLOBALS['GX_SYSTEM_ACTOR']);
+}
+
 /**
  * The setup wizard locks itself with a file (not only a database row), so it stays locked —
  * and shows no server diagnostics — even while the database is unreachable.
@@ -484,8 +524,9 @@ function division_code(int $id): string
 // ---------------------------------------------------------------------
 function audit(string $action, ?string $entityType = null, ?int $entityId = null, array $details = []): void
 {
-    $admin = function_exists('current_admin') ? current_admin() : null;
-    $customerId = function_exists('customer_id') ? customer_id() : null;
+    $system = gx_is_system();
+    $admin = !$system && function_exists('current_admin') ? current_admin() : null;
+    $customerId = !$system && function_exists('customer_id') ? customer_id() : null;
     $actorType = $admin ? 'admin' : ($customerId ? 'customer' : 'system');
     $actorId = $admin['id'] ?? $customerId;
     try {
@@ -493,11 +534,33 @@ function audit(string $action, ?string $entityType = null, ?int $entityId = null
                  VALUES (?,?,?,?,?,?,?,?)', [
             $actorType, $actorId, $action, $entityType, $entityId,
             $details ? json_encode($details, JSON_UNESCAPED_UNICODE) : null,
-            GX_IS_CLI ? null : client_ip(), GX_IS_CLI ? 'cli' : user_agent(),
+            GX_IS_CLI || $system ? null : client_ip(), GX_IS_CLI ? 'cli' : ($system ? 'system' : user_agent()),
         ]);
     } catch (Throwable $e) {
         gx_log('warning', 'Audit write failed: ' . $e->getMessage());
     }
+}
+
+/**
+ * What changed between two versions of a record, for the activity log: ['field' => [before, after]].
+ * Only changed fields; timestamps are skipped and long text is shortened.
+ */
+function audit_diff(?array $before, ?array $after, array $ignore = ['updated_at', 'created_at']): array
+{
+    $cut = static fn(mixed $v): mixed => is_string($v) && mb_strlen($v) > 200 ? mb_substr($v, 0, 200) . '…' : $v;
+    $out = [];
+    foreach (array_unique(array_merge(array_keys($before ?? []), array_keys($after ?? []))) as $k) {
+        if (in_array($k, $ignore, true)) {
+            continue;
+        }
+        $a = $before[$k] ?? null;
+        $b = $after[$k] ?? null;
+        if (($a === null) === ($b === null) && (string) $a === (string) $b) {
+            continue;
+        }
+        $out[$k] = [$cut($a), $cut($b)];
+    }
+    return $out;
 }
 
 // ---------------------------------------------------------------------

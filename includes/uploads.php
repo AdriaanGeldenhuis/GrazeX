@@ -221,16 +221,34 @@ function media_refocus(int $mediaId, float $fx, float $fy): void
     $im = gd_load($src, (new finfo(FILEINFO_MIME_TYPE))->file($src) ?: 'image/webp');
     $fx = max(0, min(1, $fx));
     $fy = max(0, min(1, $fy));
+    // New file names: browsers and caches keep old images for a long time, so the same name would keep showing the old crop
+    $tag = '-f' . random_token(3);
     $wide = [];
+    $made = [];
     foreach (GX_IMAGE_WIDTHS as $w) {
         $c = gd_crop_wide($im, $w, $fx, $fy);
-        $p = $m['base_path'] . "-{$w}x" . (int) round($w * 9 / 16) . '.' . pathinfo((string) reset($orig), PATHINFO_EXTENSION);
+        $p = $m['base_path'] . $tag . "-{$w}x" . (int) round($w * 9 / 16) . '.' . pathinfo((string) reset($orig), PATHINFO_EXTENSION);
         gd_save($c, GX_ROOT . '/' . $p);
-        $wide[imagesx($c)] = $p;
+        $made[] = $p;
+        $wide[imagesx($c)] = $p; // a small image gives the same crop width twice: only one is kept
     }
     ksort($wide);
+    foreach (array_diff($made, $wide) as $p) {
+        @unlink(GX_ROOT . '/' . $p); // the duplicate that lost its place in $wide
+    }
+    $old = array_values($variants['wide'] ?? []);
     $variants['wide'] = $wide;
     db_exec('UPDATE media SET focal_x = ?, focal_y = ?, variants = ? WHERE id = ?', [$fx, $fy, json_encode($variants, JSON_UNESCAPED_SLASHES), $mediaId]);
+    media_forget($mediaId);
+    // Remove the previous crops (never an original, and only inside uploads/)
+    $keep = array_merge(array_values($wide), array_values($orig));
+    $uploads = realpath(GX_ROOT . '/uploads');
+    foreach ($old as $path) {
+        $abs = realpath(GX_ROOT . '/' . ltrim((string) $path, '/'));
+        if ($abs && $uploads && !in_array($path, $keep, true) && str_starts_with($abs, $uploads . DIRECTORY_SEPARATOR)) {
+            @unlink($abs);
+        }
+    }
 }
 
 /** Stream a private file (after the caller checked access). */

@@ -65,10 +65,21 @@
     return fix(out);
   };
 
-  /* ---------- Admin forms: <form data-admin-form data-api="..." [data-action] [data-redirect] [data-reload]> ---------- */
+  /**
+   * Build a form's data without the fields that still hold the value they had when the page loaded (<input data-orig>),
+   * so a save never overwrites what someone else saved meanwhile (e.g. two people counting stock).
+   */
+  const changedOnly = (form, build) => {
+    const same = $$('[data-orig]', form).filter((el) => !el.disabled && el.value === el.dataset.orig);
+    same.forEach((el) => { el.disabled = true; }); // disabled fields are left out of FormData
+    try { return build(); } finally { same.forEach((el) => { el.disabled = false; }); }
+  };
+
+  /* ---------- Admin forms: <form data-admin-form data-api="..." [data-action] [data-redirect] [data-reload] [data-only-changed]> ---------- */
   $$('form[data-admin-form]').forEach((form) => {
     GX.bindForm(form, {
-      body: (f) => Object.assign(GX.formToObject(f), f.dataset.action ? { action: f.dataset.action } : {}),
+      body: (f) => Object.assign(f.dataset.onlyChanged !== undefined ? changedOnly(f, () => GX.formToObject(f)) : GX.formToObject(f),
+        f.dataset.action ? { action: f.dataset.action } : {}),
       onSuccess(data, f) {
         GX.toast(data.message || 'Saved');
         if (data.redirect) setTimeout(() => { location.href = data.redirect; }, 400);
@@ -87,7 +98,10 @@
   GX.on(document, 'click', '[data-admin-act]', async (e, b) => {
     e.preventDefault();
     if (b.dataset.confirm && !(await GX.confirm(b.dataset.confirm, { ok: b.dataset.ok || 'Yes', danger: b.dataset.danger !== undefined }))) return;
-    const payload = JSON.parse(b.dataset.payload || '{}');
+    let payload = JSON.parse(b.dataset.payload || '{}');
+    // data-include-form: also send the surrounding form's changed fields (e.g. stock-take counts typed but not saved yet)
+    const sentForm = b.dataset.includeForm !== undefined && b.form ? b.form : null;
+    if (sentForm) payload = Object.assign(changedOnly(sentForm, () => GX.formToObject(sentForm)), payload);
     if (b.dataset.prompt) {
       const v = window.prompt(b.dataset.prompt, b.dataset.promptDefault || '');
       if (v === null) return;
@@ -96,6 +110,7 @@
     GX.setLoading(b, true);
     const run = async (body) => {
       const d = await GX.api(b.dataset.adminAct, { body, quiet: true });
+      if (sentForm) b.form.dataset.dirty = ''; // the form's fields were sent: no "leave page?" prompt on the reload
       GX.toast(d.message || 'Done');
       if (d.redirect) location.href = d.redirect;
       else if (b.dataset.noReload === undefined) setTimeout(() => location.reload(), 450);
@@ -296,6 +311,28 @@
     const field = b.closest('[data-image-field]');
     $('input[type=hidden]', field).value = '';
     $('.ip-preview', field).innerHTML = '<span class="muted small">No image</span>';
+  });
+
+  /* ---------- Prefill a modal form: <button data-modal-open="id" data-fill='{"field":"value"}'> ---------- */
+  GX.on(document, 'click', '[data-modal-open][data-fill]', (e, b) => {
+    let values;
+    try { values = JSON.parse(b.dataset.fill); } catch (_) { return; }
+    const form = document.getElementById(b.dataset.modalOpen)?.querySelector('form');
+    if (!form || !values) return;
+    Object.entries(values).forEach(([k, v]) => {
+      const el = form.elements.namedItem(k);
+      if (el && 'value' in el) el.value = v === null || v === undefined ? '' : String(v);
+    });
+  });
+
+  /* ---------- Codes typed in capitals (coupon codes, prefixes): <input data-upper> ---------- */
+  GX.on(document, 'input', 'input[data-upper]', (e, el) => {
+    const pos = el.selectionStart;
+    const up = el.value.toUpperCase();
+    if (up !== el.value) {
+      el.value = up;
+      try { el.setSelectionRange(pos, pos); } catch (_) { /* some input types have no caret */ }
+    }
   });
 
   /* ---------- Auto-slug ---------- */

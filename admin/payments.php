@@ -31,7 +31,7 @@ admin_start('Payments', 'payments', ['perm' => 'payments.verify']);
     <div class="empty-state"><div class="es-icon"><svg class="icon icon-lg"><use href="#i-check"/></svg></div><h3>All caught up</h3><p>No proofs of payment are waiting.</p></div>
   <?php endif; ?>
   <div class="grid-2">
-    <?php foreach ($pops as $p): $isImg = !str_ends_with($p['pop_path'], '.pdf'); ?>
+    <?php foreach ($pops as $p): $isImg = !str_ends_with((string) $p['pop_path'], '.pdf'); ?>
       <section class="card card-pad">
         <div class="row-between mb-2"><div><a class="row-link link" href="/admin/order.php?id=<?= (int) $p['oid'] ?>"><?= e($p['order_no']) ?></a> · <?= e($p['billing_name']) ?></div><?= admin_div_chip((int) $p['division_id']) ?></div>
         <?php if ($isImg): ?>

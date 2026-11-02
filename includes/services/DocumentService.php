@@ -218,6 +218,9 @@ final class DocumentService
                 throw new DomainException('Order not found.');
             }
             $division = division((int) $order['division_id']);
+            if ($type === 'doc_identification') {
+                self::assertCanIdentify();
+            }
             if ($type === 'tax_invoice' && !(int) $division['vat_registered']) {
                 $type = 'invoice';
             }
@@ -264,7 +267,8 @@ final class DocumentService
                     $snapshot['lots'] = [];
                     foreach ($items as $it) {
                         if ($it['lot_id']) {
-                            $snapshot['lots'][] = db_one('SELECT l.lot_no, l.title, l.sex, l.tag_no, b.name AS breed, c.name AS category
+                            $snapshot['lots'][] = db_one('SELECT l.lot_no, l.title, l.sex, l.tag_no, l.age_months_min, l.age_months_max,
+                                       b.name AS breed, b.kind, c.name AS category
                                 FROM lots l JOIN breeds b ON b.id = l.breed_id JOIN livestock_categories c ON c.id = l.category_id WHERE l.id = ?', [$it['lot_id']]) + ['qty' => (int) $it['qty']];
                         }
                     }
@@ -276,7 +280,7 @@ final class DocumentService
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [
                 $order['division_id'], $orderId, $order['customer_id'], $opts['payment_id'] ?? null, $opts['related_document_id'] ?? null,
                 $type, $docNo, $excl, $vat, $total, $opts['reason_code'] ?? null, $opts['explanation'] ?? null,
-                json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $opts['admin_id'] ?? (current_admin()['id'] ?? null),
+                json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $opts['admin_id'] ?? (gx_is_system() ? null : (current_admin()['id'] ?? null)),
             ]);
             foreach ($lines as $i => $l) {
                 db_exec('INSERT INTO document_lines (document_id, order_item_id, description, qty, unit, unit_price_incl_cents, line_excl_cents, line_vat_cents, line_incl_cents, vat_rate_bp, zero_rated, sort_order)
@@ -285,6 +289,17 @@ final class DocumentService
             }
             return $docId;
         });
+    }
+
+    /**
+     * A document of identification (Stock Theft Act) must show the seller's registered brand / tattoo mark.
+     * @throws DomainException when the ranch mark has not been set up.
+     */
+    public static function assertCanIdentify(): void
+    {
+        if (trim((string) setting('ranch_brand_mark', '')) === '') {
+            throw new DomainException('Add the ranch brand / tattoo mark in Settings → General first — it is printed on the document of identification that goes with the animals.');
+        }
     }
 
     /** Credit note against an invoice (full or partial lines). */
@@ -320,7 +335,9 @@ final class DocumentService
         }
         $lines = db_all('SELECT * FROM document_lines WHERE document_id = ? ORDER BY sort_order, id', [$docId]);
         $snap = json_decode((string) $doc['snapshot'], true) ?: [];
-        $bytes = PdfService::render('document', ['doc' => $doc, 'lines' => $lines, 'snap' => $snap, 'copy' => $copy]);
+        // The issued document never changes; only the "how to pay" note follows the order as it is now
+        $live = db_one('SELECT status, amount_paid_cents FROM orders WHERE id = ?', [$doc['order_id']]);
+        $bytes = PdfService::render('document', ['doc' => $doc, 'lines' => $lines, 'snap' => $snap, 'copy' => $copy, 'live' => $live]);
         return ['bytes' => $bytes, 'filename' => $doc['doc_no'] . '.pdf', 'doc' => $doc];
     }
 

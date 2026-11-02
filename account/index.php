@@ -15,7 +15,7 @@ $lastFeeds = db_one("SELECT id, order_no FROM orders WHERE customer_id = ? AND d
     [$customer['id'], division_id('feeds')]);
 $stats = db_one("SELECT COUNT(*) AS orders, COALESCE(SUM(CASE WHEN status NOT IN ('cancelled','expired','refunded') THEN total_cents END),0) AS spent FROM orders WHERE customer_id = ?", [$customer['id']]);
 $docs = (int) db_val("SELECT COUNT(*) FROM documents WHERE customer_id = ? AND doc_type IN ('tax_invoice','invoice','credit_note','receipt') AND is_void = 0", [$customer['id']]);
-$alerts = (int) db_val('SELECT COUNT(*) FROM livestock_alerts WHERE (customer_id = ? OR email = ?) AND is_active = 1', [$customer['id'], $customer['email']]);
+$alerts = (int) db_val('SELECT COUNT(*) FROM livestock_alerts WHERE (customer_id = ? OR email = ?) AND is_active = 1 AND confirmed_at IS NOT NULL', [$customer['id'], customer_verified_email($customer)]);
 
 $page = ['title' => 'My account', 'division' => 'account', 'css' => ['/account/css/account.css'], 'js' => ['/account/js/account.js'], 'noindex' => true];
 require GX_ROOT . '/includes/layout/head.php';

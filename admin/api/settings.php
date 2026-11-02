@@ -56,24 +56,31 @@ if (input('action') === 'division') {
     if ($clash) {
         json_error(t('error.validation'), 422, $clash);
     }
+    $beforeDiv = db_one('SELECT * FROM divisions WHERE code = ?', [$code]);
     db_exec('UPDATE divisions SET legal_name=?, registration_no=?, vat_registered=?, vat_no=?, address=?, phone=?, email=?, tagline=?, bank_name=?, bank_account_name=?,
              bank_account_no=?, bank_branch_code=?, bank_account_type=?, order_prefix=?, invoice_prefix=?, credit_prefix=?, receipt_prefix=?, document_footer=? WHERE code = ?', [
         $d['legal_name'], $d['registration_no'], $vatReg, $d['vat_no'], $d['address'], $d['phone'], $d['email'], $d['tagline'], $d['bank_name'], $d['bank_account_name'],
         $d['bank_account_no'] ? str_replace(' ', '', $d['bank_account_no']) : null, $d['bank_branch_code'] ? str_replace(' ', '', $d['bank_branch_code']) : null,
         $d['bank_account_type'], $d['order_prefix'], $d['invoice_prefix'], $d['credit_prefix'], $d['receipt_prefix'], $d['document_footer'], $code,
     ]);
-    audit('settings.division', 'division', division_id($code));
+    audit('settings.division', 'division', division_id($code), ['changes' => audit_diff($beforeDiv, db_one('SELECT * FROM divisions WHERE code = ?', [$code]))]);
     json_ok([], 'Business details saved.');
 }
 
 // General settings: only keys that already exist can be updated
-$known = array_flip(array_keys(settings_all(true)));
-$n = 0;
+$before = settings_all(true);
+$known = array_flip(array_keys($before));
+$types = array_column(db_all('SELECT setting_key, value_type FROM settings'), 'value_type', 'setting_key');
+$save = [];
+// Check everything first: one bad value saves nothing (no half-saved settings)
 foreach ((array) input('s', []) as $key => $value) {
     if (!isset($known[$key])) {
         continue;
     }
     $value = mb_substr(trim((string) $value), 0, 5000);
+    if (($types[$key] ?? '') === 'int' && $value !== '' && !preg_match('/^\d{1,9}$/', $value)) {
+        json_error(t('error.validation'), 422, ["s[{$key}]" => 'Enter a whole number.']);
+    }
     if ($key === 'announcement_link' && $value !== '' && !preg_match('#^(https://|/(?![/\\\\]))#i', $value)) {
         json_error(t('error.validation'), 422, ["s[{$key}]" => 'The link must start with https:// or be a page on this site (e.g. /feeds/specials.php).']);
     }
@@ -82,8 +89,10 @@ foreach ((array) input('s', []) as $key => $value) {
             json_error(t('error.validation'), 422, ["s[{$key}]" => 'Links must start with https://']);
         }
     }
-    setting_set((string) $key, $value);
-    $n++;
+    $save[(string) $key] = $value;
 }
-audit('settings.saved', null, null, ['count' => $n]);
+foreach ($save as $key => $value) {
+    setting_set($key, $value);
+}
+audit('settings.saved', null, null, ['changes' => audit_diff(array_intersect_key($before, $save), $save)]);
 json_ok([], 'Settings saved.');

@@ -7,7 +7,7 @@ require __DIR__ . '/../includes/bootstrap.php';
 $customer = require_customer();
 $alerts = db_all('SELECT a.*, b.name AS breed_name, c.name AS category_name FROM livestock_alerts a
                   LEFT JOIN breeds b ON b.id = a.breed_id LEFT JOIN livestock_categories c ON c.id = a.category_id
-                  WHERE (a.customer_id = ? OR a.email = ?) ORDER BY a.is_active DESC, a.id DESC', [$customer['id'], $customer['email']]);
+                  WHERE (a.customer_id = ? OR a.email = ?) ORDER BY a.is_active DESC, a.id DESC', [$customer['id'], customer_verified_email($customer)]);
 $breeds = LivestockService::breeds();
 $cats = LivestockService::categories();
 
@@ -33,7 +33,7 @@ require GX_ROOT . '/includes/layout/header.php';
         <div class="order-list">
           <?php foreach ($alerts as $a): ?>
             <div class="order-row" style="cursor:default">
-              <div><div class="or-no"><?= e($a['breed_name'] ?? 'Any breed') ?> · <?= e($a['category_name'] ?? 'any type') ?></div><div class="or-meta"><?= $a['last_notified_at'] ? 'Last alert ' . e(fmt_date($a['last_notified_at'])) : 'No alerts sent yet' ?></div></div>
+              <div><div class="or-no"><?= e($a['breed_name'] ?? 'Any breed') ?> · <?= e($a['category_name'] ?? 'any type') ?></div><div class="or-meta"><?= !$a['confirmed_at'] ? 'Waiting for you to confirm — check your inbox' : ($a['last_notified_at'] ? 'Last alert ' . e(fmt_date($a['last_notified_at'])) : 'No alerts sent yet') ?></div></div>
               <div><button class="btn btn-sm<?= $a['is_active'] ? '' : ' btn-primary' ?>" type="button" data-act="/account/api/alerts.php" data-payload='<?= e(json_encode(['action' => 'toggle', 'id' => (int) $a['id']])) ?>'><?= $a['is_active'] ? 'Pause' : 'Resume' ?></button>
                 <button class="btn btn-sm btn-ghost" type="button" data-act="/account/api/alerts.php" data-payload='<?= e(json_encode(['action' => 'delete', 'id' => (int) $a['id']])) ?>'>Delete</button></div>
             </div>

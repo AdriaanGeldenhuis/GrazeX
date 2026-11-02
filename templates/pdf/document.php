@@ -1,7 +1,8 @@
 <?php
 /**
  * PDF template for every document type (rendered by Dompdf).
- * Vars: $doc (documents row), $lines (document_lines), $snap (snapshot array), $copy (bool)
+ * Vars: $doc (documents row), $lines (document_lines), $snap (snapshot array), $copy (bool),
+ *       $live (the order as it is now: status, amount_paid_cents — only for the "how to pay" note; optional)
  */
 defined('GX_ROOT') || exit;
 
@@ -14,6 +15,16 @@ $accent = $isRanch ? '#5e9a12' : '#ff7a00';
 $logo = GX_ROOT . '/assets/img/brand/pdf-' . ($isRanch ? 'ranch' : 'feeds') . '.png';
 $isMoneyDoc = in_array($type, ['order_confirmation', 'tax_invoice', 'invoice', 'receipt', 'credit_note', 'debit_note'], true);
 $vatReg = !empty($s['vat_registered']);
+// A receipt records money received — it is not a tax invoice, so it shows no VAT breakdown
+$showVat = $vatReg && $type !== 'receipt';
+// VAT label from the rates on the lines (one rate → "VAT (15%)"; mixed or none → "VAT")
+$vatRates = array_values(array_unique(array_filter(array_map(static fn($l) => (int) $l['vat_rate_bp'], $lines))));
+$vatLabel = count($vatRates) === 1 ? 'VAT (' . rtrim(rtrim(number_format($vatRates[0] / 100, 2, '.', ''), '0'), '.') . '%)' : 'VAT';
+$balanceDue = in_array($type, ['tax_invoice', 'invoice'], true) ? max(0, (int) $doc['total_cents'] - (int) ($o['amount_paid_cents'] ?? 0)) : 0;
+// "Pay the balance by EFT" only while money is really still owed (the PDF is re-rendered on every download)
+$live = $live ?? null;
+$owedNow = $live && $balanceDue > 0 && !in_array($live['status'], ['cancelled', 'expired', 'refunded', 'completed'], true)
+    ? max(0, (int) $doc['total_cents'] - (int) $live['amount_paid_cents']) : 0;
 $title = $snap['title'] ?? strtoupper($type);
 $r = static fn(int $c) => money($c);
 ?><!doctype html>
@@ -100,17 +111,17 @@ $r = static fn(int $c) => money($c);
 <?php if ($isMoneyDoc): ?>
   <table class="lines">
     <thead><tr>
-      <th style="width:46%">Description</th><th class="num">Qty</th><th class="num">Unit price<?= $vatReg ? ' (incl)' : '' ?></th>
-      <?php if ($vatReg): ?><th class="num">Excl VAT</th><th class="num">VAT</th><?php endif; ?>
+      <th style="width:46%">Description</th><th class="num">Qty</th><th class="num">Unit price<?= $showVat ? ' (incl)' : '' ?></th>
+      <?php if ($showVat): ?><th class="num">Excl VAT</th><th class="num">VAT</th><?php endif; ?>
       <th class="num">Amount</th>
     </tr></thead>
     <tbody>
     <?php foreach ($lines as $l): ?>
       <tr>
-        <td><?= e($l['description']) ?><?= $l['zero_rated'] && $vatReg ? ' <span class="muted">(zero-rated)</span>' : '' ?></td>
+        <td><?= e($l['description']) ?><?= $l['zero_rated'] && $showVat ? ' <span class="muted">(zero-rated)</span>' : '' ?></td>
         <td class="num"><?= e(rtrim(rtrim(number_format((float) $l['qty'], 2, '.', ' '), '0'), '.')) ?><?= $l['unit'] && $l['unit'] !== 'unit' ? ' ' . e($l['unit']) : '' ?></td>
         <td class="num"><?= e($r((int) $l['unit_price_incl_cents'])) ?></td>
-        <?php if ($vatReg): ?><td class="num"><?= e($r((int) $l['line_excl_cents'])) ?></td><td class="num"><?= e($r((int) $l['line_vat_cents'])) ?></td><?php endif; ?>
+        <?php if ($showVat): ?><td class="num"><?= e($r((int) $l['line_excl_cents'])) ?></td><td class="num"><?= e($r((int) $l['line_vat_cents'])) ?></td><?php endif; ?>
         <td class="num"><?= e($r((int) $l['line_incl_cents'])) ?></td>
       </tr>
     <?php endforeach; ?>
@@ -118,16 +129,24 @@ $r = static fn(int $c) => money($c);
   </table>
 
   <table class="totals">
-    <?php if ($vatReg): ?>
+    <?php if ($showVat): ?>
       <tr><td>Total excl. VAT</td><td class="num"><?= e($r((int) $doc['subtotal_excl_cents'])) ?></td></tr>
-      <tr><td>VAT (<?= e(number_format(((int) ($lines[0]['vat_rate_bp'] ?? 1500) ?: 1500) / 100, 0)) ?>%)</td><td class="num"><?= e($r((int) $doc['vat_cents'])) ?></td></tr>
+      <tr><td><?= e($vatLabel) ?></td><td class="num"><?= e($r((int) $doc['vat_cents'])) ?></td></tr>
     <?php endif; ?>
-    <tr class="grand"><td><?= $type === 'receipt' ? 'Amount received' : ($type === 'credit_note' ? 'Total credit' : 'Total' . ($vatReg ? ' incl. VAT' : '')) ?></td><td class="num"><?= e($r((int) $doc['total_cents'])) ?></td></tr>
+    <tr class="grand"><td><?= $type === 'receipt' ? 'Amount received' : ($type === 'credit_note' ? 'Total credit' : 'Total' . ($showVat ? ' incl. VAT' : '')) ?></td><td class="num"><?= e($r((int) $doc['total_cents'])) ?></td></tr>
     <?php if (in_array($type, ['tax_invoice', 'invoice'], true)): ?>
       <tr><td class="muted">Paid to date</td><td class="num muted"><?= e($r((int) ($o['amount_paid_cents'] ?? 0))) ?></td></tr>
-      <tr><td><strong>Balance due</strong></td><td class="num"><strong><?= e($r(max(0, (int) $doc['total_cents'] - (int) ($o['amount_paid_cents'] ?? 0)))) ?></strong></td></tr>
+      <tr><td><strong>Balance due</strong></td><td class="num"><strong><?= e($r($balanceDue)) ?></strong></td></tr>
     <?php endif; ?>
   </table>
+
+  <?php if ($owedNow > 0 && !empty($s['bank']['account_no'])): ?>
+    <div class="note">
+      <strong>Pay the balance by EFT</strong> — <?= e($s['bank']['bank']) ?> · Account name: <?= e($s['bank']['account_name']) ?> · Account no: <?= e($s['bank']['account_no']) ?>
+      · Branch: <?= e($s['bank']['branch_code']) ?><?= $s['bank']['account_type'] ? ' · ' . e($s['bank']['account_type']) : '' ?><br>
+      <strong>Reference: <?= e($o['order_no'] ?? $doc['doc_no']) ?></strong>
+    </div>
+  <?php endif; ?>
 
   <?php if ($type === 'credit_note'): ?>
     <div class="note"><strong>Reason:</strong> <?= e(ucfirst(str_replace('_', ' ', (string) $doc['reason_code']))) ?> — <?= e($doc['explanation']) ?></div>
@@ -157,12 +176,13 @@ $r = static fn(int $c) => money($c);
 <?php elseif ($type === 'doc_identification'): ?>
   <h4>Livestock delivered</h4>
   <table class="lines">
-    <thead><tr><th>Number</th><th>Kind</th><th>Breed</th><th>Sex / class</th><th>Description, tags &amp; marks</th></tr></thead>
+    <thead><tr><th>Number</th><th>Kind</th><th>Breed</th><th>Sex / class</th><th>Age</th><th>Description, tags &amp; marks</th></tr></thead>
     <tbody>
     <?php foreach ($snap['lots'] ?? [] as $lot): ?>
       <tr>
-        <td><strong><?= (int) $lot['qty'] ?></strong></td><td>Sheep</td><td><?= e($lot['breed']) ?></td>
+        <td><strong><?= (int) $lot['qty'] ?></strong></td><td><?= e(($lot['kind'] ?? '') ?: 'Sheep') ?></td><td><?= e($lot['breed']) ?></td>
         <td><?= e(LivestockService::sexLabel((string) $lot['sex'])) ?> · <?= e($lot['category']) ?></td>
+        <td><?= e(LivestockService::ageLabel(['age_months_min' => $lot['age_months_min'] ?? null, 'age_months_max' => $lot['age_months_max'] ?? null]) ?? '—') ?></td>
         <td><?= e($lot['title']) ?> (lot <?= e($lot['lot_no']) ?>)<?= $lot['tag_no'] ? '<br>Tag: ' . e($lot['tag_no']) : '' ?><?= !empty($s['brand_mark']) ? '<br>Seller\'s mark: ' . e($s['brand_mark']) : '' ?></td>
       </tr>
     <?php endforeach; ?>

@@ -41,7 +41,7 @@ final class MailService
         $sent = 0;
         foreach ($rows as $row) {
             // Claim the row so parallel runs never double-send
-            if (db_exec("UPDATE email_queue SET status = 'sending', attempts = attempts + 1 WHERE id = ? AND status = 'queued'", [$row['id']]) !== 1) {
+            if (db_exec("UPDATE email_queue SET status = 'sending', attempts = attempts + 1, claimed_at = NOW() WHERE id = ? AND status = 'queued'", [$row['id']]) !== 1) {
                 continue;
             }
             try {
@@ -65,7 +65,7 @@ final class MailService
             return;
         }
         $row = db_one("SELECT * FROM email_queue WHERE id = ? AND status = 'queued'", [$queueId]);
-        if (!$row || db_exec("UPDATE email_queue SET status = 'sending', attempts = attempts + 1 WHERE id = ? AND status = 'queued'", [$queueId]) !== 1) {
+        if (!$row || db_exec("UPDATE email_queue SET status = 'sending', attempts = attempts + 1, claimed_at = NOW() WHERE id = ? AND status = 'queued'", [$queueId]) !== 1) {
             return;
         }
         try {
@@ -75,6 +75,16 @@ final class MailService
             db_exec("UPDATE email_queue SET status = 'queued', last_error = ?, send_after = NOW() + INTERVAL 5 MINUTE WHERE id = ?", [mb_substr($e->getMessage(), 0, 500), $queueId]);
             gx_log('warning', 'Immediate email failed', ['id' => $queueId, 'error' => $e->getMessage()]);
         }
+    }
+
+    /** One-click unsubscribe headers (RFC 8058) for alert emails — Gmail and Yahoo require them for bulk mail. */
+    public static function extraHeaders(array $row): array
+    {
+        $url = (string) ($row['list_unsubscribe'] ?? '');
+        if (!preg_match('#^https?://[^\s<>]+$#', $url)) {
+            return [];
+        }
+        return ['List-Unsubscribe' => '<' . $url . '>', 'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click'];
     }
 
     public static function configured(): bool
@@ -99,6 +109,9 @@ final class MailService
         $m->addReplyTo((string) (setting('contact_email') ?: env('mail.from_email')), (string) env('mail.from_name', 'GrazeX'));
         $m->addAddress($row['to_email'], (string) ($row['to_name'] ?? ''));
         $m->Subject = $row['subject'];
+        foreach (self::extraHeaders($row) as $name => $value) {
+            $m->addCustomHeader($name, $value);
+        }
         $m->isHTML(true);
         $m->Body = $row['body_html'];
         $m->AltBody = $row['body_text'] ?: trim(html_entity_decode(strip_tags(str_replace(['<br>', '</p>', '</h2>', '</li>'], "\n", $row['body_html']))));

@@ -101,6 +101,7 @@ try {
     json_error($e->getMessage(), 422);
 }
 
+$before = $id ? db_one("SELECT * FROM {$table} WHERE id = ?", [$id]) : null;
 try {
     $id = db_tx(static function () use ($table, $cols, $vals, $id, $children): int {
         if ($id) {
@@ -122,5 +123,5 @@ try {
     }
     throw $e;
 }
-audit('manage.saved', $table, $id);
+audit($before ? 'manage.saved' : 'manage.created', $table, $id, ['changes' => audit_diff($before, db_one("SELECT * FROM {$table} WHERE id = ?", [$id]))]);
 json_ok(['redirect' => '/admin/manage.php?e=' . $key], 'Saved.');

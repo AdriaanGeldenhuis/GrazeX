@@ -12,6 +12,15 @@ function customer_id(): ?int
     return $c ? (int) $c['id'] : null;
 }
 
+/**
+ * The customer's email for matching records made without logging in (alerts, enquiries) — only once they have
+ * proved they own it. Until then anyone could register with someone else's address and see that person's data.
+ */
+function customer_verified_email(array $customer): ?string
+{
+    return !empty($customer['email_verified_at']) ? (string) $customer['email'] : null;
+}
+
 function current_customer(bool $refresh = false): ?array
 {
     static $cache = false;

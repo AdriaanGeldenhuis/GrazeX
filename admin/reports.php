@@ -7,7 +7,8 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
-require_admin('reports.view');
+require_once GX_ROOT . '/includes/admin_filters.php';
+
 $from = preg_match('/^\d{4}-\d{2}-\d{2}$/', query_str('from')) ? query_str('from') : date('Y-m-01');
 $to = preg_match('/^\d{4}-\d{2}-\d{2}$/', query_str('to')) ? query_str('to') : date('Y-m-d');
 $range = [$from . ' 00:00:00', $to . ' 23:59:59'];
@@ -18,6 +19,18 @@ $live = "o.status NOT IN ('cancelled','expired','refunded')";
 // ---------------- CSV exports ----------------
 $export = query_str('export');
 if ($export !== '') {
+    // Each export has its own permission (the list page it comes from). "Reports" also covers the invoice and stock
+    // exports for the bookkeeper, but exports with buyers' email and phone (orders, customers) need their own permission.
+    require_admin();
+    $need = ['orders' => 'orders.view', 'documents' => 'documents.view', 'customers' => 'customers.view', 'stock' => 'inventory.manage'][$export] ?? null;
+    if ($need === null) {
+        http_response_code(400);
+        exit('Unknown export.');
+    }
+    if (!admin_can($need) && (in_array($export, ['customers', 'orders'], true) || !admin_can('reports.view'))) {
+        http_response_code(403);
+        exit('You do not have permission for this export.');
+    }
     $csv = static function (string $name, array $head, array $rows): never {
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="grazex-' . $name . '-' . date('Ymd') . '.csv"');
@@ -25,26 +38,27 @@ if ($export !== '') {
         fwrite($out, "\xEF\xBB\xBF"); // Excel-friendly UTF-8
         fputcsv($out, $head, ',', '"', '');
         foreach ($rows as $r) {
-            fputcsv($out, array_map(static fn($v) => is_string($v) && preg_match('/^[=+\-@]/', $v) ? "'" . $v : $v, array_values($r)), ',', '"', '');
+            // Text that a spreadsheet would run as a formula gets a leading ' — numbers (including negative amounts) stay numbers
+            fputcsv($out, array_map(static fn($v) => is_string($v) && !is_numeric($v) && preg_match('/^[=+\-@\t\r]/', $v) ? "'" . $v : $v, array_values($r)), ',', '"', '');
         }
         exit;
     };
     $r = static fn(int $c) => number_format($c / 100, 2, '.', '');
-    if ($export === 'customers' && !admin_can('customers.view')) {
-        http_response_code(403);
-        exit('You do not have permission to export customers.');
-    }
-    audit('report.export', null, null, ['type' => $export]);
+    audit('report.export', null, null, ['type' => $export, 'filters' => array_filter(array_diff_key($_GET, ['export' => 1]), 'is_string')]);
     switch ($export) {
         case 'orders':
-            $rows = db_all("SELECT o.order_no, d.name, o.placed_at, o.status, o.payment_status, o.payment_method, o.fulfilment, o.billing_name, o.billing_email, o.billing_phone,
+            // Same filters as the Orders page (status, division, method, queue, search, dates)
+            [, $where, $params] = admin_order_filters($_GET, $ids);
+            $rows = db_all('SELECT o.order_no, d.name, o.placed_at, o.status, o.payment_status, o.payment_method, o.fulfilment, o.billing_name, o.billing_email, o.billing_phone,
                             o.subtotal_cents, o.discount_cents, o.delivery_cents, o.vat_cents, o.total_cents, o.amount_paid_cents
-                            FROM orders o JOIN divisions d ON d.id = o.division_id WHERE o.division_id IN ({$in}) AND o.placed_at BETWEEN ? AND ? ORDER BY o.placed_at", array_merge($ids, $range));
+                            FROM orders o JOIN divisions d ON d.id = o.division_id WHERE ' . implode(' AND ', $where) . ' ORDER BY o.placed_at', $params);
             $csv('orders', ['Order', 'Division', 'Placed', 'Status', 'Payment status', 'Method', 'Fulfilment', 'Name', 'Email', 'Phone', 'Subtotal', 'Discount', 'Delivery', 'VAT', 'Total', 'Paid'],
                 array_map(static fn($x) => array_merge(array_slice($x, 0, 10), array_map($r, array_map('intval', array_slice($x, 10)))), $rows));
         case 'documents':
-            $rows = db_all("SELECT d.issued_at, d.doc_type, d.doc_no, o.order_no, o.billing_name, o.billing_vat_no, d.subtotal_excl_cents, d.vat_cents, d.total_cents
-                            FROM documents d JOIN orders o ON o.id = d.order_id WHERE d.division_id IN ({$in}) AND d.issued_at BETWEEN ? AND ? AND d.doc_type IN ('tax_invoice','invoice','credit_note','receipt') ORDER BY d.issued_at", array_merge($ids, $range));
+            // Financial documents only, never voided ones; same filters as the Documents page
+            [, $where, $params] = admin_document_filters($_GET, $ids, ['tax_invoice', 'invoice', 'credit_note', 'receipt']);
+            $rows = db_all('SELECT d.issued_at, d.doc_type, d.doc_no, o.order_no, o.billing_name, o.billing_vat_no, d.subtotal_excl_cents, d.vat_cents, d.total_cents
+                            FROM documents d JOIN orders o ON o.id = d.order_id WHERE ' . implode(' AND ', $where) . ' ORDER BY d.issued_at', $params);
             $csv('documents', ['Date', 'Type', 'Number', 'Order', 'Customer', 'Customer VAT no', 'Excl VAT', 'VAT', 'Total'],
                 array_map(static fn($x) => array_merge(array_slice($x, 0, 6), array_map($r, array_map('intval', array_slice($x, 6)))), $rows));
         case 'customers':
@@ -54,11 +68,10 @@ if ($export !== '') {
             $rows = db_all('SELECT p.name, v.name AS size, v.sku, v.stock_qty, v.cost_cents, v.price_cents FROM product_variants v JOIN products p ON p.id = v.product_id WHERE v.is_active = 1 ORDER BY p.name');
             $csv('stock', ['Product', 'Size', 'SKU', 'In stock', 'Cost', 'Price', 'Value at cost'], array_map(static fn($x) => [$x['name'], $x['size'], $x['sku'], $x['stock_qty'],
                 $r((int) $x['cost_cents']), $r((int) $x['price_cents']), $r(max(0, (int) $x['stock_qty']) * (int) $x['cost_cents'])], $rows));
-        default:
-            http_response_code(400);
-            exit('Unknown export.');
     }
 }
+
+require_admin('reports.view');
 
 // ---------------- On-screen reports ----------------
 $byDiv = db_all("SELECT d.name, COUNT(*) n, SUM(o.total_cents) total, SUM(o.vat_cents) vat, SUM(o.amount_paid_cents) paid
@@ -84,10 +97,11 @@ admin_start('Reports', 'reports', ['perm' => 'reports.view']);
   <button class="btn btn-sm" type="submit">Update</button>
   <a class="chip" href="/admin/reports.php?from=<?= date('Y-m-01') ?>&amp;to=<?= date('Y-m-d') ?>">This month</a>
   <a class="chip" href="/admin/reports.php?from=<?= date('Y-m-01', strtotime('first day of last month')) ?>&amp;to=<?= date('Y-m-t', strtotime('last day of last month')) ?>">Last month</a>
-  <a class="chip" href="/admin/reports.php?from=<?= date('Y') ?>-03-01&amp;to=<?= date('Y-m-d') ?>">Tax year (from 1 Mar)</a>
+  <?php $taxYear = (int) date('n') >= 3 ? (int) date('Y') : (int) date('Y') - 1; /* SA tax year starts 1 March */ ?>
+  <a class="chip" href="/admin/reports.php?from=<?= $taxYear ?>-03-01&amp;to=<?= date('Y-m-d') ?>">Tax year (from 1 Mar <?= $taxYear ?>)</a>
 </form>
 <div class="row mb-3">
-  <a class="btn btn-sm" href="/admin/reports.php?export=orders&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Orders CSV</a>
+  <?php if (admin_can('orders.view')): ?><a class="btn btn-sm" href="/admin/reports.php?export=orders&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Orders CSV</a><?php endif; ?>
   <a class="btn btn-sm" href="/admin/reports.php?export=documents&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Invoices &amp; credit notes CSV (for your accountant)</a>
   <a class="btn btn-sm" href="/admin/reports.php?export=stock"><svg class="icon icon-sm"><use href="#i-download"/></svg>Stock valuation CSV</a>
   <?php if (admin_can('customers.view')): ?><a class="btn btn-sm" href="/admin/reports.php?export=customers"><svg class="icon icon-sm"><use href="#i-download"/></svg>Customers CSV</a><?php endif; ?>

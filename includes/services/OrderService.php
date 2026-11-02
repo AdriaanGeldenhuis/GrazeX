@@ -304,6 +304,11 @@ final class OrderService
                 $in['customer_note'] ?? null, $hold, random_token(32),
             ]);
 
+            // The terms the buyer accepted for this order (checkout requires the tick box)
+            if (!empty($in['accept_terms'])) {
+                db_exec('UPDATE orders SET terms_accepted_at = NOW(), terms_version = ? WHERE id = ?', [terms_version(), $orderId]);
+            }
+
             // 3. Items + stock deduction (ledger)
             foreach ($quote['lines'] as $l) {
                 $row = $locked[(int) $l['target_id']];
@@ -552,15 +557,24 @@ final class OrderService
         try {
             $receiptId = DocumentService::issue((int) $o['id'], 'receipt', ['payment_id' => $paymentId]);
             $attach = DocumentService::attachment($receiptId);
+            $names = $attach ? ['receipt'] : [];
             // Feeds: invoice as soon as fully paid. Ranch: invoice at finalisation (weights known).
             if ((int) $o['division_id'] === division_id('feeds') && $o['payment_status'] === 'paid') {
                 $invId = DocumentService::issue((int) $o['id'], 'tax_invoice');
-                $attach = array_merge($attach, DocumentService::attachment($invId));
+                $invAttach = DocumentService::attachment($invId);
+                if ($invAttach) {
+                    $attach = array_merge($attach, $invAttach);
+                    $names[] = db_val('SELECT doc_type FROM documents WHERE id = ?', [$invId]) === 'tax_invoice' ? 'tax invoice' : 'invoice';
+                }
             }
+            // Say exactly which documents are attached (a deposit only gets a receipt)
+            $docsNote = $names ? 'Your ' . implode(' and ', $names) . (count($names) > 1 ? ' are' : ' is') . ' attached.'
+                               : 'Your documents are available under "My orders" in your account.';
             $pay = db_one('SELECT amount_cents FROM payments WHERE id = ?', [$paymentId]);
             $customer = db_one('SELECT first_name FROM customers WHERE id = ?', [$o['customer_id']]);
             NotificationService::email('payment_received', $o['billing_email'], $o['billing_name'], [
                 'first_name' => $customer['first_name'] ?? '', 'order_no' => $o['order_no'], 'amount' => money((int) $pay['amount_cents']),
+                'docs_note_md' => $docsNote,
             ], (int) $o['division_id'], $attach, ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))]);
         } catch (Throwable $e) {
             gx_log('error', 'After-payment tasks failed', ['order' => $o['order_no'], 'error' => $e->getMessage()]);
@@ -599,6 +613,10 @@ final class OrderService
         }
         if (in_array($to, ['completed', 'collected'], true) && self::amountDue($o) > 0 && $o['status'] !== 'collected') {
             throw new DomainException('This order still has ' . money(self::amountDue($o)) . ' outstanding. Record the payment first.');
+        }
+        // Animals may only leave with a document of identification, which needs the ranch's brand mark
+        if ($to === 'collected' && (int) $o['division_id'] === division_id('ranch')) {
+            DocumentService::assertCanIdentify();
         }
 
         db_tx(static function () use ($o, $to, $note, $adminId): void {
@@ -814,24 +832,56 @@ final class OrderService
     // Expiry (lazy — Xneelo cron only runs every 2 hours)
     // -----------------------------------------------------------------
 
-    /** Run expireDue() at most every 5 minutes, triggered from normal page loads. */
+    /** Run the expiry at most every 5 minutes, triggered from normal page loads. */
     public static function maybeExpire(): void
     {
-        $last = (int) setting('last_expiry_run', '0');
-        if (time() - $last < 300) {
+        if (time() - (int) setting('last_expiry_run', '0') < 300) {
             return;
         }
         try {
-            setting_set('last_expiry_run', (string) time());
-            self::expireDue();
-            self::sendReminders();
+            if (!gx_lock('expiry')) {
+                return; // another request (or cron) is busy with it
+            }
+            try {
+                // Re-read under the lock: another request may have just finished a run
+                if (time() - (int) db_val("SELECT setting_value FROM settings WHERE setting_key = 'last_expiry_run'") < 300) {
+                    return;
+                }
+                setting_set('last_expiry_run', (string) time());
+                self::expireDue();
+                self::sendReminders();
+            } finally {
+                gx_unlock('expiry');
+            }
             MailService::processQueue(5);
         } catch (Throwable $e) {
             gx_log('error', 'Expiry run failed: ' . $e->getMessage());
         }
     }
 
+    /** Expiry + EFT reminders for cron, never at the same time as a page-load run. */
+    public static function runExpiry(int $limit = 200): string
+    {
+        if (!gx_lock('expiry', 10)) {
+            return 'busy (a page load is running it)';
+        }
+        try {
+            setting_set('last_expiry_run', (string) time());
+            $n = self::expireDue($limit);
+            $r = self::sendReminders();
+            return $n . ' expired, ' . $r . ' reminders';
+        } finally {
+            gx_unlock('expiry');
+        }
+    }
+
     public static function expireDue(int $limit = 25): int
+    {
+        // Expiry is the system's doing, not the admin / customer whose page load happened to trigger it
+        return gx_as_system(static fn(): int => self::expireDueNow($limit));
+    }
+
+    private static function expireDueNow(int $limit): int
     {
         // Part-paid orders are never released automatically: tell the admin once, then stop the clock
         foreach (db_all("SELECT id, order_no, division_id, amount_paid_cents, total_cents, deposit_due_cents FROM orders
@@ -861,21 +911,27 @@ final class OrderService
         return $n;
     }
 
-    /** EFT payment reminders. */
-    public static function sendReminders(): void
+    /** EFT payment reminders. Returns the number sent. */
+    public static function sendReminders(): int
     {
         $hours = setting_int('eft_reminder_hours', 24);
         $rows = db_all("SELECT o.*, c.first_name FROM orders o JOIN customers c ON c.id = o.customer_id
                         WHERE o.status IN ('pending_payment','reserved') AND o.payment_status = 'unpaid' AND o.payment_method = 'eft'
                         AND o.reminder_sent_at IS NULL AND o.placed_at < NOW() - INTERVAL ? HOUR AND o.hold_expires_at > NOW()
                         AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'awaiting_verification') LIMIT 25", [$hours]);
+        $sent = 0;
         foreach ($rows as $o) {
-            db_exec('UPDATE orders SET reminder_sent_at = NOW() WHERE id = ?', [$o['id']]);
+            // Claim the reminder first: of two overlapping runs, only one sends it
+            if (db_exec('UPDATE orders SET reminder_sent_at = NOW() WHERE id = ? AND reminder_sent_at IS NULL', [$o['id']]) !== 1) {
+                continue;
+            }
+            $sent++;
             NotificationService::email('payment_reminder', $o['billing_email'], $o['billing_name'], [
                 'first_name' => $o['first_name'], 'order_no' => $o['order_no'], 'expires_at' => fmt_datetime($o['hold_expires_at']),
                 'amount_due' => money(self::amountDue($o)), 'bank_details_md' => self::bankDetailsMd($o),
             ], (int) $o['division_id'], [], ['label' => 'Upload proof of payment', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], false);
         }
+        return $sent;
     }
 }
 

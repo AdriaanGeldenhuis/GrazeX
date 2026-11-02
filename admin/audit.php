@@ -14,7 +14,7 @@ admin_start('Audit log', 'audit', ['perm' => 'audit.view']);
   <thead><tr><th>When</th><th>Who</th><th>What</th><th>Item</th><th>IP</th></tr></thead>
   <tbody><?php foreach ($rows as $r): ?>
     <tr><td data-label=""><?= e(fmt_datetime($r['created_at'])) ?></td><td data-label=""><?= e($r['admin_name'] ?? $r['customer_name'] ?? $r['actor_type']) ?></td>
-      <td data-label=""><code><?= e($r['action']) ?></code><?= $r['details'] ? '<br><span class="tiny dim">' . e(str_limit($r['details'], 120)) . '</span>' : '' ?></td>
+      <td data-label=""><code><?= e($r['action']) ?></code><?php if ($r['details']): ?><details class="tiny dim"><summary><?= e(str_limit($r['details'], 120)) ?></summary><pre style="white-space:pre-wrap;margin:6px 0 0"><?= e((string) json_encode(json_decode($r['details'], true), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) ?></pre></details><?php endif; ?></td>
       <td data-label=""><?= e($r['entity_type'] ?? '') ?> <?= $r['entity_id'] ? '#' . (int) $r['entity_id'] : '' ?></td><td data-label=""><?= e($r['ip'] ?? '') ?></td></tr>
   <?php endforeach; ?></tbody>
 </table></div>

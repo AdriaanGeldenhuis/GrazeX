@@ -5,9 +5,9 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
-$items = db_all('SELECT m.*, (SELECT COUNT(*) FROM product_media pm WHERE pm.media_id = m.id) + (SELECT COUNT(*) FROM lot_media lm WHERE lm.media_id = m.id)
-                 + (SELECT COUNT(*) FROM content_blocks cb WHERE cb.media_id = m.id) + (SELECT COUNT(*) FROM gallery_items g WHERE g.media_id = m.id) AS uses
+$items = db_all('SELECT m.*, ' . media_uses_sql('m.id') . ' AS uses
                  FROM media m ORDER BY m.id DESC LIMIT 300');
+media_prime(array_column($items, 'id'));
 admin_start('Media', 'media', ['perm' => 'media.manage']);
 ?>
 <p class="muted small">Every photo is converted to .webp in 3 sizes plus 16:9 crops. Tap ◎ to change what stays in frame.</p>

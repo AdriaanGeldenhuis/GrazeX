@@ -14,16 +14,47 @@ $in = input_all();
 
 if (($in['action'] ?? '') === 'delete') {
     $id = (int) ($in['id'] ?? 0);
-    $hasSales = (bool) db_val('SELECT 1 FROM order_items oi JOIN product_variants v ON v.id = oi.variant_id WHERE v.product_id = ? LIMIT 1', [$id]);
-    if ($hasSales) {
+    $deleted = db_tx(static function () use ($id): bool {
+        // Lock the sizes first (checkout locks them too): an order placed right now lands either before the check
+        // (and the product is hidden) or after the delete (and finds it gone) — never lost in between
+        db_col('SELECT id FROM product_variants WHERE product_id = ? FOR UPDATE', [$id]);
+        // Sales, stock received or stock movements are part of the books: never delete those, hide the product
+        $history = (bool) db_val('SELECT 1 FROM product_variants v WHERE v.product_id = ? AND (
+                    EXISTS (SELECT 1 FROM order_items oi WHERE oi.variant_id = v.id)
+                 OR EXISTS (SELECT 1 FROM stock_receipt_items ri WHERE ri.variant_id = v.id)
+                 OR EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.variant_id = v.id)) LIMIT 1', [$id]);
+        if (!$history) {
+            try {
+                db_exec('DELETE FROM products WHERE id = ?', [$id]);
+                return true;
+            } catch (PDOException $e) {
+                if ((int) ($e->errorInfo[1] ?? 0) !== 1451) {
+                    throw $e;
+                }
+                // still referenced somewhere: hide instead
+            }
+        }
         db_exec('UPDATE products SET is_active = 0 WHERE id = ?', [$id]);
+        return false;
+    });
+    if (!$deleted) {
         audit('product.hidden', 'product', $id);
-        json_ok(['redirect' => '/admin/products.php'], 'This product has sales history, so it was hidden instead of deleted.');
+        json_ok(['redirect' => '/admin/products.php'], 'This product has sales or stock history, so it was hidden instead of deleted.');
     }
-    db_exec('DELETE FROM products WHERE id = ?', [$id]);
     audit('product.deleted', 'product', $id);
     json_ok(['redirect' => '/admin/products.php'], 'Product deleted.');
 }
+
+/** The fields worth tracking in the activity log (product + each size). */
+$snapshot = static function (int $id): array {
+    $p = db_one('SELECT category_id, brand_id, slug, name, reg_no, zero_rate_eligible, is_featured, is_active, sort_order FROM products WHERE id = ?', [$id]);
+    $v = [];
+    foreach (db_all('SELECT id, name, sku, price_cents, special_price_cents, special_from, special_to, cost_cents, low_stock_threshold, is_active
+                     FROM product_variants WHERE product_id = ?', [$id]) as $r) {
+        $v[(int) $r['id']] = $r;
+    }
+    return [$p, $v];
+};
 
 $d = validate_or_fail($in, [
     'name' => 'required|max:191', 'slug' => 'nullable|max:150', 'category_id' => 'required|int|min:1', 'brand_id' => 'nullable|int',
@@ -39,6 +70,7 @@ $variants = array_values(array_filter((array) ($in['variants'] ?? []), static fn
 if (!$variants) {
     json_error('Add at least one size with a price.', 422);
 }
+[$beforeP, $beforeV] = $id ? $snapshot($id) : [null, []];
 
 try {
     $id = db_tx(static function () use ($d, $in, $id, $slug, $variants, $admin): int {
@@ -138,5 +170,14 @@ try {
 } catch (DomainException $e) {
     json_error($e->getMessage(), 422);
 }
-audit('product.saved', 'product', $id, ['name' => $d['name']]);
+// Activity log: what changed (prices especially), not just "saved"
+[$afterP, $afterV] = $snapshot($id);
+$sizes = [];
+foreach (array_keys($beforeV + $afterV) as $vid) {
+    if ($diff = audit_diff($beforeV[$vid] ?? null, $afterV[$vid] ?? null, ['id'])) {
+        $sizes[$vid] = $diff;
+    }
+}
+$changes = array_filter(['product' => audit_diff($beforeP, $afterP), 'sizes' => $sizes]);
+audit($beforeP ? 'product.saved' : 'product.created', 'product', $id, ['name' => $d['name']] + $changes);
 json_ok(['redirect' => '/admin/product.php?id=' . $id], 'Product saved.');

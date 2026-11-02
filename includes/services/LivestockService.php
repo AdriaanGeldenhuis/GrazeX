@@ -70,6 +70,7 @@ final class LivestockService
                 (SELECT MAX(ws.weighed_on) FROM weigh_sessions ws WHERE ws.lot_id = l.id) AS last_weighed
             FROM lots l JOIN breeds b ON b.id = l.breed_id JOIN livestock_categories c ON c.id = l.category_id
             WHERE {$sqlWhere} ORDER BY {$order} LIMIT {$perPage} OFFSET " . (($page - 1) * $perPage), $params);
+        media_prime(array_column($items, 'media_id'));
 
         return ['items' => $items, 'total' => $total, 'page' => $page, 'pages' => max(1, (int) ceil($total / $perPage))];
     }
@@ -141,31 +142,144 @@ final class LivestockService
         return (int) ($min ?? $max) . ' months';
     }
 
-    /** Email everyone whose alert matches a newly published lot. Returns the number queued. */
+    /** Email everyone whose (confirmed) alert matches a newly published lot. Returns the number of emails queued. */
     public static function notifySubscribers(int $lotId): int
     {
         $l = db_one('SELECT l.*, b.name AS breed_name FROM lots l JOIN breeds b ON b.id = l.breed_id WHERE l.id = ?', [$lotId]);
         if (!$l || !in_array($l['status'], ['available', 'coming_soon'], true)) {
             throw new DomainException('Only available or coming-soon lots can be announced.');
         }
-        $subs = db_all('SELECT * FROM livestock_alerts WHERE is_active = 1 AND (breed_id IS NULL OR breed_id = ?) AND (category_id IS NULL OR category_id = ?)
-                        AND (last_notified_at IS NULL OR last_notified_at < NOW() - INTERVAL 6 HOUR)', [$l['breed_id'], $l['category_id']]);
-        $sent = [];
-        $url = app_url('/ranch/lot.php?slug=' . rawurlencode($l['slug']));
+        // Only confirmed sign-ups (double opt-in) — an unconfirmed address never gets alerts
+        $subs = db_all('SELECT * FROM livestock_alerts WHERE is_active = 1 AND confirmed_at IS NOT NULL
+                        AND (breed_id IS NULL OR breed_id = ?) AND (category_id IS NULL OR category_id = ?)
+                        AND (last_notified_at IS NULL OR last_notified_at < NOW() - INTERVAL 6 HOUR) ORDER BY id', [$l['breed_id'], $l['category_id']]);
+        $byEmail = [];
         foreach ($subs as $s) {
-            if (isset($sent[$s['email']])) {
+            $byEmail[mb_strtolower($s['email'])][] = $s;
+        }
+        $url = app_url('/ranch/lot.php?slug=' . rawurlencode($l['slug']));
+        $n = 0;
+        foreach ($byEmail as $rows) {
+            $s = $rows[0];
+            $qid = NotificationService::email('livestock_alert', $s['email'], null, ['lot_title' => $l['title'], 'link' => $url],
+                division_id('ranch'), [], ['label' => 'View the lot', 'url' => $url], false);
+            if (!$qid) {
                 continue;
             }
-            $sent[$s['email']] = true;
-            NotificationService::email('livestock_alert', $s['email'], null, ['lot_title' => $l['title'], 'link' => $url],
-                division_id('ranch'), [], ['label' => 'View the lot', 'url' => $url], false);
-            // Unsubscribe line (POPIA): appended to the queued email
-            $qid = (int) db_val('SELECT MAX(id) FROM email_queue WHERE to_email = ?', [$s['email']]);
-            $unsub = app_url('/ranch/api/alerts.php?unsubscribe=' . $s['unsubscribe_token']);
-            db_exec('UPDATE email_queue SET body_html = REPLACE(body_html, \'</body>\', ?) WHERE id = ?',
-                ['<p style="text-align:center;font-size:12px;color:#7f8781;font-family:Arial">Don\'t want these alerts? <a href="' . e($unsub) . '" style="color:#9ea59f">Unsubscribe</a></p></body>', $qid]);
-            db_exec('UPDATE livestock_alerts SET last_notified_at = NOW() WHERE id = ?', [$s['id']]);
+            // Unsubscribe (POPIA): a link in the email, plus one-click headers for the mail provider (RFC 8058)
+            $page = app_url('/ranch/alerts.php?unsubscribe=' . $s['unsubscribe_token']);
+            $oneClick = app_url('/ranch/api/alerts.php?unsubscribe=' . $s['unsubscribe_token']);
+            db_exec('UPDATE email_queue SET body_html = REPLACE(body_html, \'</body>\', ?), list_unsubscribe = ? WHERE id = ?',
+                ['<p style="text-align:center;font-size:12px;color:#7f8781;font-family:Arial">Don\'t want these alerts? <a href="' . e($page) . '" style="color:#9ea59f">Unsubscribe</a></p></body>',
+                 $oneClick, $qid]);
+            // Every matching alert of this address counts as notified (one email covers them all)
+            $ids = array_map(static fn($r) => (int) $r['id'], $rows);
+            db_exec('UPDATE livestock_alerts SET last_notified_at = NOW() WHERE id IN (' . db_placeholders($ids) . ')', $ids);
+            $n++;
         }
-        return count($sent);
+        return $n;
+    }
+
+    /**
+     * Sign an email address up for alerts. $confirmed: the address is proven (a logged-in customer's verified email),
+     * so the alert is live at once; otherwise a confirmation link is emailed first (double opt-in, POPIA).
+     * An unproven request only ever touches the requester's own rows (a guest's, or this account's) — never
+     * someone else's alert for the same address. Returns true when the alert is live now.
+     */
+    public static function subscribe(string $email, ?int $customerId, ?int $breedId, ?int $categoryId, bool $confirmed): bool
+    {
+        if ($confirmed) {
+            $row = db_one('SELECT * FROM livestock_alerts WHERE email = ? AND breed_id <=> ? AND category_id <=> ?
+                           ORDER BY confirmed_at IS NULL, id DESC LIMIT 1', [$email, $breedId, $categoryId]);
+            if ($row && $row['confirmed_at'] && (int) $row['is_active'] === 1) {
+                return true; // already signed up
+            }
+            if ($row) {
+                db_exec('UPDATE livestock_alerts SET is_active = 1, confirmed_at = COALESCE(confirmed_at, NOW()), confirm_token = NULL,
+                         customer_id = COALESCE(customer_id, ?) WHERE id = ?', [$customerId, $row['id']]);
+            } else {
+                db_exec('INSERT INTO livestock_alerts (customer_id, email, breed_id, category_id, confirmed_at, unsubscribe_token) VALUES (?, ?, ?, ?, NOW(), ?)',
+                    [$customerId, $email, $breedId, $categoryId, random_token(32)]);
+            }
+            return true;
+        }
+        $row = db_one('SELECT * FROM livestock_alerts WHERE email = ? AND breed_id <=> ? AND category_id <=> ? AND customer_id <=> ? ORDER BY id DESC LIMIT 1',
+            [$email, $breedId, $categoryId, $customerId]);
+        if ($row && $row['confirmed_at'] && (int) $row['is_active'] === 1) {
+            return true; // this requester's own alert is already on
+        }
+        if (!$row) {
+            // Stored with a placeholder token until a confirmation email actually goes out (never-confirmed rows expire)
+            $id = db_insert('INSERT INTO livestock_alerts (customer_id, email, breed_id, category_id, confirm_token, unsubscribe_token) VALUES (?, ?, ?, ?, ?, ?)',
+                [$customerId, $email, $breedId, $categoryId, token_hash(random_token(32)), random_token(32)]);
+            $row = db_one('SELECT * FROM livestock_alerts WHERE id = ?', [$id]);
+        }
+        self::requestConfirmation($row);
+        return false;
+    }
+
+    /**
+     * Email the "confirm your alert" link for an alert row. Limited to 3 a day per address and 40 an hour for the
+     * whole site (the form can't flood an inbox or use up the shop's email allowance). The link is only replaced
+     * when an email really goes out, so a pending link keeps working. Returns true when an email was queued.
+     */
+    public static function requestConfirmation(array $row, string $siteBucket = 'alert_confirm_site', int $siteMax = 40): bool
+    {
+        // The site-wide cap first: a refused site hit uses up nobody's own daily allowance
+        if (!rate_limit_hit($siteBucket, 'all', $siteMax, 3600)) {
+            gx_log('warning', 'Livestock alert confirmations paused: hourly cap reached', ['bucket' => $siteBucket]);
+            return false;
+        }
+        if (!rate_limit_hit('alert_confirm', (string) $row['email'], 3, 86400)) {
+            return false;
+        }
+        $token = random_token(32);
+        db_exec('UPDATE livestock_alerts SET confirm_token = ?, confirm_sent_at = NOW() WHERE id = ?', [token_hash($token), $row['id']]);
+        $what = implode(' · ', [
+            $row['breed_id'] ? (string) db_val('SELECT name FROM breeds WHERE id = ?', [$row['breed_id']]) : 'Any breed',
+            $row['category_id'] ? (string) db_val('SELECT name FROM livestock_categories WHERE id = ?', [$row['category_id']]) : 'any type',
+        ]);
+        $link = app_url('/ranch/alerts.php?confirm=' . $token);
+        $qid = NotificationService::email('livestock_alert_confirm', (string) $row['email'], null, ['alert' => $what, 'link' => $link], division_id('ranch'), [],
+            ['label' => 'Confirm my alert', 'url' => $link], false);
+        if ($qid) {
+            // Sent after the answer: the reply takes the same time whether or not an email goes out
+            gx_after_response('Alert confirmation email', static fn() => MailService::sendNow($qid));
+        }
+        return true;
+    }
+
+    /** Confirm an alert from the emailed link. Returns the alert's email, or null when the link is not valid. */
+    public static function confirmAlert(string $token): ?string
+    {
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+            return null;
+        }
+        // Links sent before the site key changed keep working (same as account links)
+        $hashes = array_map(static fn(string $k) => hash_hmac('sha256', $token, $k), gx_key_ring());
+        $row = db_one('SELECT id, email FROM livestock_alerts WHERE confirm_token IN (' . db_placeholders($hashes) . ') LIMIT 1', $hashes);
+        if (!$row) {
+            return null;
+        }
+        db_exec('UPDATE livestock_alerts SET confirmed_at = NOW(), is_active = 1, confirm_token = NULL WHERE id = ?', [$row['id']]);
+        return (string) $row['email'];
+    }
+
+    /** Stop every alert for the address behind an unsubscribe token. Returns how many were removed or switched off. */
+    public static function unsubscribe(string $token): int
+    {
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+            return 0;
+        }
+        $email = db_val('SELECT email FROM livestock_alerts WHERE unsubscribe_token = ?', [$token]);
+        if ($email === null) {
+            return 0;
+        }
+        // Deleted (POPIA: nothing kept once consent is withdrawn): guest sign-ups, never-confirmed ones, and alerts of
+        // accounts that never proved they own this address. Only a verified account's own alerts are switched off,
+        // so that customer can switch them on again in their account.
+        return db_exec('DELETE a FROM livestock_alerts a LEFT JOIN customers c ON c.id = a.customer_id
+                        WHERE a.email = ? AND (a.customer_id IS NULL OR a.confirmed_at IS NULL OR c.email_verified_at IS NULL OR c.email <> a.email)', [$email])
+             + db_exec('UPDATE livestock_alerts SET is_active = 0, confirm_token = NULL WHERE email = ? AND is_active = 1', [$email]);
     }
 }
