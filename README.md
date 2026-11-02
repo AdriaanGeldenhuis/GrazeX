@@ -30,7 +30,7 @@ feeds/ ranch/ account/ payments/ pages/ admin/ setup/   ← elke area: *.php · 
 templates/pdf/        document.php (faktuur, kwitansie, kredietnota, pick list, Document of Identification …)
 cron/run.php          een cron-taak vir alles (Xneelo: elke 2 uur)
 database/             install.sql (skema + seed) · demo.sql (opsionele voorbeelddata) · migrations/
-tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bediener)
+tests/                run.php (enjin- + API-toetse) · js/ (admin-JS-toetse) · http/smoke.sh (na-deploy-toets) · dev-router.php (plaaslike bediener)
 ```
 
 ---
@@ -84,6 +84,7 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
 - [ ] Die formaat van die Document of Identification (Stock Theft Act) bevestig
 - [ ] 2FA aan vir elke admin (Admin → My profile)
 - [ ] 'n Toetsbestelling met elke betaalmetode gedoen, en die e-posse ontvang
+- [ ] `bash tests/http/smoke.sh https://jou-domein` wys alles groen
 
 ---
 
@@ -110,12 +111,15 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
 - [ ] **Betaal by afhaal:** *Record payment* in die admin gee 'n kwitansie en faktuur, dan *Mark completed*
 
 **Ranch-reservering**
-- [ ] Reserveer → deposito → *Weigh & finalise* → finale faktuur
+- [ ] Reserveer → deposito → *Weigh & finalise* (tik die werklike gewig in — die veld is leeg tot jy weeg) → die finale faktuur wys daardie kg
+- [ ] *Mark completed* is eers beskikbaar ná *Mark collected* (die Document of Identification word dan uitgereik)
 - [ ] *Mark collected* gee die Document of Identification
 - [ ] Laat 'n EFT-bestelling verval: na die houtyd word voorraad outomaties terug op die rak gesit
 
 **Admin-roetines**
 - [ ] *Cancel order* sit voorraad terug en maak 'n kredietnota as dit reeds gefaktureer was
+- [ ] *Refund…* op 'n voltooide bestelling (net eienaar/bestuurder) gee 'n kredietnota; voorraad gaan net terug as jy "goods came back" merk
+- [ ] Users → *Save permissions* hou Manager en Staff se regte presies soos gemerk
 - [ ] Inventory: *Receive stock* en *Stock take* werk en word in die ledger aangeteken
 - [ ] Content: verander 'n hero-teks en sien dit dadelik op die site
 - [ ] Op die foon is die admin se onderste navigasie bruikbaar
@@ -128,8 +132,20 @@ tests/                run.php (56 enjin-toetse) · dev-router.php (plaaslike bed
 cp config/env.example.php config/env.php   # vul plaaslike DB in, app_debug => true, app_url => http://127.0.0.1:8080
 composer install
 php -S 127.0.0.1:8080 tests/dev-router.php
-php tests/run.php                           # 56 enjin-toetse op 'n wegwerp-databasis
+php tests/run.php                           # enjin- + API-toetse op 'n wegwerp-databasis (<db>_test)
+node tests/js/formToObject.test.mjs         # admin-vorms se JS
 ```
 
+Die toetse het nodig:
+- MariaDB 10.11 (of MySQL 8) en 'n DB-gebruiker wat `CREATE DATABASE` mag doen.
+- 'n Toets-webhook-geheim in jou instellings: `YOCO_TEST_WEBHOOK_SECRET=whsec_…` (enige base64-waarde werk plaaslik).
+- Die PHP-uitbreidings `curl` en `gd`. Die API-toetse begin self 'n `php -S`-bediener teen die toetsdatabasis.
+
+Elke pull request en elke deploy hardloop dieselfde toetse op GitHub (`.github/workflows/ci.yml`). As 'n toets faal, gaan niks live nie.
+
 ## Databasis-veranderinge later
-Nuwe veranderinge kom as genommerde lêers in `database/migrations/` (bv. `002_add_x.sql`). Plak hulle in volgorde in phpMyAdmin. `install.sql` is net vir 'n nuwe, leë databasis.
+Nuwe veranderinge kom as genommerde lêers in `database/migrations/` (bv. `003_money_fixes.sql`). Sien `database/migrations/README.txt`.
+- Kyk eers watter reeds geloop het: `SELECT * FROM schema_migrations;` (bestaan die tabel nie, begin by `002`).
+- Plak elke ontbrekende lêer in volgorde in phpMyAdmin, **voordat** jy die PR merge wat dit nodig het. Elke merge deploy dadelik.
+- Elke lêer is veilig om twee keer te hardloop.
+- `install.sql` is net vir 'n nuwe, leë databasis en bevat reeds al die migrasies.

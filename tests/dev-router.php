@@ -7,6 +7,10 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
+// tests/run.php starts this server with GX_TEST_DB=<db>_test so HTTP tests use the throwaway database
+if (($testDb = getenv('GX_TEST_DB')) && preg_match('/^[A-Za-z0-9_]+_test$/', $testDb)) {
+    define('GX_TEST_DB_NAME', $testDb);
+}
 $uri = rawurldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 
 // Blocked folders / files (same as .htaccess)
