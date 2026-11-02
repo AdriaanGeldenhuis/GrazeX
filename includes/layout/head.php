@@ -3,23 +3,24 @@
  * <head> + opening <body>. Set $page before including:
  *   $page = ['title' => '', 'description' => '', 'division' => 'gateway|feeds|ranch|account|pages|admin',
  *            'css' => ['/feeds/css/feeds.css'], 'js' => ['/feeds/js/feeds.js'], 'og_image' => '', 'body_class' => '',
- *            'noindex' => false, 'jsonld' => []];
+ *            'noindex' => false, 'jsonld' => [], 'canonical' => '/feeds/product/x' (defaults to the path without query)];
  */
 defined('GX_ROOT') || exit;
 
 $page = ($page ?? []) + [
     'title' => '', 'description' => '', 'division' => 'gateway', 'css' => [], 'js' => [],
-    'og_image' => '', 'body_class' => '', 'noindex' => false, 'jsonld' => [],
+    'og_image' => '', 'body_class' => '', 'noindex' => false, 'jsonld' => [], 'canonical' => null,
 ];
 $gxSiteName   = setting('site_name', 'GrazeX');
 $gxFullTitle  = $page['title'] !== '' ? $page['title'] . ' — ' . $gxSiteName : $gxSiteName . ' — ' . setting('site_tagline', 'Ranch & Feeds');
 $gxMetaDesc   = $page['description'] ?: (string) setting('meta_description', '');
 $gxOgImage    = $page['og_image'] ?: ($page['division'] === 'ranch' ? '/assets/img/brand/og-ranch.jpg' : '/assets/img/brand/og-feeds.jpg');
-$gxCanonical  = app_url(strtok($_SERVER['REQUEST_URI'] ?? '/', '?') ?: '/');
+// One address per page: detail pages pass their pretty URL (…/product.php?slug=x would otherwise all share one canonical)
+$gxCanonical  = app_url($page['canonical'] ?? (strtok($_SERVER['REQUEST_URI'] ?? '/', '?') ?: '/'));
 $gxHasAnnounce = setting_bool('announcement_enabled') && setting('announcement_text') && $page['division'] !== 'admin';
 $gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : ''));
 ?><!doctype html>
-<html lang="en" class="no-js">
+<html lang="<?= e(current_lang()) ?>" class="no-js">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -52,7 +53,7 @@ $gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : '
 <script src="<?= e(asset($gxJs)) ?>" defer></script>
 <?php endforeach; ?>
 <?php foreach ((array) $page['jsonld'] as $gxLd): ?>
-<script type="application/ld+json"><?= json_encode($gxLd, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?></script>
+<script type="application/ld+json"><?= json_encode(jsonld_clean($gxLd), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?></script>
 <?php endforeach; ?>
 </head>
 <body data-division="<?= e($page['division']) ?>" class="<?= e($gxBodyClass) ?>">

@@ -1,7 +1,7 @@
 <?php
 /**
  * POST /account/api/addresses.php
- *   {action: create, label, recipient_name, phone, farm_name, line1, town, directions}
+ *   {action: create, label, recipient_name, phone, farm_name, line1, line2, town, province, postal_code, directions}
  *   {action: default, id} | {action: delete, id}
  */
 declare(strict_types=1);
@@ -20,11 +20,14 @@ switch ((string) input('action')) {
         }
         $d = validate_or_fail(input_all(), [
             'label' => 'nullable|max:60', 'recipient_name' => 'required|max:150', 'phone' => 'required|phone', 'farm_name' => 'nullable|max:150',
-            'line1' => 'required|max:191', 'town' => 'required|max:120', 'directions' => 'nullable|max:1000',
+            'line1' => 'required|max:191', 'line2' => 'nullable|max:191', 'town' => 'required|max:120',
+            'province' => 'nullable|in:' . implode(',', sa_provinces()), 'postal_code' => 'nullable|regex:/^[0-9]{4}$/', 'directions' => 'nullable|max:1000',
         ]);
         $isFirst = !db_val('SELECT 1 FROM customer_addresses WHERE customer_id = ?', [$cid]);
-        db_exec('INSERT INTO customer_addresses (customer_id, label, recipient_name, phone, farm_name, line1, town, directions, is_default) VALUES (?,?,?,?,?,?,?,?,?)',
-            [$cid, $d['label'], $d['recipient_name'], $d['phone'], $d['farm_name'], $d['line1'], $d['town'], $d['directions'], $isFirst ? 1 : 0]);
+        db_exec('INSERT INTO customer_addresses (customer_id, label, recipient_name, phone, farm_name, line1, line2, town, province, postal_code, directions, is_default)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [$cid, $d['label'], $d['recipient_name'], $d['phone'], $d['farm_name'], $d['line1'], $d['line2'], $d['town'], $d['province'] ?: null,
+             $d['postal_code'], $d['directions'], $isFirst ? 1 : 0]);
         json_ok([], 'Address saved.');
     case 'default':
         $id = (int) input('id');

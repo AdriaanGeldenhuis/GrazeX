@@ -9,8 +9,10 @@ if (!$pg) {
     require GX_ROOT . '/includes/layout/not_found.php';
     exit;
 }
+redirect_to_pretty(page_url($pg['slug']));
 $others = db_all('SELECT slug, title FROM pages WHERE is_published = 1 AND show_in_footer = 1 AND id <> ? ORDER BY sort_order', [$pg['id']]);
-$page = ['title' => $pg['meta_title'] ?: $pg['title'], 'description' => $pg['meta_description'] ?? '', 'division' => 'pages', 'css' => ['/pages/css/pages.css']];
+$page = ['title' => $pg['meta_title'] ?: $pg['title'], 'description' => $pg['meta_description'] ?? '', 'division' => 'pages', 'css' => ['/pages/css/pages.css'],
+         'canonical' => page_url($pg['slug'])];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';
 ?>
@@ -24,7 +26,7 @@ require GX_ROOT . '/includes/layout/header.php';
   <?php if ($others): ?>
     <aside class="pg-side card card-pad">
       <h2 class="h4 mb-2">More information</h2>
-      <ul class="trust-list"><?php foreach ($others as $o): ?><li><a class="link" href="/pages/page.php?slug=<?= e($o['slug']) ?>"><?= e($o['title']) ?></a></li><?php endforeach; ?>
+      <ul class="trust-list"><?php foreach ($others as $o): ?><li><a class="link" href="<?= e(page_url($o['slug'])) ?>"><?= e($o['title']) ?></a></li><?php endforeach; ?>
         <li><a class="link" href="/pages/contact.php">Contact us</a></li></ul>
     </aside>
   <?php endif; ?>

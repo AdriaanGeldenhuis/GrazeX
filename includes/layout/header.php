@@ -21,7 +21,8 @@ $gxLinks = match ($gxDiv) {
     'ranch' => [
         ['livestock', '/ranch/livestock.php', t('nav.livestock')],
         ['model', '/ranch/model.php', t('nav.model')],
-        ['faq', '/ranch/#faq', 'FAQ'],
+        // Only when there are ranch FAQs (the #faq section exists only then)
+        ...(division_has_faqs('ranch') ? [['faq', '/ranch/#faq', t('nav.faq')]] : []),
         ['feeds', '/feeds/', t('nav.feeds') . ' ↗'],
     ],
     default => [
@@ -54,7 +55,8 @@ $gxWaLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
       <svg class="icon"><use href="#i-user"/></svg>
     </a>
     <?php if ($gxCartDiv): ?>
-      <a class="nav-icon-btn" href="/<?= e($gxCartDiv) ?>/cart.php" data-drawer-open="cart-drawer" aria-label="<?= e(t('nav.cart')) ?>">
+      <a class="nav-icon-btn" href="/<?= e($gxCartDiv) ?>/cart.php" data-drawer-open="cart-drawer" data-cart-label="<?= e(t('nav.cart')) ?>"
+         aria-label="<?= e(t('nav.cart') . ', ' . (int) $gxCartCount . ' item' . ((int) $gxCartCount === 1 ? '' : 's')) ?>">
         <svg class="icon"><use href="#i-cart"/></svg>
         <span class="cart-count<?= $gxCartCount ? ' has-items' : '' ?>" data-cart-count><?= (int) $gxCartCount ?></span>
       </a>
@@ -67,7 +69,7 @@ $gxWaLink = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
   </div>
 </header>
 
-<div class="menu-sheet" id="menu-sheet" aria-hidden="true">
+<div class="menu-sheet" id="menu-sheet" role="dialog" aria-modal="true" aria-label="<?= e(t('nav.menu')) ?>" aria-hidden="true" inert>
   <div class="sheet-head">
     <a class="brand" href="/"><img class="brand-logo" src="/assets/img/brand/wordmark-640.webp" srcset="/assets/img/brand/wordmark-640.webp 640w, /assets/img/brand/wordmark-1200.webp 1258w" sizes="260px" width="1258" height="138" alt="GrazeX"></a>
     <button class="nav-icon-btn" type="button" data-menu-close aria-label="<?= e(t('nav.close')) ?>"><svg class="icon"><use href="#i-close"/></svg></button>

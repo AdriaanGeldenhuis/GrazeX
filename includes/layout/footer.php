@@ -7,12 +7,13 @@ defined('GX_ROOT') || exit;
 
 $gxFooterMenu = [];
 try {
-    $gxFooterAll = db_all("SELECT label, url, is_active FROM menu_items WHERE location = 'footer' ORDER BY sort_order, id");
+    $gxFooterAll = array_map(static fn($m) => ['url' => pretty_url((string) $m['url'])] + $m,
+        db_all("SELECT label, url, is_active FROM menu_items WHERE location = 'footer' ORDER BY sort_order, id"));
     $gxFooterMenu = array_values(array_filter($gxFooterAll, static fn($m) => (int) $m['is_active'] === 1));
     // Pages follow their "Link in footer menu" switch: hidden/unpublished pages drop out, other shown pages are added
     $gxOff = $gxOn = [];
     foreach (db_all('SELECT slug, title, is_published, show_in_footer FROM pages ORDER BY sort_order, id') as $gxP) {
-        $gxUrl = '/pages/page.php?slug=' . $gxP['slug'];
+        $gxUrl = page_url($gxP['slug']);
         if ((int) $gxP['is_published'] && (int) $gxP['show_in_footer']) {
             $gxOn[$gxUrl] = $gxP['title'];
         } else {

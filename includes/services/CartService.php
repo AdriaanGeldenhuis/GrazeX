@@ -211,7 +211,7 @@ final class CartService
                 $out['lines'][] = [
                     'id' => (int) $r['item_id'], 'type' => 'variant', 'target_id' => (int) $r['id'],
                     'name' => $r['product_name'], 'variant' => $r['name'], 'sku' => $r['sku'],
-                    'url' => '/feeds/product.php?slug=' . rawurlencode($r['product_slug']), 'media_id' => $r['media_id'] ? (int) $r['media_id'] : null,
+                    'url' => product_url($r['product_slug']), 'media_id' => $r['media_id'] ? (int) $r['media_id'] : null,
                     'qty' => $qty, 'max' => $stock, 'unit' => $price['unit'], 'regular' => $price['regular'],
                     'on_special' => $price['on_special'], 'tier_min' => $price['tier_min'], 'next_tier' => $price['next_tier'],
                     'total' => $price['unit'] * $qty, 'weight_grams' => (int) $r['weight_grams'] * $qty, 'notice' => $notice,
@@ -246,7 +246,7 @@ final class CartService
                 $out['lines'][] = [
                     'id' => (int) $r['item_id'], 'type' => 'lot', 'target_id' => (int) $r['id'],
                     'name' => $r['title'], 'variant' => $r['breed_name'] . ' · ' . $r['category_name'], 'sku' => $r['lot_no'],
-                    'url' => '/ranch/lot.php?slug=' . rawurlencode($r['slug']), 'media_id' => $r['media_id'] ? (int) $r['media_id'] : null,
+                    'url' => lot_url($r['slug']), 'media_id' => $r['media_id'] ? (int) $r['media_id'] : null,
                     'qty' => $qty, 'max' => $avail, 'unit' => $price['unit'], 'regular' => $price['unit'], 'on_special' => false,
                     'tier_min' => null, 'next_tier' => null, 'total' => $price['total'], 'pricing_mode' => $r['pricing_mode'],
                     'price_cents' => (int) $r['price_cents'], 'avg_weight_kg' => $r['avg_weight_kg'] !== null ? (float) $r['avg_weight_kg'] : null,

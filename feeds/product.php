@@ -13,6 +13,7 @@ if (!$p || !$p['variants']) {
     require GX_ROOT . '/includes/layout/not_found.php';
     exit;
 }
+redirect_to_pretty(product_url($p['slug']));
 
 $related = CatalogService::related($p);
 // Default variant = first in stock
@@ -30,7 +31,7 @@ $variantsJson = array_map(static fn($v) => [
     'kg' => (int) $v['weight_grams'] > 0 ? round((int) $v['weight_grams'] / 1000, 1) : null,
     'tiers' => array_map(static fn($t) => ['min' => (int) $t['min_qty'], 'price' => (int) $t['price_cents']], $v['tiers']),
 ], $p['variants']);
-$url = app_url('/feeds/product.php?slug=' . rawurlencode($p['slug']));
+$url = app_url(product_url($p['slug']));
 $wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX Feeds, I have a question about ' . $p['name'] . ' (' . $url . ')');
 $firstImg = $p['media'] ? media_url((int) $p['media'][0], 960, 'orig') : null;
 
@@ -42,14 +43,15 @@ $page = [
     'css' => ['/assets/css/store.css', '/feeds/css/feeds.css'],
     'js' => ['/assets/js/cart.js', '/feeds/js/feeds.js'],
     'og_image' => $p['media'] ? (media_url((int) $p['media'][0], 1600, 'wide') ?? '') : '',
+    'canonical' => product_url($p['slug']),
     'jsonld' => [[
         '@context' => 'https://schema.org', '@type' => 'Product', 'name' => $p['name'], 'sku' => $default['sku'],
         'description' => $p['short_description'], 'brand' => $p['brand_name'] ? ['@type' => 'Brand', 'name' => $p['brand_name']] : null,
-        'image' => $firstImg ? app_url($firstImg) : null,
-        'offers' => array_map(static fn($v) => ['@type' => 'Offer', 'sku' => $v['sku'], 'priceCurrency' => 'ZAR',
-            'price' => number_format((int) $v['effective'] / 100, 2, '.', ''), 'url' => $url,
+        'image' => $firstImg ? app_url($firstImg) : null, 'url' => $url, 'category' => $p['category_name'],
+        'offers' => array_map(static fn($v) => ['@type' => 'Offer', 'sku' => $v['sku'], 'name' => $v['name'], 'priceCurrency' => 'ZAR',
+            'price' => number_format((int) $v['effective'] / 100, 2, '.', ''), 'url' => $url, 'itemCondition' => 'https://schema.org/NewCondition',
             'availability' => (int) $v['stock_qty'] > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock'], $p['variants']),
-    ]],
+    ], jsonld_breadcrumbs([['Feeds', '/feeds/'], [$p['category_name'], category_url($p['category_slug'])], [$p['name'], product_url($p['slug'])]])],
 ];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';
@@ -61,9 +63,9 @@ require GX_ROOT . '/includes/layout/header.php';
         <?= media_img($p['media'][0] ?? null, $p['name'], '(min-width: 1024px) 50vw, 100vw', 'orig', false, 'bag') ?>
       </div>
       <?php if (count($p['media']) > 1): ?>
-        <div class="gallery-thumbs" role="list">
+        <div class="gallery-thumbs" role="group" aria-label="Product photos">
           <?php foreach ($p['media'] as $i => $mid): ?>
-            <button type="button" role="listitem" data-gallery-src="<?= e(media_url((int) $mid, 960, 'orig')) ?>" aria-current="<?= $i === 0 ? 'true' : 'false' ?>" aria-label="Image <?= $i + 1 ?>">
+            <button type="button" data-gallery-src="<?= e(media_url((int) $mid, 960, 'orig')) ?>" aria-current="<?= $i === 0 ? 'true' : 'false' ?>" aria-label="Image <?= $i + 1 ?>">
               <?= media_img((int) $mid, '', '76px', 'orig') ?>
             </button>
           <?php endforeach; ?>
@@ -73,7 +75,7 @@ require GX_ROOT . '/includes/layout/header.php';
 
     <div class="buy-box" id="buy-box" data-variants="<?= e_json($variantsJson) ?>" data-default="<?= (int) $default['id'] ?>">
       <nav class="breadcrumb" aria-label="Breadcrumb">
-        <a href="/feeds/">Feeds</a><span>/</span><a href="/feeds/shop.php?category=<?= e($p['category_slug']) ?>"><?= e($p['category_name']) ?></a>
+        <a href="/feeds/">Feeds</a><span>/</span><a href="<?= e(category_url($p['category_slug'])) ?>"><?= e($p['category_name']) ?></a>
       </nav>
       <div class="row">
         <?php if ($p['brand_name']): ?><span class="badge"><?= e($p['brand_name']) ?></span><?php endif; ?>
@@ -160,7 +162,7 @@ require GX_ROOT . '/includes/layout/header.php';
   <?php endif; ?>
 </main>
 
-<div class="sticky-buy" data-sticky-buy aria-hidden="true">
+<div class="sticky-buy" data-sticky-buy aria-hidden="true" inert>
   <div class="sb-info"><div class="sb-name"><?= e($p['name']) ?></div><div class="price" style="font-size:17px" data-price-sticky><?= e(money((int) $default['effective'])) ?></div></div>
   <button class="btn btn-primary" type="button" data-scroll-buy>Add to cart</button>
 </div>

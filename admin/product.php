@@ -71,7 +71,7 @@ admin_start($id ? 'Edit product' : 'New product', 'products', ['perm' => 'produc
   <div class="adm-bar">
     <a class="btn btn-sm btn-ghost" href="/admin/products.php"><svg class="icon icon-sm"><use href="#i-arrow-left"/></svg>Products</a>
     <div class="row">
-      <?php if ($id): ?><a class="btn btn-sm" href="/feeds/product.php?slug=<?= e($p['slug']) ?>" target="_blank" rel="noopener">View on site ↗</a><?php endif; ?>
+      <?php if ($id): ?><a class="btn btn-sm" href="<?= e(product_url($p['slug'])) ?>" target="_blank" rel="noopener">View on site ↗</a><?php endif; ?>
       <?php if ($id): ?><button class="btn btn-sm btn-danger" type="button" data-admin-act="/admin/api/products.php" data-payload='<?= e(json_encode(['action' => 'delete', 'id' => (int) $p['id']])) ?>' data-confirm="Delete this product? If it has sales it will be hidden instead." data-ok="Delete" data-danger>Delete</button><?php endif; ?>
     </div>
   </div>
@@ -102,7 +102,7 @@ admin_start($id ? 'Edit product' : 'New product', 'products', ['perm' => 'produc
             <span class="badge badge-solid mi-first" hidden>Main</span>
             <div class="mi-actions"><button type="button" data-focal="<?= (int) $mid ?>" title="Focal point">◎</button><button type="button" data-media-remove title="Remove">✕</button></div></div>
         <?php endforeach; ?>
-        <label class="media-add"><input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden><svg class="icon icon-lg"><use href="#i-upload"/></svg>Add photos</label>
+        <label class="media-add"><input class="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple><svg class="icon icon-lg"><use href="#i-upload"/></svg>Add photos</label>
       </div>
     </div>
   </section>

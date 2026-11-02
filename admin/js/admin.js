@@ -11,7 +11,32 @@
   const shell = $('.adm');
 
   /* ---------- Menu / search / bell ---------- */
-  GX.on(document, 'click', '[data-adm-menu]', () => shell?.classList.toggle('menu-open'));
+  // Below 1100px the sidebar slides in over the page: closed it is inert; open it keeps focus inside and Escape closes it
+  const side = $('.adm-side');
+  const wide = window.matchMedia('(min-width: 1100px)');
+  let releaseSide = null;
+  const syncSide = () => {
+    const open = !!shell?.classList.contains('menu-open');
+    if (side) side.inert = !wide.matches && !open;
+    $$('button[data-adm-menu]').forEach((b) => b.setAttribute('aria-expanded', open ? 'true' : 'false'));
+  };
+  const setMenu = (open) => {
+    if (!shell) return;
+    shell.classList.toggle('menu-open', open);
+    syncSide();
+    releaseSide?.();
+    releaseSide = null;
+    if (open && !wide.matches && side) {
+      releaseSide = GX.trapFocus(side);
+      side.querySelector('a, button')?.focus();
+    } else if (!open) {
+      $('.adm-menu-btn')?.focus();
+    }
+  };
+  GX.on(document, 'click', '[data-adm-menu]', () => setMenu(!shell?.classList.contains('menu-open')));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && shell?.classList.contains('menu-open')) setMenu(false); });
+  wide.addEventListener?.('change', syncSide);
+  syncSide();
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && !e.target.closest('input, textarea, select, [contenteditable]')) { e.preventDefault(); $('[data-adm-search]')?.focus(); }
   });
@@ -286,7 +311,7 @@
     d.className = 'modal';
     d.style.width = 'min(900px, calc(100% - 24px))';
     d.innerHTML = `<div class="modal-head"><h3>Choose an image</h3><button class="nav-icon-btn" value="x">✕</button></div>
-      <div class="modal-body"><div class="media-grid" data-pick-grid><label class="media-add"><input type="file" accept="image/*" hidden>＋<br>Upload new</label></div></div>`;
+      <div class="modal-body"><div class="media-grid" data-pick-grid><label class="media-add"><input class="sr-only" type="file" accept="image/*">＋<br>Upload new</label></div></div>`;
     document.body.appendChild(d);
     const grid = $('[data-pick-grid]', d);
     const add = (m) => grid.insertAdjacentHTML('beforeend', `<button type="button" class="media-item" data-choose="${m.id}" data-thumb="${GX.esc(m.thumb)}"><img src="${GX.esc(m.thumb)}" alt=""></button>`);

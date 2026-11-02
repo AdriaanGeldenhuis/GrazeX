@@ -50,6 +50,8 @@
   GX.on(document, 'click', '[data-add-to-cart]', async (e, btn) => {
     e.preventDefault();
     const qtyInput = btn.dataset.qtyFrom ? GX.$(btn.dataset.qtyFrom) : null;
+    // Correct a half-typed quantity first (the page clamps it on "change")
+    if (qtyInput) qtyInput.dispatchEvent(new Event('change', { bubbles: true }));
     const target = btn.dataset.target;
     if (!target) return GX.toast('Please choose an option first.', 'error');
     GX.setLoading(btn, true);

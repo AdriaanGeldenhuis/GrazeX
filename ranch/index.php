@@ -32,20 +32,20 @@ require GX_ROOT . '/includes/layout/header.php';
   <section class="store-hero ranch-hero">
     <div class="container store-hero-grid">
       <div>
-        <span class="eyebrow reveal"><span class="dot"></span><?= e(content('ranch', 'hero_kicker', 'GrazeX Ranch')) ?></span>
-        <h1 class="display-1 reveal" style="--d:.06s"><span class="text-chrome italic"><?= e(content('ranch', 'hero_title', 'Raise. Rotate. Finish.')) ?></span></h1>
-        <p class="lead reveal" style="--d:.12s"><?= e(content('ranch', 'hero_text')) ?></p>
-        <div class="hero-actions reveal" style="--d:.18s">
+        <span class="eyebrow hero-rise"><span class="dot"></span><?= e(content('ranch', 'hero_kicker', 'GrazeX Ranch')) ?></span>
+        <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-chrome italic"><?= e(content('ranch', 'hero_title', 'Raise. Rotate. Finish.')) ?></span></h1>
+        <p class="lead hero-rise" style="--d:.12s"><?= e(content('ranch', 'hero_text')) ?></p>
+        <div class="hero-actions hero-rise" style="--d:.18s">
           <a class="btn btn-green btn-lg" href="/ranch/livestock.php" data-magnetic>See available livestock <svg class="icon arrow"><use href="#i-arrow"/></svg></a>
           <a class="btn btn-chrome btn-lg" href="/ranch/model.php">How we farm</a>
         </div>
-        <dl class="ranch-stats reveal" style="--d:.24s">
-          <div><dt>Lots available</dt><dd data-count="<?= (int) $stats['lots'] ?>">0</dd></div>
-          <div><dt>Head ready</dt><dd data-count="<?= (int) $stats['head'] ?>">0</dd></div>
+        <dl class="ranch-stats hero-rise" style="--d:.24s">
+          <div><dt>Lots available</dt><dd data-count="<?= (int) $stats['lots'] ?>"><?= (int) $stats['lots'] ?></dd></div>
+          <div><dt>Head ready</dt><dd data-count="<?= (int) $stats['head'] ?>"><?= (int) $stats['head'] ?></dd></div>
           <div><dt>Avg weight</dt><dd><?= $stats['avg_w'] ? e(number_format((float) $stats['avg_w'], 1)) . '<small>kg</small>' : '—' ?></dd></div>
         </dl>
       </div>
-      <img class="hero-logo reveal" style="--d:.1s" src="/assets/img/brand/ranch-logo-960.webp"
+      <img class="hero-logo hero-rise" style="--d:.1s" src="/assets/img/brand/ranch-logo-960.webp"
            srcset="/assets/img/brand/ranch-logo-480.webp 480w, /assets/img/brand/ranch-logo-960.webp 960w, /assets/img/brand/ranch-logo-1600.webp 1600w"
            sizes="(min-width: 1024px) 40vw, 90vw" width="960" height="480" alt="GrazeX Ranch" fetchpriority="high">
     </div>
@@ -124,7 +124,7 @@ require GX_ROOT . '/includes/layout/header.php';
         </div>
         <div class="soon-list">
           <?php if ($soon['items']): foreach ($soon['items'] as $i => $l): ?>
-            <a class="soon-item" href="/ranch/lot.php?slug=<?= e(rawurlencode($l['slug'])) ?>">
+            <a class="soon-item" href="<?= e(lot_url($l['slug'])) ?>">
               <span class="badge badge-info">Coming <?= $l['available_from'] ? e(fmt_date($l['available_from'], 'j M')) : 'soon' ?></span>
               <strong><?= e($l['title']) ?></strong>
               <span class="muted small"><?= (int) $l['qty_total'] ?> head · <?= e($l['breed_name']) ?><?= $l['avg_weight_kg'] ? ' · ±' . e(kg((float) $l['avg_weight_kg'], 0)) : '' ?></span>
@@ -142,7 +142,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container grid-3">
       <?php foreach ($testimonials as $i => $tm): ?>
         <figure class="card card-pad reveal" style="--d:<?= $i * 0.06 ?>s;margin:0">
-          <div class="text-accent"><?= str_repeat('★', (int) $tm['rating']) ?></div>
+          <div class="text-accent" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div>
           <blockquote class="mt-1" style="margin-left:0">“<?= e($tm['quote']) ?>”</blockquote>
           <figcaption class="muted small"><strong><?= e($tm['name']) ?></strong><?= $tm['location'] ? ' · ' . e($tm['location']) : '' ?></figcaption>
         </figure>

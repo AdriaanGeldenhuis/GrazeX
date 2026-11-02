@@ -47,18 +47,20 @@
   if (box) {
     const lot = JSON.parse(box.dataset.lot || '{}');
     const qty = $('#lot-qty');
-    const update = () => {
+    // Totals follow while typing; the box is corrected when you leave it or press Reserve
+    const update = (write = true) => {
       if (!qty) return;
       const q = Math.max(1, Math.min(lot.max, Number(qty.value) || 1));
-      if (String(q) !== qty.value) qty.value = q;
+      if (write && String(q) !== qty.value) qty.value = q;
       const perHead = lot.mode === 'per_kg' ? Math.round((lot.avg || 0) * lot.price) : lot.price;
       const total = perHead * q;
       $('[data-lot-total]') && ($('[data-lot-total]').textContent = (lot.mode === 'per_kg' ? '≈ ' : '') + GX.money(total));
       $('[data-lot-weight]') && ($('[data-lot-weight]').textContent = lot.avg ? `≈ ${(lot.avg * q).toFixed(1)} kg` : '—');
       $('[data-lot-deposit]') && ($('[data-lot-deposit]').textContent = GX.money(Math.round(total * lot.deposit / 100)));
     };
-    qty?.addEventListener('change', update);
-    qty?.addEventListener('input', update);
+    qty?.addEventListener('change', () => update(true));
+    qty?.addEventListener('blur', () => update(true));
+    qty?.addEventListener('input', () => update(false));
     GX.on(box, 'click', '[data-take-all]', (e, b) => { qty.value = b.dataset.takeAll; update(); });
     update();
 
@@ -69,6 +71,7 @@
         const show = !en.isIntersecting && en.boundingClientRect.top < 0;
         sticky.classList.toggle('is-visible', show);
         sticky.setAttribute('aria-hidden', show ? 'false' : 'true');
+        sticky.inert = !show; // hidden bar: out of the tab order too
       }).observe(btn);
       $('[data-scroll-buy]').addEventListener('click', () => btn.click());
     }

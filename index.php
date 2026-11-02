@@ -29,8 +29,12 @@ try {
 
 $marquee = content_lines('gateway', 'marquee') ?: ['GrazeX Ranch', 'GrazeX Feeds'];
 $wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
-$ranchImg = content_image('gateway', 'ranch_card_image', '/assets/img/brand/ranch-logo-1600.webp');
-$feedsImg = content_image('gateway', 'feeds_card_image', '/assets/img/brand/feeds-logo-1600.webp');
+$ranchImg = content_image('gateway', 'ranch_card_image', '/assets/img/brand/ranch-logo-960.webp', 960);
+$feedsImg = content_image('gateway', 'feeds_card_image', '/assets/img/brand/feeds-logo-960.webp', 960);
+// Phones download the small version, big screens the large one
+$brandSet = static fn(string $n): string => "/assets/img/brand/{$n}-logo-480.webp 480w, /assets/img/brand/{$n}-logo-960.webp 960w, /assets/img/brand/{$n}-logo-1600.webp 1600w";
+$ranchSet = content_image_srcset('gateway', 'ranch_card_image', $brandSet('ranch'));
+$feedsSet = content_image_srcset('gateway', 'feeds_card_image', $brandSet('feeds'));
 
 $page = [
     'title' => '',
@@ -46,6 +50,7 @@ $page = [
         'logo' => app_url('/assets/img/brand/ranch-logo-960.webp'),
         'email' => setting('contact_email'),
         'telephone' => setting('contact_phone'),
+        'sameAs' => array_values(array_filter([setting('social_facebook'), setting('social_instagram'), setting('social_tiktok')])),
     ]],
 ];
 require GX_ROOT . '/includes/layout/head.php';
@@ -56,24 +61,24 @@ require GX_ROOT . '/includes/layout/header.php';
   <!-- HERO -->
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <span class="eyebrow reveal"><span class="dot"></span><?= e(content('gateway', 'hero_eyebrow', 'Pasture. Livestock. Feed.')) ?></span>
-      <h1 id="hero-title" class="display-1 hero-title reveal" style="--d:.08s">
+      <span class="eyebrow hero-rise"><span class="dot"></span><?= e(content('gateway', 'hero_eyebrow', 'Pasture. Livestock. Feed.')) ?></span>
+      <h1 id="hero-title" class="display-1 hero-title hero-rise" style="--d:.08s">
         <span class="text-stroke"><?= e(content('gateway', 'hero_title_1', 'Built on')) ?></span>
         <span class="text-fire italic"><?= e(content('gateway', 'hero_title_2', 'the land.')) ?></span>
       </h1>
-      <p class="lead reveal" style="--d:.16s"><?= e(content('gateway', 'hero_text')) ?></p>
-      <div class="hero-actions reveal" style="--d:.24s">
+      <p class="lead hero-rise" style="--d:.16s"><?= e(content('gateway', 'hero_text')) ?></p>
+      <div class="hero-actions hero-rise" style="--d:.24s">
         <a class="btn btn-orange btn-lg" href="/feeds/" data-magnetic><?= e(t('gateway.shop_feeds')) ?> <svg class="icon arrow"><use href="#i-arrow"/></svg></a>
         <a class="btn btn-chrome btn-lg" href="/ranch/" data-magnetic><?= e(t('gateway.enter_ranch')) ?></a>
       </div>
-      <dl class="hero-stats reveal" style="--d:.32s">
-        <div><dt class="sr-only">Livestock</dt><dd><span class="hs-num" data-count="<?= $stats['lots'] ?>">0</span><span class="hs-label"><?= e(t('gateway.lots_available')) ?></span></dd></div>
-        <div><dt class="sr-only">Feeds</dt><dd><span class="hs-num" data-count="<?= $stats['products'] ?>">0</span><span class="hs-label"><?= e(t('gateway.products')) ?></span></dd></div>
-        <div><dt class="sr-only">Specials</dt><dd><span class="hs-num" data-count="<?= $stats['specials'] ?>">0</span><span class="hs-label"><?= e(t('gateway.specials')) ?></span></dd></div>
+      <dl class="hero-stats hero-rise" style="--d:.32s">
+        <div><dt class="sr-only">Livestock</dt><dd><span class="hs-num" data-count="<?= $stats['lots'] ?>"><?= (int) $stats['lots'] ?></span><span class="hs-label"><?= e(t('gateway.lots_available')) ?></span></dd></div>
+        <div><dt class="sr-only">Feeds</dt><dd><span class="hs-num" data-count="<?= $stats['products'] ?>"><?= (int) $stats['products'] ?></span><span class="hs-label"><?= e(t('gateway.products')) ?></span></dd></div>
+        <div><dt class="sr-only">Specials</dt><dd><span class="hs-num" data-count="<?= $stats['specials'] ?>"><?= (int) $stats['specials'] ?></span><span class="hs-label"><?= e(t('gateway.specials')) ?></span></dd></div>
       </dl>
     </div>
 
-    <div class="hero-art reveal" style="--d:.1s" aria-hidden="true">
+    <div class="hero-art hero-rise" style="--d:.1s" aria-hidden="true">
       <div class="orb"></div>
       <div class="ring"></div>
       <div class="logo-stage" data-tilt>
@@ -110,7 +115,7 @@ require GX_ROOT . '/includes/layout/header.php';
 
       <div class="portals">
         <a class="portal portal-ranch reveal" href="/ranch/">
-          <img src="<?= e($ranchImg) ?>" alt="" loading="lazy" width="1600" height="800">
+          <img src="<?= e($ranchImg) ?>" srcset="<?= e($ranchSet) ?>" sizes="(min-width: 1024px) 50vw, 100vw" alt="" loading="lazy" width="1600" height="800">
           <div class="portal-copy">
             <div class="portal-num">01 / GrazeX Ranch</div>
             <h3 class="display-3"><?= e(content('gateway', 'ranch_card_title', 'Raise. Rotate. Finish.')) ?></h3>
@@ -122,7 +127,7 @@ require GX_ROOT . '/includes/layout/header.php';
           </div>
         </a>
         <a class="portal portal-feeds reveal" style="--d:.1s" href="/feeds/">
-          <img src="<?= e($feedsImg) ?>" alt="" loading="lazy" width="1600" height="800">
+          <img src="<?= e($feedsImg) ?>" srcset="<?= e($feedsSet) ?>" sizes="(min-width: 1024px) 50vw, 100vw" alt="" loading="lazy" width="1600" height="800">
           <div class="portal-copy">
             <div class="portal-num">02 / GrazeX Feeds</div>
             <h3 class="display-3"><?= e(content('gateway', 'feeds_card_title', 'Feed that earns.')) ?></h3>
@@ -165,7 +170,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container grid-3">
       <?php foreach ($testimonials as $i => $tm): ?>
         <figure class="card card-pad quote reveal" style="--d:<?= $i * 0.08 ?>s">
-          <?php if ($tm['rating']): ?><div class="stars" aria-label="<?= (int) $tm['rating'] ?> out of 5"><?= str_repeat('★', (int) $tm['rating']) ?></div><?php endif; ?>
+          <?php if ($tm['rating']): ?><div class="stars" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div><?php endif; ?>
           <blockquote>“<?= e($tm['quote']) ?>”</blockquote>
           <figcaption><strong><?= e($tm['name']) ?></strong><?= $tm['location'] ? ' · ' . e($tm['location']) : '' ?></figcaption>
         </figure>

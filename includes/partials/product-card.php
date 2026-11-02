@@ -1,7 +1,7 @@
 <?php
 /** @var array $p  Row from CatalogService::products() */
 defined('GX_ROOT') || exit;
-$url = '/feeds/product.php?slug=' . rawurlencode($p['slug']);
+$url = product_url($p['slug']);
 $stock = (int) $p['stock_total'];
 $single = (int) $p['active_variants'] === 1;
 $onSpecial = (int) $p['on_special'] === 1;

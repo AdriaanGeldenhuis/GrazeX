@@ -13,12 +13,13 @@ if (!$l) {
     require GX_ROOT . '/includes/layout/not_found.php';
     exit;
 }
+redirect_to_pretty(lot_url($l['slug']));
 
 $canBuy = in_array($l['status'], ['available', 'reserved'], true) && (int) $l['qty_available'] > 0;
 [$badgeLabel, $badgeClass] = LivestockService::badge($l);
 $price = LivestockService::priceLabel($l);
 $age = LivestockService::ageLabel($l);
-$url = app_url('/ranch/lot.php?slug=' . rawurlencode($l['slug']));
+$url = app_url(lot_url($l['slug']));
 $wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX Ranch, I am interested in ' . $l['title'] . ' (' . $l['lot_no'] . ') ' . $url);
 $lotJson = ['id' => (int) $l['id'], 'mode' => $l['pricing_mode'], 'price' => (int) $l['price_cents'],
             'avg' => $l['avg_weight_kg'] !== null ? (float) $l['avg_weight_kg'] : null, 'deposit' => (int) $l['deposit_pct'], 'max' => max(1, (int) $l['qty_available'])];
@@ -68,6 +69,21 @@ $page = [
     'css' => ['/assets/css/store.css', '/ranch/css/ranch.css'],
     'js' => ['/assets/js/cart.js', '/ranch/js/ranch.js'],
     'og_image' => $l['media'] ? (media_url((int) $l['media'][0], 1600, 'wide') ?? '') : '',
+    'canonical' => lot_url($l['slug']),
+    'jsonld' => [[
+        '@context' => 'https://schema.org', '@type' => 'Product', 'name' => $l['title'], 'sku' => $l['lot_no'],
+        'description' => $l['short_description'], 'category' => trim(($l['breed_name'] ?? '') . ' ' . ($l['category_name'] ?? '')),
+        'image' => $l['media'] ? app_url((string) media_url((int) $l['media'][0], 1600, 'wide')) : null, 'url' => $url,
+        'offers' => ['@type' => 'Offer', 'priceCurrency' => 'ZAR', 'url' => $url,
+            // Per-kg lots are priced per kilogram of live weight
+            'price' => number_format((int) $l['price_cents'] / 100, 2, '.', ''),
+            'priceSpecification' => $l['pricing_mode'] === 'per_kg'
+                ? ['@type' => 'UnitPriceSpecification', 'price' => number_format((int) $l['price_cents'] / 100, 2, '.', ''), 'priceCurrency' => 'ZAR', 'unitCode' => 'KGM']
+                : null,
+            'availability' => $l['status'] === 'coming_soon' ? 'https://schema.org/PreOrder'
+                : ($canBuy ? 'https://schema.org/InStock' : 'https://schema.org/SoldOut'),
+            'availabilityStarts' => $l['status'] === 'coming_soon' ? $l['available_from'] : null],
+    ], jsonld_breadcrumbs([['Ranch', '/ranch/'], ['Livestock', '/ranch/livestock.php'], [$l['title'], lot_url($l['slug'])]])],
 ];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';
@@ -209,7 +225,7 @@ require GX_ROOT . '/includes/layout/header.php';
 </dialog>
 
 <?php if ($canBuy): ?>
-<div class="sticky-buy" data-sticky-buy aria-hidden="true">
+<div class="sticky-buy" data-sticky-buy aria-hidden="true" inert>
   <div class="sb-info"><div class="sb-name"><?= e($l['title']) ?></div><div class="price" style="font-size:17px"><?= e($price['main']) ?><span class="price-unit"> <?= e($price['unit']) ?></span></div></div>
   <button class="btn btn-primary" type="button" data-scroll-buy>Reserve</button>
 </div>

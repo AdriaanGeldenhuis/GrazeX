@@ -56,8 +56,23 @@
   }
 
   // Copy to clipboard
+  // (navigator.clipboard needs https and permission; some WebViews and older phones don't have it)
+  const copyText = async (text) => {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* try the old way */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.remove();
+    return ok;
+  };
   GX.on(document, 'click', '[data-copy]', async (e, b) => {
-    try { await navigator.clipboard.writeText(b.dataset.copy); GX.toast('Copied'); } catch (_) { /* ignore */ }
+    if (await copyText(b.dataset.copy)) GX.toast('Copied');
+    else GX.toast('Could not copy — press and hold the text to copy it: ' + b.dataset.copy, 'error', { timeout: 9000 });
   });
 
   // POP upload with drag & drop

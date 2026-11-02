@@ -48,7 +48,7 @@ admin_start('Feeds products', 'products', ['perm' => 'products.manage']);
         <?php endforeach; ?>
       </td>
       <td data-label=""><?= (int) $p['is_active'] ? '<span class="badge badge-success">Live</span>' : '<span class="badge">Hidden</span>' ?><?= (int) $p['is_featured'] ? ' <span class="badge badge-accent">Featured</span>' : '' ?></td>
-      <td class="actions"><a class="btn btn-sm" href="/admin/product.php?id=<?= (int) $p['id'] ?>">Edit</a> <a class="btn btn-sm btn-ghost" href="/feeds/product.php?slug=<?= e($p['slug']) ?>" target="_blank" rel="noopener">View</a></td>
+      <td class="actions"><a class="btn btn-sm" href="/admin/product.php?id=<?= (int) $p['id'] ?>">Edit</a> <a class="btn btn-sm btn-ghost" href="<?= e(product_url($p['slug'])) ?>" target="_blank" rel="noopener">View</a></td>
     </tr>
   <?php endforeach; ?>
   <?php if (!$products): ?><tr><td colspan="5" class="muted">No products yet. <a class="link" href="/admin/product.php">Add your first product</a>.</td></tr><?php endif; ?>

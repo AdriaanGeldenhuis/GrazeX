@@ -27,7 +27,7 @@ require GX_ROOT . '/includes/layout/header.php';
       <div class="field"><label for="phone">Cellphone</label><input class="input" id="phone" name="phone" type="tel" autocomplete="tel" placeholder="082 123 4567" required></div>
       <div class="field"><label for="password">Password <span class="opt">(min <?= GX_PASSWORD_MIN ?> characters)</span></label><input class="input" id="password" name="password" type="password" autocomplete="new-password" minlength="<?= GX_PASSWORD_MIN ?>" required></div>
       <label class="check mb-2"><input type="checkbox" name="marketing_opt_in" value="1"> Send me specials and new livestock alerts</label>
-      <p class="hint">By creating an account you accept our <a class="link" href="/pages/page.php?slug=terms">terms</a> and <a class="link" href="/pages/page.php?slug=privacy">privacy policy</a>.</p>
+      <p class="hint">By creating an account you accept our <a class="link" href="<?= e(page_url('terms')) ?>">terms</a> and <a class="link" href="<?= e(page_url('privacy')) ?>">privacy policy</a>.</p>
       <button class="btn btn-primary btn-lg btn-block" type="submit">Create account</button>
     </form>
     <p class="center small mt-2">Already have an account? <a class="link" href="/account/login.php?next=<?= e(rawurlencode($next)) ?>">Log in</a></p>

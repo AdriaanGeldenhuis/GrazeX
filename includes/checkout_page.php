@@ -177,18 +177,20 @@ require GX_ROOT . '/includes/layout/header.php';
             <?php endif; ?>
             <div class="new-address" <?= $addresses ? 'hidden' : '' ?>>
               <div class="grid-2 mt-2">
-                <div class="field"><label for="a-name">Receiver's name</label><input class="input" id="a-name" name="address[recipient_name]" value="<?= e($prefill['billing_name']) ?>"></div>
-                <div class="field"><label for="a-phone">Receiver's phone</label><input class="input" id="a-phone" name="address[phone]" type="tel" value="<?= e($prefill['billing_phone']) ?>"></div>
+                <div class="field"><label for="a-name">Receiver's name</label><input class="input" id="a-name" name="address[recipient_name]" autocomplete="shipping name" value="<?= e($prefill['billing_name']) ?>"></div>
+                <div class="field"><label for="a-phone">Receiver's phone</label><input class="input" id="a-phone" name="address[phone]" type="tel" autocomplete="shipping tel" value="<?= e($prefill['billing_phone']) ?>"></div>
               </div>
               <div class="grid-2">
-                <div class="field"><label for="a-farm">Farm name <span class="opt">(optional)</span></label><input class="input" id="a-farm" name="address[farm_name]"></div>
-                <div class="field"><label for="a-line1">Street / farm road</label><input class="input" id="a-line1" name="address[line1]" autocomplete="address-line1"></div>
+                <div class="field"><label for="a-farm">Farm name <span class="opt">(optional)</span></label><input class="input" id="a-farm" name="address[farm_name]" autocomplete="shipping organization"></div>
+                <div class="field"><label for="a-line1">Street / farm road</label><input class="input" id="a-line1" name="address[line1]" autocomplete="shipping address-line1"></div>
               </div>
+              <div class="field"><label for="a-line2">Area, plot or suburb <span class="opt">(optional)</span></label><input class="input" id="a-line2" name="address[line2]" autocomplete="shipping address-line2"></div>
               <div class="grid-2">
-                <div class="field"><label for="a-town">Town</label><input class="input" id="a-town" name="town" list="zone-towns" autocomplete="address-level2">
+                <div class="field"><label for="a-town">Town</label><input class="input" id="a-town" name="town" list="zone-towns" autocomplete="shipping address-level2">
                   <datalist id="zone-towns"><?php foreach ($towns as $t): ?><option value="<?= e($t) ?>"><?php endforeach; ?></datalist></div>
-                <div class="field"><label for="a-postal">Postal code <span class="opt">(optional)</span></label><input class="input" id="a-postal" name="address[postal_code]" inputmode="numeric"></div>
+                <div class="field"><label for="a-postal">Postal code <span class="opt">(optional)</span></label><input class="input" id="a-postal" name="address[postal_code]" inputmode="numeric" autocomplete="shipping postal-code"></div>
               </div>
+              <div class="field"><label for="a-province">Province <span class="opt">(optional)</span></label><select class="select" id="a-province" name="address[province]" autocomplete="shipping address-level1"><?= province_options() ?></select></div>
               <div class="field"><label for="a-dir">Directions for the driver <span class="opt">(optional)</span></label><textarea class="textarea" id="a-dir" name="address[directions]" rows="2" placeholder="e.g. 3rd gate after the silos, white farmhouse"></textarea></div>
               <div class="row"><button class="btn btn-sm" type="button" data-gps><svg class="icon icon-sm"><use href="#i-pin"/></svg>Add my GPS location</button><span class="small muted" data-gps-label></span></div>
               <input type="hidden" name="address[gps_lat]"><input type="hidden" name="address[gps_lng]">
@@ -221,7 +223,7 @@ require GX_ROOT . '/includes/layout/header.php';
         <section class="card card-pad co-section">
           <div class="co-head"><span class="co-num">4</span><h2 class="h3">Confirm</h2></div>
           <div class="field"><label for="customer_note">Notes for us <span class="opt">(optional)</span></label><textarea class="textarea" id="customer_note" name="customer_note" rows="2"></textarea></div>
-          <label class="check"><input type="checkbox" name="accept_terms" value="1" required> I accept the <a class="link" href="/pages/page.php?slug=terms" target="_blank">terms &amp; conditions</a> and <a class="link" href="/pages/page.php?slug=privacy" target="_blank">privacy policy</a>.</label>
+          <label class="check"><input type="checkbox" name="accept_terms" value="1" required> I accept the <a class="link" href="<?= e(page_url('terms')) ?>" target="_blank">terms &amp; conditions</a> and <a class="link" href="<?= e(page_url('privacy')) ?>" target="_blank">privacy policy</a>.</label>
           <?php if (!(int) ($customer['marketing_opt_in'] ?? 0)): ?>
             <label class="check mt-1"><input type="checkbox" name="marketing_opt_in" value="1"> Send me specials and livestock alerts.</label>
           <?php endif; ?>

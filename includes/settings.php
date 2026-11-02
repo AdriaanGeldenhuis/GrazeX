@@ -73,6 +73,13 @@ function content_image(string $scope, string $key, string $fallback = '', int $w
     return $fallback;
 }
 
+/** srcset for an image-type content block (all generated sizes), or $fallback when no photo is set. */
+function content_image_srcset(string $scope, string $key, string $fallback = ''): string
+{
+    $mediaId = content_scope($scope)[$key]['media_id'] ?? null;
+    return $mediaId ? (media_srcset((int) $mediaId, 'wide') ?: $fallback) : $fallback;
+}
+
 function content_lines(string $scope, string $key): array
 {
     $lines = preg_split('/\R/', content($scope, $key)) ?: [];

@@ -33,6 +33,9 @@ $page = [
     'nav_current' => 'shop',
     'css' => ['/assets/css/store.css', '/feeds/css/feeds.css'],
     'js' => ['/assets/js/cart.js', '/feeds/js/feeds.js'],
+    // Filters, search and sorting are views of the same list: the category (and page) is what search engines index
+    'canonical' => ($activeCat ? category_url($activeCat['slug']) : '/feeds/shop.php') . ($filters['page'] > 1 ? '?page=' . $filters['page'] : ''),
+    'noindex' => $filters['q'] !== '',
 ];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';
