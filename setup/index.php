@@ -11,6 +11,10 @@ require __DIR__ . '/../includes/bootstrap.php';
 // Once set up, the page is locked by a file: no database or server diagnostics are shown to anyone,
 // even while the database is unreachable.
 $locked = setup_locked();
+if ($locked && setup_lock_is_stale()) {
+    @unlink(GX_ROOT . '/storage/private/setup.lock');
+    $locked = false;
+}
 $db = $locked ? ['ok' => true, 'message' => ''] : gx_db_diagnose();
 $dbOk = $db['ok'];
 $ownerExists = $locked;
@@ -73,6 +77,7 @@ require GX_ROOT . '/includes/layout/head.php';
       <div class="es-icon"><svg class="icon icon-lg"><use href="#i-lock"/></svg></div>
       <h2 class="h3 mb-1">Setup is complete</h2>
       <p class="muted">The owner account already exists, so this page is locked.</p>
+      <p class="small dim">Problems with the site? Check <code>storage/logs</code> (each error page shows a reference code) and the warnings in the admin.</p>
       <a class="btn btn-primary" href="/admin/">Go to admin</a>
     </section>
   <?php else: ?>

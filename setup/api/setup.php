@@ -9,7 +9,7 @@ define('GX_SKIP_MAINTENANCE', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 api_post();
-if (setup_locked()) {
+if (setup_locked() && !setup_lock_is_stale()) {
     json_error('Setup has already been completed.', 409);
 }
 rate_limit_or_fail('setup', rate_limit_ip(), 5, 900);

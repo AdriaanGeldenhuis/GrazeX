@@ -17,20 +17,26 @@ switch ($action) {
     case 'login':
         $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191', 'password' => 'required|max:200']);
         rate_limit_or_fail('admin_login_ip', rate_limit_ip(), 10, 900);
-        // Per account AND address, counting only failures: a stranger cannot lock the owner out
+        // Per account AND address (counted before checking, cleared on success): a stranger cannot lock the owner out
         $acct = $d['email'] . '|' . rate_limit_ip();
-        if (rate_limit_blocked('admin_login_email', $acct)) {
-            header('Retry-After: 900');
-            json_error(t('error.rate_limited'), 429);
+        rate_limit_or_fail('admin_login_email', $acct, 5, 900);
+        // Account-wide cap across all addresses (slow guessing from many IPs). While it is tripped only the
+        // address the admin last logged in from may still try, so an attack cannot lock the owner out either.
+        $lastIp = (string) db_val('SELECT last_login_ip FROM admin_users WHERE email = ?', [$d['email']]);
+        $fromKnownPlace = $lastIp !== '' && ip_bucket($lastIp) === rate_limit_ip();
+        if (!$fromKnownPlace && rate_limit_blocked('admin_login_account', $d['email'])) {
+            header('Retry-After: 3600');
+            json_error('Too many failed logins for this account. Try again later from the place you usually log in from.', 429);
         }
         $a = db_one("SELECT * FROM admin_users WHERE email = ? AND status = 'active'", [$d['email']]);
         $hash = $a['password_hash'] ?? gx_dummy_hash();
         if (!password_verify($d['password'], $hash) || !$a) {
-            rate_limit_hit('admin_login_email', $acct, 5, 900);
+            rate_limit_hit('admin_login_account', $d['email'], 30, 3600);
             audit('admin.login_failed', null, null, ['email' => $d['email']]);
             json_error('Incorrect email or password.', 422, ['password' => 'Incorrect email or password.']);
         }
         rate_limit_clear('admin_login_email', $acct);
+        rate_limit_clear('admin_login_account', $d['email']);
         setup_lock_write();
         if ((int) $a['totp_enabled'] && $a['totp_secret']) {
             session_rotate();
@@ -58,12 +64,9 @@ switch ($action) {
                 // Each code works once (a code seen over someone's shoulder cannot be replayed)
                 $ok = db_exec('UPDATE admin_users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)',
                     [$step, $a['id'], $step]) === 1;
-                if ($ok && !str_starts_with((string) $a['totp_secret'], 'enc:')) {
-                    try {
-                        db_exec('UPDATE admin_users SET totp_secret = ? WHERE id = ?', [totp_secret_store($secret), $a['id']]);
-                    } catch (Throwable $e) {
-                        gx_log('warning', 'Could not encrypt 2FA secret (APP_KEY missing?)');
-                    }
+                if ($ok) {
+                    // Re-save with the current key (encrypts old plain secrets; heals after APP_KEY is added/changed)
+                    db_exec('UPDATE admin_users SET totp_secret = ? WHERE id = ?', [totp_secret_store($secret), $a['id']]);
                 }
             } elseif (totp_recovery_use((int) $a['id'], $code)) {
                 $ok = true;

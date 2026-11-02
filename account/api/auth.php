@@ -41,18 +41,21 @@ switch ($action) {
     case 'login':
         $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191', 'password' => 'required|max:200']);
         rate_limit_or_fail('login_ip', rate_limit_ip(), 20, 900);
-        // Per account AND address, counting only failures: a stranger cannot lock someone else out
+        // Per account AND address (counted before checking, cleared on success): a stranger cannot lock someone else out
         $acct = $d['email'] . '|' . rate_limit_ip();
-        if (rate_limit_blocked('login_email', $acct)) {
-            header('Retry-After: 900');
-            json_error(t('error.rate_limited'), 429);
+        rate_limit_or_fail('login_email', $acct, 6, 900);
+        // Account-wide cap across all addresses (credential stuffing); "Forgot password" unlocks it
+        if (rate_limit_blocked('login_account', $d['email'])) {
+            header('Retry-After: 3600');
+            json_error('Too many failed logins for this account. Use "Forgot password" to get back in, or try again later.', 429);
         }
         $c = attempt_customer_login($d['email'], $d['password']);
         if (!$c) {
-            rate_limit_hit('login_email', $acct, 6, 900);
+            rate_limit_hit('login_account', $d['email'], 30, 3600);
             json_error('That email and password don\'t match. Please try again.', 422, ['password' => 'Incorrect email or password.']);
         }
         rate_limit_clear('login_email', $acct);
+        rate_limit_clear('login_account', $d['email']);
         login_customer($c);
         json_ok(['redirect' => safe_next((string) input('next', ''), '/account/')], 'Welcome back, ' . $c['first_name'] . '!');
 
@@ -85,9 +88,10 @@ switch ($action) {
         if (!$cid) {
             json_error('This reset link has expired or was already used. Please request a new one.', 422);
         }
-        // New password + log out every other session
+        // New password + log out every other session (and lift any login block on the account)
         db_exec('UPDATE customers SET password_hash = ?, session_version = session_version + 1, email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = ?',
             [customer_password_hash($d['password']), $cid]);
+        rate_limit_clear('login_account', (string) db_val('SELECT email FROM customers WHERE id = ?', [$cid]));
         login_customer(db_one('SELECT * FROM customers WHERE id = ?', [$cid]));
         audit('customer.password_reset', 'customer', $cid);
         json_ok(['redirect' => '/account/'], 'Your password has been changed.');

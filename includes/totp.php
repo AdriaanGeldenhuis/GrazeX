@@ -95,7 +95,7 @@ function totp_recovery_generate(int $count = 8): array
         }
         $codes[] = substr($c, 0, 4) . '-' . substr($c, 4);
     }
-    return [$codes, json_encode(array_map(static fn($c) => token_hash(totp_recovery_normalise($c)), $codes))];
+    return [$codes, json_encode(array_map(static fn($c) => password_hash(totp_recovery_normalise($c), PASSWORD_BCRYPT, ['cost' => 10]), $codes))];
 }
 
 function totp_recovery_normalise(string $code): string
@@ -115,9 +115,14 @@ function totp_recovery_use(int $adminId, string $code): bool
     if (!is_array($hashes)) {
         return false;
     }
-    $hash = token_hash($norm);
-    $i = array_search($hash, $hashes, true);
-    if ($i === false) {
+    $i = null;
+    foreach ($hashes as $n => $h) {
+        if (is_string($h) && password_verify($norm, $h)) {
+            $i = $n;
+            break;
+        }
+    }
+    if ($i === null) {
         return false;
     }
     unset($hashes[$i]);

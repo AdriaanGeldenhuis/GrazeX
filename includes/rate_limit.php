@@ -58,7 +58,12 @@ function rate_limit_blocked(string $action, string $key): bool
  */
 function rate_limit_ip(): string
 {
-    $ip = client_ip();
+    return ip_bucket(client_ip());
+}
+
+/** An address as a rate-limit bucket: IPv4 as is, IPv6 as its /64. */
+function ip_bucket(string $ip): string
+{
     if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && ($bin = @inet_pton($ip)) !== false && strlen($bin) === 16) {
         return (string) inet_ntop(substr($bin, 0, 8) . str_repeat("\0", 8)) . '/64';
     }

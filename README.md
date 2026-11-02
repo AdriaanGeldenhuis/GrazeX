@@ -70,7 +70,11 @@ tests/                run.php (enjin- + API-toetse) · js/ (admin-JS-toetse) · 
 12. **SSL:** Let's Encrypt is by Xneelo ingesluit, en `.htaccess` dwing HTTPS af.
 
 ### Kry jy 'n fout?
-- Maak **`https://jou-domein/setup/`** oop. Dit sê in gewone taal wat skort, byvoorbeeld:
+- **Voor** die eienaar-rekening bestaan: maak **`https://jou-domein/setup/`** oop. Dit sê in gewone taal wat skort.
+  - Sodra die eienaar bestaan, sluit `/setup/` homself (lêer `storage/private/setup.lock`) en wys dit niks meer nie, ook nie as die databasis af is nie.
+  - Die slot word vanself opgehef as die databasis weer leeg ingevoer is (geen eienaar nie).
+- **Ná** opstelling: kyk na die rooi banier in die admin (ontbrekende instellings) en na `storage/logs/app-DATUM.log`.
+- Die setup-blad (voor opstelling) gee boodskappe soos:
   - "settings file not found"
   - "database is empty — paste install.sql"
   - "the database refused the username or password"

@@ -245,11 +245,17 @@ function stream_private_file(string $relPath, string $downloadName): never
     $mime = (new finfo(FILEINFO_MIME_TYPE))->file($abs) ?: 'application/octet-stream';
     header('Content-Type: ' . $mime);
     header('Content-Length: ' . filesize($abs));
-    header('Content-Disposition: inline; filename="' . preg_replace('/[^A-Za-z0-9._-]/', '_', $downloadName) . '"');
+    $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $downloadName);
+    if ($mime === 'application/pdf') {
+        // Uploaded PDFs are downloaded and opened outside the site (a customer's PDF never runs on our domain)
+        header('Content-Disposition: attachment; filename="' . $safeName . '"');
+    } else {
+        // Images are shown inline (handy for checking a POP), sandboxed so nothing in them can run
+        header('Content-Disposition: inline; filename="' . $safeName . '"');
+        header("Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    }
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
-    // Shown inline (handy for checking a POP), but sandboxed: an uploaded PDF/image can never run script on our domain
-    header('Content-Security-Policy: sandbox; default-src \'none\'; img-src \'self\' data:; style-src \'unsafe-inline\'; object-src \'self\'');
     readfile($abs);
     exit;
 }

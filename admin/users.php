@@ -5,6 +5,11 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
+if (require_admin()['role_slug'] !== 'owner') {
+    http_response_code(403);
+    require GX_ROOT . '/includes/layout/forbidden.php';
+    exit;
+}
 $users = db_all('SELECT a.*, r.name AS role_name FROM admin_users a JOIN roles r ON r.id = a.role_id ORDER BY a.id');
 $roles = db_all('SELECT * FROM roles ORDER BY id');
 $perms = db_all('SELECT * FROM permissions ORDER BY group_name, id');

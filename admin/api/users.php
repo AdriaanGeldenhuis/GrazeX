@@ -50,7 +50,8 @@ switch ((string) input('action')) {
             foreach (db_all("SELECT id FROM roles WHERE slug <> 'owner'") as $r) {
                 db_exec('DELETE FROM role_permissions WHERE role_id = ?', [$r['id']]);
                 foreach (array_unique(array_map('intval', (array) ($map[$r['id']] ?? []))) as $pid) {
-                    db_exec('INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE id = ?', [$r['id'], $pid]);
+                    // Managing admin users stays with the owner
+                    db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE id = ? AND slug <> 'users.manage'", [$r['id'], $pid]);
                 }
             }
         });

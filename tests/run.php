@@ -326,6 +326,12 @@ final class TestHttp
             $opts[CURLOPT_POSTFIELDS] = json_encode($body);
         }
         $opts[CURLOPT_HTTPHEADER] = $headers;
+        $opts[CURLOPT_HEADERFUNCTION] = function ($c, string $h): int {
+            if (preg_match('/^X-CSRF-Token:\s*([a-f0-9]+)/i', $h, $m)) {
+                $this->csrf = $m[1];
+            }
+            return strlen($h);
+        };
         curl_setopt_array($ch, $opts);
         $out = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -373,8 +379,14 @@ function yoco_pending(array $o, string $checkoutId): int
                       VALUES (?, ?, 'yoco', 'full', ?, 'pending', ?, 'test', ?)", [$o['id'], $o['division_id'], OrderService::amountDue($o), $checkoutId, $o['order_no']]);
 }
 
+$gxTableCount = (int) db_val('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()');
 // The setup lock file lives in the real storage/: remember whether it was there, restore at the end
 $setupLockExisted = setup_locked();
+register_shutdown_function(static function () use ($setupLockExisted): void {
+    if (!$setupLockExisted) {
+        @unlink(GX_ROOT . '/storage/private/setup.lock');
+    }
+});
 // No lazy expiry from page loads during these tests (they control expiry explicitly)
 setting_set('last_expiry_run', (string) (time() + 86400));
 [$server, $base] = http_start($testDb);
@@ -650,6 +662,33 @@ $cown = new TestHttp($base);
 $cown->page('/account/login.php');
 [$st] = $cown->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'lockme@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 198.51.100.8']);
 check('a customer still logs in after someone else hammered their account', $st === 200, (string) $st);
+// Slow guessing from many addresses: an account-wide cap, without letting it lock the owner out
+db_exec("UPDATE admin_users SET last_login_ip = '198.51.100.7' WHERE email = 'lock@test.local'");
+for ($i = 0; $i < 32; $i++) {
+    $ipx = '192.0.2.' . (10 + intdiv($i, 4));
+    $attacker->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'lock@test.local', 'password' => 'guess-' . $i], null, ['X-Test-Remote-Addr: ' . $ipx]);
+}
+$newPlace = new TestHttp($base);
+$newPlace->page('/admin/login.php');
+[$st] = $newPlace->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'lock@test.local', 'password' => $lockPw], null, ['X-Test-Remote-Addr: 192.0.2.200']);
+check('after 30+ failures from many addresses, new addresses are refused for that account', $st === 429, (string) $st);
+$usual = new TestHttp($base);
+$usual->page('/admin/login.php');
+[$st] = $usual->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'lock@test.local', 'password' => $lockPw], null, ['X-Test-Remote-Addr: 198.51.100.7']);
+check('… but the owner still gets in from where they usually log in', $st === 200, (string) $st);
+for ($i = 0; $i < 32; $i++) {
+    $catk->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'lockme@test.local', 'password' => 'g-' . $i], null, ['X-Test-Remote-Addr: 192.0.2.' . (100 + intdiv($i, 5))]);
+}
+[$st] = $cown->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'lockme@test.local', 'password' => 'x'], null, ['X-Test-Remote-Addr: 198.51.100.9']);
+check('a customer account under attack from many addresses is paused', $st === 429, (string) $st);
+$lmId = (int) db_val("SELECT id FROM customers WHERE email = 'lockme@test.local'");
+$rt = customer_token_create($lmId, 'reset_password', 60);
+$cown->page('/account/reset.php?token=' . $rt);
+[$st] = $cown->api('POST', '/account/api/auth.php', ['action' => 'reset', 'token' => $rt, 'password' => 'Brand-New-Pass-1!', 'password_confirm' => 'Brand-New-Pass-1!'], null, ['X-Test-Remote-Addr: 198.51.100.9']);
+$back = new TestHttp($base);
+$back->page('/account/login.php');
+[$st2] = $back->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'lockme@test.local', 'password' => 'Brand-New-Pass-1!'], null, ['X-Test-Remote-Addr: 198.51.100.9']);
+check('… and "Forgot password" lets them back in', $st === 200 && $st2 === 200, $st . '/' . $st2);
 check('unknown-email logins verify against a hash of the same kind as real ones',
     password_get_info(gx_dummy_hash())['algoName'] === password_get_info(customer_password_hash('x'))['algoName']);
 $fg = new TestHttp($base);
@@ -783,6 +822,29 @@ $_SERVER['REMOTE_ADDR'] = '203.0.113.5';
 check('IPv4 visitors per address', rate_limit_ip() === '203.0.113.5');
 unset($_SERVER['REMOTE_ADDR']);
 
+section('Security: review follow-ups');
+[$st, $hd] = $cust->headers('/feeds/api/cart.php');
+check('JSON answers carry the current CSRF token (pages stay valid after a re-login)', ($hd['x-csrf-token'] ?? '') !== '' && ($hd['x-csrf-token'] ?? '') === $cust->csrf, json_encode($hd['x-csrf-token'] ?? null));
+@mkdir(GX_ROOT . '/storage/private/pop', 0755, true);
+file_put_contents(GX_ROOT . '/storage/private/pop/test-proof.pdf', "%PDF-1.4\n%test\n");
+$pdfPay = db_insert("INSERT INTO payments (order_id, division_id, method, purpose, amount_cents, status, pop_path, pop_original_name) VALUES (?, 1, 'eft', 'full', 100, 'rejected', 'storage/private/pop/test-proof.pdf', 'proof.pdf')", [$bo['id']]);
+[$st, $hd] = $adm->headers('/admin/api/documents.php?pop=' . $pdfPay);
+check('a PDF proof of payment downloads (a sandboxed PDF would not open)', $st === 200 && str_starts_with($hd['content-disposition'] ?? '', 'attachment') && !str_contains($hd['content-security-policy'] ?? '', 'sandbox'), json_encode($hd));
+$roHtml = $ro->page('/admin/');
+check('the bell only counts notifications this admin can see', !preg_match('/data-adm-bell[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*<span class="cart-count/s', $roHtml));
+[$st] = $mgr->headers('/admin/users.php');
+check('the Admin users page is owner-only too', $st === 403, (string) $st);
+$umId = (string) db_val("SELECT id FROM permissions WHERE slug = 'users.manage'");
+$adm->page('/admin/users.php');
+$adm->api('POST', '/admin/api/users.php', ['action' => 'perms', 'perm' => ['2' => [$umId], '3' => db_col('SELECT permission_id FROM role_permissions WHERE role_id = 3')]]);
+check('"Manage admin users" cannot be given to another role', !db_val('SELECT 1 FROM role_permissions WHERE role_id = 2 AND permission_id = ?', [$umId]));
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 2, id FROM permissions WHERE slug <> 'users.manage'");
+db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = ?", [$staffPerm('customers.view')]);
+$auditsBefore = (int) db_val("SELECT COUNT(*) FROM audit_log WHERE action = 'report.export'");
+$staff->headers('/admin/reports.php?export=customers');
+check('a refused export is not logged as an export', (int) db_val("SELECT COUNT(*) FROM audit_log WHERE action = 'report.export'") === $auditsBefore);
+db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug = 'customers.view'");
+
 section('Security: setup lock, secret key, canonical host');
 setup_lock_write();
 // A second server whose database does not exist (an outage): the setup page must still not show diagnostics
@@ -794,6 +856,29 @@ check('a locked setup page shows no server/database diagnostics, even while the 
     str_contains($setupHtml, 'Setup is complete') && !str_contains($setupHtml, 'Server check') && !str_contains($setupHtml, 'Tried'), substr(strip_tags($setupHtml), 0, 200));
 [$st] = $pub->api('POST', '/setup/api/setup.php', ['setup_token' => 'x', 'name' => 'X', 'email' => 'x@test.local', 'password' => 'Xxxxxxxx-1234', 'password_confirm' => 'Xxxxxxxx-1234']);
 check('… and refuses to create another owner', $st === 409, (string) $st);
+// Database re-imported (no owner any more): the old lock must not keep the owner from setting up again
+$admin->exec('DROP DATABASE IF EXISTS `gx_noowner_test`');
+$admin->exec('CREATE DATABASE `gx_noowner_test` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+$admin->exec('USE `gx_noowner_test`');
+$admin->exec((string) file_get_contents(GX_ROOT . '/database/install.sql'));
+while ($admin->query('SELECT 1')) { break; }
+// The import runs on in the background: wait (on a second connection) until its last statement has landed
+$probe = new PDO(sprintf('mysql:host=%s;port=%d;dbname=gx_noowner_test;charset=utf8mb4', env('db.host'), (int) env('db.port', 3306)), (string) env('db.user'), (string) env('db.pass'));
+for ($i = 0; $i < 100 && (int) $probe->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'gx_noowner_test'")->fetchColumn() < $gxTableCount; $i++) {
+    usleep(100000);
+}
+for ($i = 0; $i < 100 && !(int) $probe->query('SELECT COUNT(*) FROM settings')->fetchColumn(); $i++) {
+    usleep(100000);
+}
+usleep(300000);
+$probe = null;
+[$freshServer, $freshBase] = http_start('gx_noowner_test');
+$fresh = new TestHttp($freshBase);
+$freshHtml = $fresh->page('/setup/');
+@proc_terminate($freshServer);
+$admin->exec('DROP DATABASE IF EXISTS `gx_noowner_test`');
+$admin->exec("USE `{$testDb}`");
+check('a stale setup lock (database re-imported, no owner) is ignored', str_contains($freshHtml, 'Server check') && !setup_locked(), substr(strip_tags($freshHtml), 0, 160));
 $keyWas = $GLOBALS['GX_ENV']['app_key'];
 $legacy = (static function (string $plain): string {
     $key = hash('sha256', '', true);
@@ -806,6 +891,17 @@ $GLOBALS['GX_ENV']['app_key'] = '';
 check('without APP_KEY tokens are never signed with a publicly known key', token_hash('t') !== hash_hmac('sha256', 't', 'grazex') && token_hash('t') !== hash_hmac('sha256', 't', ''));
 check('… and the admin is told what is missing', in_array('APP_KEY', gx_settings_problems(), true));
 check('… and secrets saved by the old version can still be read', secret_decrypt($legacy) === 'whsec_old');
+$noKeySecret = totp_secret_store('JBSWY3DPEHPK3PXP');
+[$noKeyCodes, $noKeyHashes] = totp_recovery_generate();
+$nkAdmin = db_insert('INSERT INTO admin_users (role_id, email, password_hash, name, division_scope, totp_recovery) VALUES (1, ?, ?, ?, ?, ?)',
+    ['nokey@test.local', admin_password_hash('x'), 'No Key', 'all', $noKeyHashes]);
+$nkCust = make_customer('nokey-cust@test.local');
+$nkToken = customer_token_create((int) $nkCust['id'], 'reset_password', 60);
+check('without APP_KEY a random key is kept in storage (stable, not derived from passwords)', gx_app_key() === gx_stored_key() && strlen((string) gx_stored_key()) === 64);
+$GLOBALS['GX_ENV']['app_key'] = str_repeat('k', 64);
+check('adding APP_KEY later: 2FA secrets saved before still work', totp_secret_load($noKeySecret) === 'JBSWY3DPEHPK3PXP');
+check('… recovery codes saved before still work', totp_recovery_use($nkAdmin, $noKeyCodes[3]));
+check('… and emailed links sent before still work', customer_token_consume($nkToken, 'reset_password') === (int) $nkCust['id']);
 $GLOBALS['GX_ENV']['app_key'] = $keyWas;
 check('secrets round-trip with the real key', secret_decrypt(secret_encrypt('abc')) === 'abc');
 $GLOBALS['GX_ENV']['app_url'] = 'https://grazex.example';
