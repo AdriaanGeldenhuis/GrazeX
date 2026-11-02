@@ -92,7 +92,7 @@ if ($id === null):
       <div class="form-grid">
       <?php foreach ($ent['fields'] as $name => $f):
           [$type, $label] = $f;
-          $val = $row[$name] ?? ($type === 'bool' ? 1 : '');
+          $val = $row[$name] ?? ($f['default'] ?? ($type === 'bool' ? 1 : ''));
           $opts = ['readonly' => !empty($f['readonly']), 'hint' => $f['hint'] ?? null, 'required' => str_contains($f[2] ?? '', 'required')];
           $opts = array_filter($opts, static fn($v) => $v !== null && $v !== false);
           switch ($type) {

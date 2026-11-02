@@ -45,10 +45,14 @@ $recent = db_all("SELECT o.*, c.first_name, c.last_name FROM orders o JOIN custo
 $low = db_all('SELECT v.id, v.name, v.stock_qty, v.low_stock_threshold, p.name AS product_name, p.id AS product_id FROM product_variants v JOIN products p ON p.id = v.product_id
                WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold ORDER BY v.stock_qty LIMIT 8');
 
+// Scheduled jobs (emails, reminders, clean-up) depend on the server cron; warn when it has stopped
+$lastCron = setting('last_cron_run');
+$cronLate = !$lastCron || strtotime($lastCron) < time() - 3 * 3600;
+
 $admin = admin_start('Dashboard', 'dashboard', ['perm' => 'dashboard.view']);
 ?>
 <div class="adm-bar">
-  <div><h2 class="h3">Goeie <?= (int) date('G') < 12 ? 'môre' : ((int) date('G') < 18 ? 'middag' : 'aand') ?>, <?= e(explode(' ', $admin['name'])[0]) ?>.</h2>
+  <div><h2 class="h3">Good <?= (int) date('G') < 12 ? 'morning' : ((int) date('G') < 18 ? 'afternoon' : 'evening') ?>, <?= e(explode(' ', $admin['name'])[0]) ?>.</h2>
     <p class="muted small mb-0"><?= e(date('l j F Y')) ?></p></div>
   <div class="chips">
     <?php foreach (['today' => 'Today', '7' => '7 days', '30' => '30 days'] as $k => $l): ?>
@@ -56,6 +60,13 @@ $admin = admin_start('Dashboard', 'dashboard', ['perm' => 'dashboard.view']);
     <?php endforeach; ?>
   </div>
 </div>
+
+<?php if ($cronLate): ?>
+  <div class="alert alert-warning" role="alert" data-cron-warning><svg class="icon"><use href="#i-clock"/></svg><div>
+    <strong>Scheduled jobs are not running.</strong> <?= $lastCron ? 'The last run was ' . e(fmt_datetime($lastCron)) . '.' : 'They have never run on this server.' ?>
+    Queued emails, payment reminders and clean-up wait until it runs. In Xneelo's Cronjob Manager, run <code>cron/run.php</code> every 2 hours (see the README).
+  </div></div>
+<?php endif; ?>
 
 <div class="kpis">
   <?php foreach ($kpi as $code => $k): ?>

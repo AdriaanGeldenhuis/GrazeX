@@ -68,7 +68,7 @@ final class StockService
 
     private static function log(int $divisionId, ?int $variantId, ?int $lotId, string $type, int $delta, int $after, array $opts): void
     {
-        $admin = current_admin();
+        $admin = gx_is_system() ? null : current_admin();
         db_exec('INSERT INTO stock_movements (division_id, variant_id, lot_id, type, qty_change, balance_after, unit_cost_cents, order_id, reference, note, admin_id)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?)', [
             $divisionId, $variantId, $lotId, $type, $delta, $after,
