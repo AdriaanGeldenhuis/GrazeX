@@ -466,7 +466,7 @@ dialog.modal[open] { animation: modalIn .3s var(--ease); }
 .reveal { opacity: 0; transform: translateY(26px); transition: opacity .8s var(--ease), transform .8s var(--ease); transition-delay: var(--d, 0s); }
 .reveal.is-visible { opacity: 1; transform: none; }
 /* Above the fold: visible from the first paint (never waits for JavaScript), only slides into place */
-.hero-rise { animation: heroRise .8s var(--ease) both; animation-delay: var(--d, 0s); }
+.hero-rise { animation: heroRise .8s var(--ease) backwards; animation-delay: var(--d, 0s); }
 @keyframes heroRise { from { transform: translateY(18px); } }
 .no-js .reveal { opacity: 1; transform: none; }
 .fly-dot { position: fixed; z-index: 300; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 20px var(--accent); pointer-events: none;
@@ -475,6 +475,7 @@ dialog.modal[open] { animation: modalIn .3s var(--ease); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .reveal { opacity: 1; transform: none; }
+  .hero-rise { animation: none; }
   .marquee-track { animation: none; }
 }
 

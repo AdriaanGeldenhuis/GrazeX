@@ -14,7 +14,9 @@ foreach (db_all('SELECT p.slug, p.updated_at FROM products p WHERE p.is_active =
                  AND EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id AND v.is_active = 1) ORDER BY p.id') as $r) {
     $urls[] = [product_url($r['slug']), $r['updated_at']];
 }
-foreach (db_all('SELECT c.slug FROM categories c WHERE EXISTS (SELECT 1 FROM products p WHERE p.category_id = c.id AND p.is_active = 1) ORDER BY c.sort_order, c.id') as $r) {
+// The same categories the shop shows (live, top level) — any other would canonicalise to the plain shop page
+foreach (db_all('SELECT c.slug FROM categories c WHERE c.is_active = 1 AND c.parent_id IS NULL
+                 AND EXISTS (SELECT 1 FROM products p WHERE p.category_id = c.id AND p.is_active = 1) ORDER BY c.sort_order, c.id') as $r) {
     $urls[] = [category_url($r['slug']), null];
 }
 foreach (db_all("SELECT slug, updated_at FROM lots WHERE status IN ('available','reserved','coming_soon') ORDER BY id") as $r) {

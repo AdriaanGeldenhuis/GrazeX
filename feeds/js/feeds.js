@@ -78,7 +78,10 @@
         const data = await GX.api('/feeds/api/products.php?' + p.toString(), { signal: ctrl.signal });
         results.innerHTML = data.html;
         $('[data-result-count]').textContent = `${data.total} product${data.total === 1 ? '' : 's'}`;
-        history.replaceState(null, '', '/feeds/shop.php' + (p.toString() ? '?' + p.toString() : ''));
+        // The address bar shows the category's own address (/feeds/category/x), with any other filters after it
+        const cat = p.get('category');
+        p.delete('category');
+        history.replaceState(null, '', (cat ? '/feeds/category/' + encodeURIComponent(cat) : '/feeds/shop.php') + (p.toString() ? '?' + p.toString() : ''));
         $$('.reveal', results).forEach((el) => el.classList.add('is-visible'));
         if (scroll) results.scrollIntoView({ behavior: GX.reduceMotion ? 'auto' : 'smooth', block: 'start' });
       } catch (e) { if (e.name !== 'AbortError') console.error(e); }

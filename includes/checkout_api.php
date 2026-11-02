@@ -131,16 +131,18 @@ db_exec('UPDATE customers SET phone = COALESCE(NULLIF(phone, \'\'), ?), company_
 // "Save this address": only now that the order exists, never twice, at most 20 per customer
 if (!empty($saveAddress)) {
     try {
-        $dup = db_val('SELECT id FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND town = ?', [$customer['id'], $saveAddress['line1'], $saveAddress['town']]);
+        // The same address = same street, area/plot and town (Plot 7 and Plot 9 on one farm road are two addresses)
+        $dup = db_val("SELECT id FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND COALESCE(line2, '') = ? AND town = ?",
+            [$customer['id'], $saveAddress['line1'], (string) ($saveAddress['line2'] ?? ''), $saveAddress['town']]);
         $count = (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$customer['id']]);
         if ($dup) {
             // Same address again: keep it current (new directions / GPS pin / contact), never blank out what was there
             db_exec('UPDATE customer_addresses SET recipient_name = COALESCE(NULLIF(?, \'\'), recipient_name), phone = COALESCE(NULLIF(?, \'\'), phone),
                      farm_name = COALESCE(NULLIF(?, \'\'), farm_name), postal_code = COALESCE(NULLIF(?, \'\'), postal_code),
-                     line2 = COALESCE(NULLIF(?, \'\'), line2), province = COALESCE(NULLIF(?, \'\'), province),
+                     province = COALESCE(NULLIF(?, \'\'), province),
                      directions = COALESCE(NULLIF(?, \'\'), directions), gps_lat = COALESCE(?, gps_lat), gps_lng = COALESCE(?, gps_lng) WHERE id = ?', [
                 $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['postal_code'],
-                $saveAddress['line2'] ?? null, $saveAddress['province'] ?? null, $saveAddress['directions'],
+                $saveAddress['province'] ?? null, $saveAddress['directions'],
                 $saveAddress['gps_lat'], $saveAddress['gps_lng'], $dup,
             ]);
         } elseif ($count < 20) {

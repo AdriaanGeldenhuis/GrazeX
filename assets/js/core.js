@@ -90,13 +90,24 @@
     const close = () => { el.classList.add('is-leaving'); setTimeout(() => el.remove(), 320); };
     // Time to read it: longer with a button (e.g. "Checkout"), and paused while the pointer or keyboard focus is on it
     let left = opts.timeout || (type === 'error' ? 6000 : opts.action ? 7000 : 3800);
-    let timer = 0, started = 0;
-    const run = () => { started = Date.now(); timer = setTimeout(close, left); };
-    const pause = () => { clearTimeout(timer); left = Math.max(1200, left - (Date.now() - started)); };
-    el.addEventListener('mouseenter', pause);
-    el.addEventListener('mouseleave', run);
-    el.addEventListener('focusin', pause);
-    el.addEventListener('focusout', run);
+    let timer = 0, started = 0, hovered = false, focused = false;
+    const run = () => {
+      clearTimeout(timer);
+      timer = 0;
+      if (hovered || focused) return;
+      started = Date.now();
+      timer = setTimeout(close, left);
+    };
+    const pause = () => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = 0;
+      left = Math.max(1200, left - (Date.now() - started));
+    };
+    el.addEventListener('mouseenter', () => { pause(); hovered = true; });
+    el.addEventListener('mouseleave', () => { hovered = false; run(); });
+    el.addEventListener('focusin', () => { pause(); focused = true; });
+    el.addEventListener('focusout', () => { focused = false; run(); });
     run();
     el.addEventListener('click', (e) => { if (!e.target.closest('.t-action')) close(); });
     return el;

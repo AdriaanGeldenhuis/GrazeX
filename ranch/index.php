@@ -142,7 +142,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container grid-3">
       <?php foreach ($testimonials as $i => $tm): ?>
         <figure class="card card-pad reveal" style="--d:<?= $i * 0.06 ?>s;margin:0">
-          <div class="text-accent" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div>
+          <?php if ((int) $tm['rating'] > 0): ?><div class="text-accent" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div><?php endif; ?>
           <blockquote class="mt-1" style="margin-left:0">“<?= e($tm['quote']) ?>”</blockquote>
           <figcaption class="muted small"><strong><?= e($tm['name']) ?></strong><?= $tm['location'] ? ' · ' . e($tm['location']) : '' ?></figcaption>
         </figure>

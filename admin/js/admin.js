@@ -15,27 +15,32 @@
   const side = $('.adm-side');
   const wide = window.matchMedia('(min-width: 1100px)');
   let releaseSide = null;
+  let sideOpener = null;
   const syncSide = () => {
     const open = !!shell?.classList.contains('menu-open');
     if (side) side.inert = !wide.matches && !open;
     $$('button[data-adm-menu]').forEach((b) => b.setAttribute('aria-expanded', open ? 'true' : 'false'));
   };
-  const setMenu = (open) => {
+  const setMenu = (open, opener = null, returnFocus = true) => {
     if (!shell) return;
     shell.classList.toggle('menu-open', open);
     syncSide();
     releaseSide?.();
     releaseSide = null;
     if (open && !wide.matches && side) {
+      sideOpener = opener;
       releaseSide = GX.trapFocus(side);
       side.querySelector('a, button')?.focus();
     } else if (!open) {
-      $('.adm-menu-btn')?.focus();
+      // Back to the button that opened it (the top "Menu" or the bottom bar's "More")
+      if (returnFocus) (sideOpener && sideOpener.isConnected ? sideOpener : $('.adm-menu-btn'))?.focus();
+      sideOpener = null;
     }
   };
-  GX.on(document, 'click', '[data-adm-menu]', () => setMenu(!shell?.classList.contains('menu-open')));
+  GX.on(document, 'click', '[data-adm-menu]', (e, b) => setMenu(!shell?.classList.contains('menu-open'), b.matches('button') ? b : null));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && shell?.classList.contains('menu-open')) setMenu(false); });
-  wide.addEventListener?.('change', syncSide);
+  // Rotated or resized to the wide layout while the menu was open: the sidebar is part of the page again
+  wide.addEventListener?.('change', () => (wide.matches && shell?.classList.contains('menu-open') ? setMenu(false, null, false) : syncSide()));
   syncSide();
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && !e.target.closest('input, textarea, select, [contenteditable]')) { e.preventDefault(); $('[data-adm-search]')?.focus(); }

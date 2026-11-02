@@ -22,8 +22,10 @@ $precache = [
 $version = substr(sha1(implode('|', $precache) . '|' . (string) @filemtime(__FILE__) . '|' . (string) @filemtime(__DIR__ . '/offline.html')), 0, 12);
 ?>
 /* GrazeX service worker <?= $version ?> */
-const STATIC = 'gx-static-<?= $version ?>'; // versioned CSS/JS/fonts: a URL never changes its content
-const MEDIA = 'gx-media-v1';                 // uploaded photos: kept, but at most MEDIA_MAX of them
+const STATIC = 'gx-static-<?= $version ?>'; // the precache: versioned CSS/JS, fonts, offline page
+const RUNTIME = 'gx-run-<?= $version ?>';   // other site files as they are used (at most RUNTIME_MAX)
+const MEDIA = 'gx-media-v1';                 // uploaded photos (at most MEDIA_MAX)
+const RUNTIME_MAX = 120;
 const MEDIA_MAX = 80;
 const PRECACHE = <?= json_encode($precache, JSON_UNESCAPED_SLASHES) ?>;
 
@@ -33,13 +35,36 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   // Older releases' caches go (including the first service worker's "gx-static-v1")
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== STATIC && k !== MEDIA).map((k) => caches.delete(k))))
-    .then(() => self.clients.claim()));
+  e.waitUntil(Promise.all([
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => ![STATIC, RUNTIME, MEDIA].includes(k)).map((k) => caches.delete(k)))),
+    // Pages start loading while the worker wakes up
+    self.registration.navigationPreload ? self.registration.navigationPreload.enable() : null,
+  ]).then(() => self.clients.claim()));
 });
 
 async function trim(cache, max) {
   const keys = await cache.keys();
   if (keys.length > max) await Promise.all(keys.slice(0, keys.length - max).map((k) => cache.delete(k)));
+}
+
+/** Answer from the cache at once when we have it; refresh the copy in the background. */
+function staleWhileRevalidate(e, cacheName, max) {
+  const req = e.request;
+  e.respondWith(caches.open(cacheName).then(async (cache) => {
+    const hit = await cache.match(req);
+    const net = fetch(req).then((res) => {
+      if (res.ok && res.status === 200) {
+        // The page never waits for (or breaks on) the cache write
+        e.waitUntil(cache.put(req, res.clone()).then(() => trim(cache, max)).catch(() => {}));
+      }
+      return res;
+    });
+    if (hit) {
+      e.waitUntil(net.catch(() => {}));
+      return hit;
+    }
+    return net;
+  }));
 }
 
 self.addEventListener('fetch', (e) => {
@@ -49,29 +74,32 @@ self.addEventListener('fetch', (e) => {
 
   // Pages: always the network; the offline page only when there is no connection at all
   if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).catch(() => caches.match('/offline.html')));
+    e.respondWith((async () => {
+      try {
+        return (await e.preloadResponse) || (await fetch(req));
+      } catch (_) {
+        return (await caches.match('/offline.html')) || Response.error();
+      }
+    })());
     return;
   }
-  // Site assets: from the cache when we have this exact (versioned) URL, otherwise the network
   if (url.pathname.startsWith('/assets/')) {
-    e.respondWith(caches.open(STATIC).then(async (cache) => {
-      const hit = await cache.match(req);
-      if (hit) return hit;
-      const res = await fetch(req);
-      if (res.ok) cache.put(req, res.clone());
-      return res;
-    }));
+    // A versioned URL (?v=…) never changes: from the cache when we have it
+    if (url.searchParams.has('v')) {
+      e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+        if (res.ok && res.status === 200) {
+          e.waitUntil(caches.open(RUNTIME).then((c) => c.put(req, res.clone()).then(() => trim(c, RUNTIME_MAX))).catch(() => {}));
+        }
+        return res;
+      })));
+      return;
+    }
+    // Unversioned files (brand images, fonts): kept, but refreshed so a replaced file shows up
+    staleWhileRevalidate(e, RUNTIME, RUNTIME_MAX);
     return;
   }
-  // Uploaded photos: show the saved copy at once, refresh it in the background
+  // Uploaded photos
   if (url.pathname.startsWith('/uploads/')) {
-    e.respondWith(caches.open(MEDIA).then(async (cache) => {
-      const hit = await cache.match(req);
-      const net = fetch(req).then(async (res) => {
-        if (res.ok) { await cache.put(req, res.clone()); trim(cache, MEDIA_MAX); }
-        return res;
-      }).catch(() => hit);
-      return hit || net;
-    }));
+    staleWhileRevalidate(e, MEDIA, MEDIA_MAX);
   }
 });

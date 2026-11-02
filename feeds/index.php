@@ -32,7 +32,7 @@ require GX_ROOT . '/includes/layout/header.php';
         <span class="eyebrow hero-rise"><span class="dot"></span><?= e(content('feeds', 'hero_kicker', 'GrazeX Feeds')) ?></span>
         <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-accent-grad italic"><?= e(content('feeds', 'hero_title', 'Feed that earns.')) ?></span></h1>
         <p class="lead hero-rise" style="--d:.12s"><?= e(content('feeds', 'hero_text')) ?></p>
-        <div class="search-box reveal mt-3" style="--d:.18s" data-suggest>
+        <div class="search-box hero-rise mt-3" style="--d:.18s" data-suggest>
           <svg class="icon"><use href="#i-search"/></svg>
           <label class="sr-only" for="hero-search">Search feeds</label>
           <input class="input" id="hero-search" type="search" placeholder="Search licks, pellets, lucerne…" autocomplete="off" data-suggest-input>
@@ -132,7 +132,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container grid-3">
       <?php foreach ($testimonials as $i => $tm): ?>
         <figure class="card card-pad reveal" style="--d:<?= $i * 0.06 ?>s;margin:0">
-          <div class="text-accent" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div>
+          <?php if ((int) $tm['rating'] > 0): ?><div class="text-accent" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div><?php endif; ?>
           <blockquote class="mt-1" style="margin-left:0">“<?= e($tm['quote']) ?>”</blockquote>
           <figcaption class="muted small"><strong><?= e($tm['name']) ?></strong><?= $tm['location'] ? ' · ' . e($tm['location']) : '' ?></figcaption>
         </figure>

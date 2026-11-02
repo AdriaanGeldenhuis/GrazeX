@@ -101,12 +101,13 @@ function markdown(?string $md): string
 }
 
 /** Pagination links preserving the current query string. */
-function pagination(int $page, int $pages, string $baseUrl): string
+function pagination(int $page, int $pages, string $baseUrl, array $dropKeys = []): string
 {
     if ($pages <= 1) {
         return '';
     }
-    $q = $_GET;
+    // Keys already expressed by the base address (e.g. the category in /feeds/category/x) are left out of the query
+    $q = array_diff_key($_GET, array_flip($dropKeys));
     $link = static function (int $p) use ($q, $baseUrl): string {
         $q['page'] = $p;
         return $baseUrl . '?' . http_build_query($q);
@@ -159,13 +160,14 @@ function pretty_url(string $url): string
 }
 
 /**
- * A detail page reached by its old address (…/product.php?slug=x) moves permanently to the pretty one,
- * so search engines and shared links settle on one URL. Only for plain GET/HEAD page views.
+ * A detail page reached by any other address (…/product.php?slug=x, a trailing slash, …) moves permanently to the
+ * pretty one, so search engines and shared links settle on one URL. Only for plain GET/HEAD page views.
+ * Cannot loop: the pretty path is exactly what the rewrite rules serve.
  */
 function redirect_to_pretty(string $prettyPath): void
 {
     $path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH);
-    if (str_ends_with($path, '.php') && in_array(request_method(), ['GET', 'HEAD'], true)) {
+    if ($path !== $prettyPath && in_array(request_method(), ['GET', 'HEAD'], true)) {
         $q = $_GET;
         unset($q['slug'], $q['category']);
         redirect($prettyPath . ($q ? '?' . http_build_query($q) : ''), 301);

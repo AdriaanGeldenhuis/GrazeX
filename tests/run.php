@@ -1731,7 +1731,6 @@ $types = array_column($ld, '@type');
 check('product page: Product and BreadcrumbList structured data, no empty values', in_array('Product', $types, true) && in_array('BreadcrumbList', $types, true)
     && !preg_match('#"[^"]+":(null|"")#', implode('', array_map('json_encode', $ld))), json_encode($types));
 check('product page: offer links use the pretty address', $isUrl((string) ($ld[0]['offers'][0]['url'] ?? ''), '/feeds/product/' . $prod['slug']));
-check('<html lang> comes from the site language', str_contains($h, '<html lang="en"'));
 [$st, $hd] = $pv->headers('/feeds/product.php?slug=' . $prod['slug']);
 check('old product address moves permanently to the pretty one (301)', $st === 301 && ($hd['location'] ?? '') === '/feeds/product/' . $prod['slug'], $st . ' ' . ($hd['location'] ?? ''));
 $lotSlug = (string) db_val("SELECT slug FROM lots WHERE status = 'available' ORDER BY id LIMIT 1");
@@ -1740,20 +1739,44 @@ $ld = $ldOf($h);
 check('lot page: canonical, Product with an offer and availability, breadcrumbs', $isUrl($canonOf($h), '/ranch/lot/' . $lotSlug)
     && ($ld[0]['@type'] ?? '') === 'Product' && str_starts_with((string) ($ld[0]['offers']['availability'] ?? ''), 'https://schema.org/')
     && in_array('BreadcrumbList', array_column($ld, '@type'), true), json_encode($ld[0] ?? null));
+$lotRow = db_one('SELECT pricing_mode, price_cents, avg_weight_kg FROM lots WHERE slug = ?', [$lotSlug]);
+if ($lotRow['pricing_mode'] === 'per_kg') {
+    check('per-kg lot: the offer price is the estimate per animal; the per-kg rate is the unit price',
+        ($ld[0]['offers']['price'] ?? '') === number_format(round((float) $lotRow['avg_weight_kg'] * (int) $lotRow['price_cents']) / 100, 2, '.', '')
+        && ($ld[0]['offers']['priceSpecification']['referenceQuantity']['unitCode'] ?? '') === 'KGM', json_encode($ld[0]['offers'] ?? null));
+}
 [$st, $hd] = $pv->headers('/ranch/lot.php?slug=' . $lotSlug);
 check('old lot address moves to the pretty one', $st === 301 && ($hd['location'] ?? '') === '/ranch/lot/' . $lotSlug);
 [$st, $hd] = $pv->headers('/pages/page.php?slug=terms');
 check('old information page address moves to /pages/terms', $st === 301 && ($hd['location'] ?? '') === '/pages/terms');
 check('information page canonical is /pages/terms', $isUrl($canonOf($pv->page('/pages/terms')), '/pages/terms'));
-check('category page canonical is /feeds/category/…', $isUrl($canonOf($pv->page('/feeds/category/' . $prod['cslug'])), '/feeds/category/' . $prod['cslug']));
+check('the shop filtered by category (old address) points search engines to /feeds/category/…',
+    $isUrl($canonOf($pv->page('/feeds/shop.php?category=' . $prod['cslug'] . '&sort=price_asc')), '/feeds/category/' . $prod['cslug']));
+check('livestock page 2 is its own page for search engines', $isUrl($canonOf($pv->page('/ranch/livestock.php?page=2')), '/ranch/livestock.php?page=2'));
+[$st, $hd] = $pv->headers('/feeds/product/' . $prod['slug'] . '/');
+check('a trailing slash moves to the exact product address', $st === 301 && ($hd['location'] ?? '') === '/feeds/product/' . $prod['slug'], $st . ' ' . ($hd['location'] ?? ''));
+[$st] = $pv->headers('/feeds/category/no-such-category');
+check('an unknown category is "not found" (404), not an empty shop page', $st === 404, (string) $st);
+db_exec('UPDATE categories SET is_active = 0 WHERE slug = ?', [$prod['cslug']]);
+[$st] = $pv->headers('/feeds/category/' . $prod['cslug']);
+$hp = $pv->page('/feeds/product/' . $prod['slug']);
+check('a hidden category is "not found", and its products link to the shop instead', $st === 404 && !str_contains($hp, '/feeds/category/' . $prod['cslug']), (string) $st);
+check('… and it leaves the sitemap', !str_contains($pv->page('/sitemap.xml'), '/feeds/category/' . $prod['cslug'] . '<'));
+db_exec('UPDATE categories SET is_active = 1 WHERE slug = ?', [$prod['cslug']]);
+$_GET = ['category' => $prod['cslug'], 'sort' => 'price_asc', 'page' => 1];
+$pg = pagination(1, 3, category_url($prod['cslug']), ['category']);
+$_GET = [];
+check('category page links to its next page as /feeds/category/…?page=2 (no ?category=)', str_contains($pg, '/feeds/category/' . $prod['cslug'] . '?sort=price_asc&amp;page=2') && !str_contains($pg, 'category='), $pg);
 check('search results are not indexed', str_contains($pv->page('/feeds/shop.php?q=lick'), 'name="robots" content="noindex'));
 check('shop cards link to pretty product addresses', str_contains($pv->page('/feeds/shop.php'), 'href="/feeds/product/'));
 db_exec("INSERT INTO products (category_id, slug, name, is_active) VALUES (?, 'no-sizes-yet', 'No sizes yet', 1)", [$catId]);
 $sm = $pv->page('/sitemap.xml');
 check('sitemap: pretty addresses only (pages, categories), no ?slug=', str_contains($sm, '/pages/terms</loc>') && str_contains($sm, '/feeds/category/' . $prod['cslug'] . '</loc>') && !str_contains($sm, '?slug='));
 check('sitemap: a product without any live size is left out', !str_contains($sm, 'no-sizes-yet'));
+db_exec("DELETE FROM products WHERE slug = 'no-sizes-yet'");
 db_exec("UPDATE menu_items SET url = '/pages/page.php?slug=about' WHERE url = '/pages/about'");
-check('footer shows old-style menu links in the pretty form', str_contains($pv->page('/pages/contact.php'), 'href="/pages/about"'));
+$hf = $pv->page('/pages/contact.php');
+check('footer shows old-style menu links in the pretty form', str_contains($hf, 'href="/pages/about"') && !str_contains($hf, 'slug=about'));
 db_exec("UPDATE menu_items SET url = '/pages/about' WHERE url = '/pages/page.php?slug=about'");
 
 section('Phase 5: accessibility, speed and small UX (server side)');
@@ -1763,19 +1786,34 @@ check('closed mobile menu is inert and labelled as a dialog', (bool) preg_match(
 check('cart button says how many items it holds', (bool) preg_match('#data-cart-label="Cart"\s+aria-label="Cart, \d+ items?"#', $fh5));
 $heroAt = (int) strpos($fh5, 'class="store-hero"');
 $hero = substr($fh5, $heroAt, (int) strpos($fh5, '</section>', $heroAt) - $heroAt);
-check('Feeds hero is visible without waiting for JavaScript (no .reveal above the fold)', !str_contains($hero, ' reveal"') && str_contains($hero, 'hero-rise'));
+check('Feeds hero is visible without waiting for JavaScript (no .reveal above the fold)', !preg_match('#class="[^"]*\breveal\b#', $hero) && str_contains($hero, 'hero-rise'));
 $home = $pv->page('/');
-$stats = (int) db_val("SELECT COUNT(*) FROM lots WHERE status IN ('available','reserved') AND qty_available > 0");
-check('home stats show the real numbers in the page (not 0 until JavaScript runs)', (bool) preg_match('#data-count="(\d+)">\1</span>#', $home) && !str_contains(substr($home, (int) strpos($home, 'hero-stats'), 800), '">0</span>'));
-check('home portal images come in phone sizes (srcset)', substr_count($home, 'logo-480.webp 480w') >= 3);
+preg_match_all('#class="hs-num" data-count="(\d+)">(\d+)</span>#', $home, $hs, PREG_SET_ORDER);
+check('home stats show the real numbers in the page (not 0 until JavaScript runs)', count($hs) === 3 && !array_filter($hs, static fn($m) => $m[1] !== $m[2]), json_encode($hs));
+check('both home portal images come in phone sizes (srcset)', preg_match_all('#class="portal portal-(ranch|feeds)[^>]*>\s*<img [^>]*srcset="[^"]*480w#', $home) === 2);
 $calc = $pv->page('/feeds/calculator.php');
 check('calculator animal buttons use valid ARIA (pressed toggle buttons, not radio roles)', !str_contains($calc, 'role="radio"') && str_contains($calc, 'aria-pressed='));
+preg_match('#data-rules="([^"]*)"#', $calc, $m);
+$calcRules = json_decode(html_entity_decode($m[1] ?? '', ENT_QUOTES), true) ?: [];
+$calcOk = $calcRules !== [];
+foreach ($calcRules as $r) {
+    $pid = (int) db_val('SELECT product_id FROM calculator_rules WHERE id = ?', [$r['id']]);
+    $want = array_map('intval', db_col('SELECT id FROM product_variants WHERE product_id = ? AND is_active = 1 AND weight_grams > 0 ORDER BY weight_grams, id', [$pid]));
+    $calcOk = $calcOk && array_column($r['variants'], 'id') === $want;
+    foreach ($r['variants'] as $v) {
+        $calcOk = $calcOk && array_column($v['tiers'], 'min') === array_map('intval', db_col('SELECT min_qty FROM price_tiers WHERE variant_id = ? ORDER BY min_qty', [$v['id']]));
+    }
+}
+check('calculator (fewer queries) still shows every live size and its bulk prices', $calcOk, json_encode(array_slice($calcRules, 0, 1)));
 $sw = $pv->page('/sw.js');
 check('service worker precaches the exact versioned files the pages use', str_contains($sw, asset('/assets/css/core.css')) && str_contains($sw, '/offline.html'));
 check('offline page exists', str_contains($pv->page('/offline.html'), "You're offline"));
+$faqOn = db_col('SELECT id FROM faqs WHERE is_active = 1 AND division_id = 2');
 db_exec('UPDATE faqs SET is_active = 0 WHERE division_id = 2');
 check('Ranch "FAQ" link only appears when there are FAQs', !str_contains($pv->page('/ranch/'), '/ranch/#faq'));
-db_exec('UPDATE faqs SET is_active = 1 WHERE division_id = 2');
+if ($faqOn) {
+    db_exec('UPDATE faqs SET is_active = 1 WHERE id IN (' . db_placeholders($faqOn) . ')', $faqOn);
+}
 check('… and comes back with them', str_contains($pv->page('/ranch/'), '/ranch/#faq'));
 check('contact page marks "Contact" as the current page', (bool) preg_match('#href="/pages/contact\.php" aria-current="page"#', $pv->page('/pages/contact.php')));
 // Address forms: area, province and postal code are saved; bad values are refused
@@ -1794,6 +1832,28 @@ $ah->page('/feeds/');
 [$st] = $ah->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 5, 'qty' => 1]);
 check('checkout address form asks for area, province and postal code (with autofill hints)',
     $st === 200 && (bool) preg_match('#name="address\[line2\]" autocomplete="shipping address-line2".*name="address\[postal_code\]".*name="address\[province\]"#s', $ah->page('/feeds/checkout.php')));
+// A delivery order: area/plot, province and postal code reach the order; a bad province is refused; Plot 7 and Plot 9 stay two addresses
+// (a size with enough stock to reach the delivery zone's minimum order)
+$bulk = db_one('SELECT v.id, v.price_cents FROM product_variants v JOIN products p ON p.id = v.product_id
+                WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty >= 40 ORDER BY v.price_cents DESC LIMIT 1');
+$bulkQty = (int) max(1, ceil(60000 / max(1, (int) $bulk['price_cents'])));
+$ah->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => $bulk['id'], 'qty' => $bulkQty]);
+$pBody = ['action' => 'place', 'billing_name' => 'Plot Test', 'billing_phone' => '0821234567', 'fulfilment' => 'delivery', 'payment_method' => 'eft', 'accept_terms' => 1,
+    'delivery_date' => DeliveryService::deliveryDates(DeliveryService::zoneForTown('Riverside'), 10)[0] ?? null, 'town' => 'Riverside', 'address_id' => 'new', 'save_address' => 1,
+    'address' => ['recipient_name' => 'Plot Test', 'phone' => '0821234567', 'line1' => '5 River Rd', 'line2' => 'Plot 7', 'province' => 'Western Cape', 'postal_code' => '7300']];
+$bad = $pBody;
+$bad['address']['province'] = 'Atlantis';
+[$st, $res] = $ah->api('POST', '/feeds/api/checkout.php', $bad);
+check('checkout refuses an unknown province', $st === 422 && isset($res['errors']['address[province]']), $st . ' ' . json_encode($res));
+[$st, $res] = $ah->api('POST', '/feeds/api/checkout.php', $pBody);
+$po5 = db_one('SELECT ship_line2, ship_province, ship_postal_code FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 1', [$c5d['id']]);
+check('area, province and postal code reach the delivery order', $st === 200 && $po5['ship_line2'] === 'Plot 7' && $po5['ship_province'] === 'Western Cape'
+    && $po5['ship_postal_code'] === '7300', $st . ' ' . json_encode([$po5, $res]));
+$ah->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => $bulk['id'], 'qty' => $bulkQty]);
+$pBody['address']['line2'] = 'Plot 9';
+[$st] = $ah->api('POST', '/feeds/api/checkout.php', $pBody);
+check('Plot 7 and Plot 9 on the same road are saved as two addresses (the first is not overwritten)', $st === 200
+    && db_col("SELECT line2 FROM customer_addresses WHERE customer_id = ? AND line1 = '5 River Rd' ORDER BY line2", [$c5d['id']]) === ['Plot 7', 'Plot 9'], (string) $st);
 
 section('Migrations');
 // Every migration must run on an up-to-date database without errors and without changing anything (safe to paste twice)

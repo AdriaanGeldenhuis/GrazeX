@@ -75,13 +75,15 @@ $page = [
         'description' => $l['short_description'], 'category' => trim(($l['breed_name'] ?? '') . ' ' . ($l['category_name'] ?? '')),
         'image' => $l['media'] ? app_url((string) media_url((int) $l['media'][0], 1600, 'wide')) : null, 'url' => $url,
         'offers' => ['@type' => 'Offer', 'priceCurrency' => 'ZAR', 'url' => $url,
-            // Per-kg lots are priced per kilogram of live weight
-            'price' => number_format((int) $l['price_cents'] / 100, 2, '.', ''),
+            // The price of one animal: for per-kg lots the estimate from the average weight; the per-kg rate goes in the unit price
+            'price' => $l['pricing_mode'] === 'per_kg' && !(float) $l['avg_weight_kg'] ? null
+                : number_format(($l['pricing_mode'] === 'per_kg' ? (int) round((float) $l['avg_weight_kg'] * (int) $l['price_cents']) : (int) $l['price_cents']) / 100, 2, '.', ''),
             'priceSpecification' => $l['pricing_mode'] === 'per_kg'
-                ? ['@type' => 'UnitPriceSpecification', 'price' => number_format((int) $l['price_cents'] / 100, 2, '.', ''), 'priceCurrency' => 'ZAR', 'unitCode' => 'KGM']
+                ? ['@type' => 'UnitPriceSpecification', 'price' => number_format((int) $l['price_cents'] / 100, 2, '.', ''), 'priceCurrency' => 'ZAR',
+                   'referenceQuantity' => ['@type' => 'QuantitativeValue', 'value' => 1, 'unitCode' => 'KGM']]
                 : null,
-            'availability' => $l['status'] === 'coming_soon' ? 'https://schema.org/PreOrder'
-                : ($canBuy ? 'https://schema.org/InStock' : 'https://schema.org/SoldOut'),
+            // Coming-soon lots can't be reserved yet (only "notify me"): not on sale until they open
+            'availability' => $canBuy ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
             'availabilityStarts' => $l['status'] === 'coming_soon' ? $l['available_from'] : null],
     ], jsonld_breadcrumbs([['Ranch', '/ranch/'], ['Livestock', '/ranch/livestock.php'], [$l['title'], lot_url($l['slug'])]])],
 ];

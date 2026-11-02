@@ -32,6 +32,8 @@ $variantsJson = array_map(static fn($v) => [
     'tiers' => array_map(static fn($t) => ['min' => (int) $t['min_qty'], 'price' => (int) $t['price_cents']], $v['tiers']),
 ], $p['variants']);
 $url = app_url(product_url($p['slug']));
+// The category link only when the shop shows that category (a hidden one would be "not found")
+$catUrl = in_array($p['category_slug'], array_column(CatalogService::categories(), 'slug'), true) ? category_url($p['category_slug']) : '/feeds/shop.php';
 $wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX Feeds, I have a question about ' . $p['name'] . ' (' . $url . ')');
 $firstImg = $p['media'] ? media_url((int) $p['media'][0], 960, 'orig') : null;
 
@@ -51,7 +53,7 @@ $page = [
         'offers' => array_map(static fn($v) => ['@type' => 'Offer', 'sku' => $v['sku'], 'name' => $v['name'], 'priceCurrency' => 'ZAR',
             'price' => number_format((int) $v['effective'] / 100, 2, '.', ''), 'url' => $url, 'itemCondition' => 'https://schema.org/NewCondition',
             'availability' => (int) $v['stock_qty'] > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock'], $p['variants']),
-    ], jsonld_breadcrumbs([['Feeds', '/feeds/'], [$p['category_name'], category_url($p['category_slug'])], [$p['name'], product_url($p['slug'])]])],
+    ], jsonld_breadcrumbs([['Feeds', '/feeds/'], [$p['category_name'], $catUrl], [$p['name'], product_url($p['slug'])]])],
 ];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';
@@ -75,7 +77,7 @@ require GX_ROOT . '/includes/layout/header.php';
 
     <div class="buy-box" id="buy-box" data-variants="<?= e_json($variantsJson) ?>" data-default="<?= (int) $default['id'] ?>">
       <nav class="breadcrumb" aria-label="Breadcrumb">
-        <a href="/feeds/">Feeds</a><span>/</span><a href="<?= e(category_url($p['category_slug'])) ?>"><?= e($p['category_name']) ?></a>
+        <a href="/feeds/">Feeds</a><span>/</span><a href="<?= e($catUrl) ?>"><?= e($p['category_name']) ?></a>
       </nav>
       <div class="row">
         <?php if ($p['brand_name']): ?><span class="badge"><?= e($p['brand_name']) ?></span><?php endif; ?>
