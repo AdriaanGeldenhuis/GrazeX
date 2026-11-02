@@ -29,22 +29,22 @@ require GX_ROOT . '/includes/layout/header.php';
   <section class="store-hero">
     <div class="container store-hero-grid">
       <div>
-        <span class="eyebrow reveal"><span class="dot"></span><?= e(content('feeds', 'hero_kicker', 'GrazeX Feeds')) ?></span>
-        <h1 class="display-1 reveal" style="--d:.06s"><span class="text-accent-grad italic"><?= e(content('feeds', 'hero_title', 'Feed that earns.')) ?></span></h1>
-        <p class="lead reveal" style="--d:.12s"><?= e(content('feeds', 'hero_text')) ?></p>
-        <div class="search-box reveal mt-3" style="--d:.18s" data-suggest>
+        <span class="eyebrow hero-rise"><span class="dot"></span><?= e(content('feeds', 'hero_kicker', 'GrazeX Feeds')) ?></span>
+        <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-accent-grad italic"><?= e(content('feeds', 'hero_title', 'Feed that earns.')) ?></span></h1>
+        <p class="lead hero-rise" style="--d:.12s"><?= e(content('feeds', 'hero_text')) ?></p>
+        <div class="search-box hero-rise mt-3" style="--d:.18s" data-suggest>
           <svg class="icon"><use href="#i-search"/></svg>
           <label class="sr-only" for="hero-search">Search feeds</label>
           <input class="input" id="hero-search" type="search" placeholder="Search licks, pellets, lucerne…" autocomplete="off" data-suggest-input>
           <div class="suggest" hidden data-suggest-list></div>
         </div>
-        <div class="usps reveal" style="--d:.24s">
+        <div class="usps hero-rise" style="--d:.24s">
           <span class="usp"><svg class="icon icon-sm"><use href="#i-check"/></svg><?= e(content('feeds', 'usp_1', 'In stock & priced clearly')) ?></span>
           <span class="usp"><svg class="icon icon-sm"><use href="#i-truck"/></svg><?= e(content('feeds', 'usp_2', 'Collect or local delivery')) ?></span>
           <span class="usp"><svg class="icon icon-sm"><use href="#i-tag"/></svg><?= e(content('feeds', 'usp_3', 'Bulk pricing on 10+ bags')) ?></span>
         </div>
       </div>
-      <img class="hero-logo reveal" style="--d:.1s" src="/assets/img/brand/feeds-logo-960.webp"
+      <img class="hero-logo hero-rise" style="--d:.1s" src="/assets/img/brand/feeds-logo-960.webp"
            srcset="/assets/img/brand/feeds-logo-480.webp 480w, /assets/img/brand/feeds-logo-960.webp 960w, /assets/img/brand/feeds-logo-1600.webp 1600w"
            sizes="(min-width: 1024px) 40vw, 90vw" width="960" height="480" alt="GrazeX Feeds" fetchpriority="high">
     </div>
@@ -59,7 +59,7 @@ require GX_ROOT . '/includes/layout/header.php';
       </div>
       <div class="cat-tiles">
         <?php foreach ($categories as $i => $c): ?>
-          <a class="cat-tile reveal" style="--d:<?= $i * 0.04 ?>s" href="/feeds/shop.php?category=<?= e($c['slug']) ?>">
+          <a class="cat-tile reveal" style="--d:<?= $i * 0.04 ?>s" href="<?= e(category_url($c['slug'])) ?>">
             <span class="ct-icon"><svg class="icon"><use href="#i-<?= e($catIcons[$c['icon']] ?? 'bag') ?>"/></svg></span>
             <span class="ct-name"><?= e($c['name']) ?></span>
             <span class="ct-count"><?= (int) $c['product_count'] ?> product<?= (int) $c['product_count'] === 1 ? '' : 's' ?></span>
@@ -132,7 +132,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container grid-3">
       <?php foreach ($testimonials as $i => $tm): ?>
         <figure class="card card-pad reveal" style="--d:<?= $i * 0.06 ?>s;margin:0">
-          <div class="text-accent" aria-label="<?= (int) $tm['rating'] ?> out of 5"><?= str_repeat('★', (int) $tm['rating']) ?></div>
+          <?php if ((int) $tm['rating'] > 0): ?><div class="text-accent" role="img" aria-label="<?= (int) $tm['rating'] ?> out of 5 stars"><?= str_repeat('★', (int) $tm['rating']) ?></div><?php endif; ?>
           <blockquote class="mt-1" style="margin-left:0">“<?= e($tm['quote']) ?>”</blockquote>
           <figcaption class="muted small"><strong><?= e($tm['name']) ?></strong><?= $tm['location'] ? ' · ' . e($tm['location']) : '' ?></figcaption>
         </figure>

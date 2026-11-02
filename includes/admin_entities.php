@@ -86,7 +86,7 @@ return [
                      'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_published' => ['bool', 'Published', 'nullable']]],
     'menu_items' => ['title' => 'Footer menu', 'group' => 'Content', 'table' => 'menu_items', 'perm' => 'content.manage', 'order' => 'location, sort_order', 'list' => ['label', 'url', 'sort_order', 'is_active'],
         'fields' => ['location' => ['select', 'Menu', 'required', 'options' => ['footer' => 'Footer']], 'label' => ['text', 'Label', 'required|max:100'],
-                     'url' => ['text', 'Link (e.g. /pages/page.php?slug=about)', 'required|max:255'], 'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Visible', 'nullable']]],
+                     'url' => ['text', 'Link (e.g. /pages/about)', 'required|max:255'], 'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Visible', 'nullable']]],
     'gallery_items' => ['title' => 'Photo gallery', 'group' => 'Content', 'table' => 'gallery_items', 'perm' => 'content.manage', 'order' => 'sort_order', 'list' => ['media_id', 'caption', 'division_id', 'is_active'],
         'fields' => ['media_id' => ['image', 'Photo', 'required|int'], 'caption' => ['text', 'Caption', 'nullable|max:255'], 'division_id' => ['select', 'Shown on', 'nullable', 'options' => $divOpts],
                      'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Visible', 'nullable']]],

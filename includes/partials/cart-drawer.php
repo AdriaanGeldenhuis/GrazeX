@@ -3,7 +3,7 @@
 defined('GX_ROOT') || exit;
 $summary = CartService::summary($div);
 ?>
-<aside class="drawer" id="cart-drawer" data-division="<?= e($div) ?>" aria-hidden="true" aria-labelledby="cart-drawer-title" role="dialog">
+<aside class="drawer" id="cart-drawer" data-division="<?= e($div) ?>" aria-hidden="true" aria-labelledby="cart-drawer-title" role="dialog" aria-modal="true" inert>
   <div class="drawer-head">
     <h2 class="h3" id="cart-drawer-title"><?= $div === 'ranch' ? 'Your livestock selection' : 'Your cart' ?></h2>
     <button class="nav-icon-btn" type="button" data-drawer-close aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button>

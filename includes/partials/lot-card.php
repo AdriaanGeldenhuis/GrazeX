@@ -1,7 +1,7 @@
 <?php
 /** @var array $l  Row from LivestockService::lots() */
 defined('GX_ROOT') || exit;
-$url = '/ranch/lot.php?slug=' . rawurlencode($l['slug']);
+$url = lot_url($l['slug']);
 [$badgeLabel, $badgeClass] = LivestockService::badge($l);
 $price = LivestockService::priceLabel($l);
 $age = LivestockService::ageLabel($l);

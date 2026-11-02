@@ -50,8 +50,8 @@ foreach ($pretty as $re => [$target, $param]) {
     }
 }
 
-if ($uri === '/robots.txt' || $uri === '/sitemap.xml') {
-    require $root . ($uri === '/robots.txt' ? '/robots.php' : '/sitemap.php');
+if ($uri === '/robots.txt' || $uri === '/sitemap.xml' || $uri === '/sw.js') {
+    require $root . ['/robots.txt' => '/robots.php', '/sitemap.xml' => '/sitemap.php', '/sw.js' => '/sw.php'][$uri];
     return true;
 }
 $path = $root . $uri;

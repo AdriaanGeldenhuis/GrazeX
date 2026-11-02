@@ -78,7 +78,10 @@
         const data = await GX.api('/feeds/api/products.php?' + p.toString(), { signal: ctrl.signal });
         results.innerHTML = data.html;
         $('[data-result-count]').textContent = `${data.total} product${data.total === 1 ? '' : 's'}`;
-        history.replaceState(null, '', '/feeds/shop.php' + (p.toString() ? '?' + p.toString() : ''));
+        // The address bar shows the category's own address (/feeds/category/x), with any other filters after it
+        const cat = p.get('category');
+        p.delete('category');
+        history.replaceState(null, '', (cat ? '/feeds/category/' + encodeURIComponent(cat) : '/feeds/shop.php') + (p.toString() ? '?' + p.toString() : ''));
         $$('.reveal', results).forEach((el) => el.classList.add('is-visible'));
         if (scroll) results.scrollIntoView({ behavior: GX.reduceMotion ? 'auto' : 'smooth', block: 'start' });
       } catch (e) { if (e.name !== 'AbortError') console.error(e); }
@@ -114,9 +117,11 @@
       : v.stock <= v.low ? `<span class="badge badge-warning">Only ${v.stock} left</span>`
         : '<span class="badge badge-success"><span class="dot"></span>In stock</span>';
 
-    const update = () => {
+    // While typing, only the totals follow (an empty or half-typed box is left alone); the box itself is
+    // corrected when you leave it or press Add, so "12" never turns into "1" halfway through typing
+    const update = (write = true) => {
       const q = Math.max(1, Math.min(current.stock || 1, Number(qty.value) || 1));
-      if (String(q) !== qty.value) qty.value = q;
+      if (write && String(q) !== qty.value) qty.value = q;
       qty.max = Math.max(1, current.stock);
       const unit = unitFor(current, q);
       $('[data-price]').textContent = GX.money(unit);
@@ -152,8 +157,9 @@
       current = variants.find((v) => v.id === Number(r.value)) || current;
       update();
     }));
-    qty.addEventListener('change', update);
-    qty.addEventListener('input', update);
+    qty.addEventListener('change', () => update(true));
+    qty.addEventListener('blur', () => update(true));
+    qty.addEventListener('input', () => update(false));
     update();
 
     // Sticky mobile buy bar once the main button scrolls away
@@ -163,6 +169,7 @@
         const show = !en.isIntersecting && en.boundingClientRect.top < 0;
         sticky.classList.toggle('is-visible', show);
         sticky.setAttribute('aria-hidden', show ? 'false' : 'true');
+        sticky.inert = !show; // hidden bar: out of the tab order too
       }).observe(addBtn);
       $('[data-scroll-buy]').addEventListener('click', () => addBtn.click());
     }

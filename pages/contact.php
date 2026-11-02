@@ -6,7 +6,7 @@ require __DIR__ . '/../includes/bootstrap.php';
 
 $c = current_customer();
 $wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
-$page = ['title' => 'Contact', 'description' => 'Contact GrazeX Ranch & Feeds — WhatsApp, phone, email and directions.', 'division' => 'pages',
+$page = ['title' => 'Contact', 'description' => 'Contact GrazeX Ranch & Feeds — WhatsApp, phone, email and directions.', 'division' => 'pages', 'nav_current' => 'contact',
          'css' => ['/pages/css/pages.css'], 'js' => ['/pages/js/pages.js']];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';

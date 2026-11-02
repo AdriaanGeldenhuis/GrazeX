@@ -1359,11 +1359,11 @@ INSERT INTO delivery_zones (id, name, description, fee_cents, free_over_cents, m
 (1, 'Local (example)', 'Edit or replace this zone in Admin > Delivery', 25000, 250000, 50000, '2,4', 1, 0, 1);
 
 INSERT INTO menu_items (location, label, url, sort_order) VALUES
-('footer', 'About GrazeX',      '/pages/page.php?slug=about',    1),
-('footer', 'Delivery & collection', '/pages/page.php?slug=delivery', 2),
-('footer', 'Returns',           '/pages/page.php?slug=returns',  3),
-('footer', 'Terms & conditions','/pages/page.php?slug=terms',    4),
-('footer', 'Privacy policy',    '/pages/page.php?slug=privacy',  5),
+('footer', 'About GrazeX',      '/pages/about',    1),
+('footer', 'Delivery & collection', '/pages/delivery', 2),
+('footer', 'Returns',           '/pages/returns',  3),
+('footer', 'Terms & conditions','/pages/terms',    4),
+('footer', 'Privacy policy',    '/pages/privacy',  5),
 ('footer', 'Contact',           '/pages/contact.php',            6);
 
 INSERT INTO pages (slug, title, body_md, meta_description, sort_order) VALUES

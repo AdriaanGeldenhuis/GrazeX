@@ -60,7 +60,7 @@ function admin_start(string $title, string $active, array $opts = []): array
     $badges = admin_badges();
     ?>
 <div class="adm">
-  <aside class="adm-side" aria-label="Admin navigation">
+  <aside class="adm-side" id="adm-side" aria-label="Admin navigation">
     <a class="adm-brand" href="/admin/"><span class="brand"><span>Graze<b>X</b></span></span><span class="badge">Admin</span></a>
     <nav class="adm-nav">
       <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]): if (!admin_can($perm) || ($key === 'users' && ($admin['role_slug'] !== 'owner' || $admin['division_scope'] !== 'all'))) continue; ?>
@@ -77,7 +77,7 @@ function admin_start(string $title, string $active, array $opts = []): array
 
   <div class="adm-main">
     <header class="adm-top">
-      <button class="nav-icon-btn adm-menu-btn" type="button" data-adm-menu aria-label="Menu"><svg class="icon"><use href="#i-menu"/></svg></button>
+      <button class="nav-icon-btn adm-menu-btn" type="button" data-adm-menu aria-controls="adm-side" aria-expanded="false" aria-label="Menu"><svg class="icon"><use href="#i-menu"/></svg></button>
       <h1 class="adm-title"><?= e($title) ?></h1>
       <div class="adm-top-actions">
         <form class="adm-search" action="/admin/search.php" method="get" role="search">
@@ -114,7 +114,7 @@ function admin_end(): void
     <a href="/admin/orders.php"><svg class="icon"><use href="#i-bag"/></svg>Orders<?php if ($badges['orders']): ?><span class="adm-count"><?= (int) $badges['orders'] ?></span><?php endif; ?></a>
     <a href="/admin/payments.php"><svg class="icon"><use href="#i-card"/></svg>Payments<?php if ($badges['payments']): ?><span class="adm-count"><?= (int) $badges['payments'] ?></span><?php endif; ?></a>
     <a href="/admin/inventory.php"><svg class="icon"><use href="#i-scale"/></svg>Stock</a>
-    <button type="button" data-adm-menu><svg class="icon"><use href="#i-menu"/></svg>More</button>
+    <button type="button" data-adm-menu aria-controls="adm-side" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg>More</button>
   </nav>
   <div class="adm-scrim" data-adm-menu></div>
 </div>

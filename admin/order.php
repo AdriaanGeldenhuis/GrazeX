@@ -169,7 +169,7 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
       <h2 class="h4 mb-2"><?= $o['fulfilment'] === 'delivery' ? 'Delivery' : 'Collection' ?></h2>
       <?php if ($o['fulfilment'] === 'delivery'): ?>
         <p class="mb-1"><strong><?= e(fmt_date($o['delivery_date'], 'l j F')) ?></strong></p>
-        <p class="small mb-1"><?= e(implode(', ', array_filter([$o['ship_name'], $o['ship_phone'], $o['ship_farm_name'], $o['ship_line1'], $o['ship_line2'], $o['ship_town'], $o['ship_postal_code']]))) ?></p>
+        <p class="small mb-1"><?= e(implode(', ', array_filter([$o['ship_name'], $o['ship_phone'], $o['ship_farm_name'], $o['ship_line1'], $o['ship_line2'], $o['ship_town'], $o['ship_province'], $o['ship_postal_code']]))) ?></p>
         <?php if ($o['ship_directions']): ?><p class="small muted mb-1"><?= e($o['ship_directions']) ?></p><?php endif; ?>
         <?php if ($o['ship_gps_lat']): ?><a class="btn btn-sm" href="https://www.google.com/maps?q=<?= e($o['ship_gps_lat'] . ',' . $o['ship_gps_lng']) ?>" target="_blank" rel="noopener"><svg class="icon icon-sm"><use href="#i-pin"/></svg>Open GPS pin</a><?php endif; ?>
       <?php else: ?>

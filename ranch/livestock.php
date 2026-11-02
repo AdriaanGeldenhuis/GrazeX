@@ -26,6 +26,7 @@ $page = [
     'nav_current' => 'livestock',
     'css' => ['/assets/css/store.css', '/ranch/css/ranch.css'],
     'js' => ['/assets/js/cart.js', '/ranch/js/ranch.js'],
+    'canonical' => '/ranch/livestock.php' . ($filters['page'] > 1 ? '?page=' . $filters['page'] : ''),
 ];
 require GX_ROOT . '/includes/layout/head.php';
 require GX_ROOT . '/includes/layout/header.php';

@@ -88,20 +88,61 @@
       (opts.action ? `<a class="t-action" href="${GX.esc(opts.href || '#')}">${GX.esc(opts.action)}</a>` : '');
     stack.appendChild(el);
     const close = () => { el.classList.add('is-leaving'); setTimeout(() => el.remove(), 320); };
-    setTimeout(close, opts.timeout || (type === 'error' ? 6000 : 3800));
+    // Time to read it: longer with a button (e.g. "Checkout"), and paused while the pointer or keyboard focus is on it
+    let left = opts.timeout || (type === 'error' ? 6000 : opts.action ? 7000 : 3800);
+    let timer = 0, started = 0, hovered = false, focused = false;
+    const run = () => {
+      clearTimeout(timer);
+      timer = 0;
+      if (hovered || focused) return;
+      started = Date.now();
+      timer = setTimeout(close, left);
+    };
+    const pause = () => {
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = 0;
+      left = Math.max(1200, left - (Date.now() - started));
+    };
+    el.addEventListener('mouseenter', () => { pause(); hovered = true; });
+    el.addEventListener('mouseleave', () => { hovered = false; run(); });
+    el.addEventListener('focusin', () => { pause(); focused = true; });
+    el.addEventListener('focusout', () => { focused = false; run(); });
+    run();
     el.addEventListener('click', (e) => { if (!e.target.closest('.t-action')) close(); });
     return el;
   };
 
+  // ---------- Focus helpers for drawers and sheets ----------
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  /** Keep Tab / Shift+Tab inside `box` (a modal panel). Returns a function that releases it. */
+  GX.trapFocus = function (box) {
+    const onKey = (e) => {
+      if (e.key !== 'Tab') return;
+      const els = GX.$$(FOCUSABLE, box).filter((el) => el.getClientRects().length > 0);
+      if (!els.length) return;
+      const first = els[0], last = els[els.length - 1];
+      if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  };
+
   // ---------- Drawers ----------
+  // A closed drawer is inert (no focus, hidden from screen readers); an open one is a modal dialog with focus kept inside
   GX.drawer = {
     open(id) {
       const d = document.getElementById(id);
       if (!d) return;
+      d.inert = false;
       d.classList.add('is-open');
       d.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       GX.drawer._last = document.activeElement;
+      GX.drawer._release?.();
+      GX.drawer._release = GX.trapFocus(d);
       setTimeout(() => d.querySelector('[data-autofocus], button, a')?.focus(), 50);
       d.dispatchEvent(new CustomEvent('drawer:open'));
     },
@@ -110,7 +151,10 @@
       if (!d) return;
       d.classList.remove('is-open');
       d.setAttribute('aria-hidden', 'true');
+      d.inert = true;
       document.body.style.overflow = '';
+      GX.drawer._release?.();
+      GX.drawer._release = null;
       GX.drawer._last?.focus?.();
     },
   };
@@ -215,6 +259,8 @@
 
   // ---------- Cart badge + fly-to-cart ----------
   GX.setCartCount = function (count) {
+    // The cart button says how many items it holds ("Cart, 3 items")
+    GX.$$('[data-cart-label]').forEach((a) => a.setAttribute('aria-label', `${a.dataset.cartLabel}, ${count} item${count === 1 ? '' : 's'}`));
     GX.$$('[data-cart-count]').forEach((el) => {
       el.textContent = count > 99 ? '99+' : String(count);
       el.classList.toggle('has-items', count > 0);
@@ -271,6 +317,8 @@
         co.unobserve(en.target);
         const el = en.target, end = Number(el.dataset.count) || 0;
         if (reduceMotion || end === 0) { el.textContent = end; return; }
+        // The page already shows the real number; the count-up starts from 0 only now that it is on screen
+        el.textContent = '0';
         const t0 = performance.now(), dur = 1200;
         const tick = (t) => {
           const p = Math.min(1, (t - t0) / dur), eased = 1 - Math.pow(1 - p, 3);
@@ -289,24 +337,34 @@
 
     // Mobile menu sheet
     const sheet = GX.$('#menu-sheet');
-    GX.closeMenu = () => {
+    let releaseMenu = null;
+    GX.closeMenu = (returnFocus = true) => {
       if (!sheet?.classList.contains('is-open')) return;
       sheet.classList.remove('is-open');
       sheet.setAttribute('aria-hidden', 'true');
+      sheet.inert = true;
       document.body.style.overflow = '';
-      GX.$('[data-menu-toggle]')?.setAttribute('aria-expanded', 'false');
+      releaseMenu?.();
+      releaseMenu = null;
+      const toggle = GX.$('[data-menu-toggle]');
+      toggle?.setAttribute('aria-expanded', 'false');
+      if (returnFocus) toggle?.focus();
     };
     GX.on(document, 'click', '[data-menu-toggle]', (e, b) => {
       if (!sheet) return;
       const open = !sheet.classList.contains('is-open');
       if (!open) return GX.closeMenu();
+      sheet.inert = false;
       sheet.classList.add('is-open');
       sheet.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
       b.setAttribute('aria-expanded', 'true');
-      sheet.querySelector('a, button')?.focus();
+      releaseMenu = GX.trapFocus(sheet);
+      // After the fade-in has begun (a still-hidden element cannot take focus)
+      setTimeout(() => sheet.querySelector('a, button')?.focus(), 60);
     });
-    GX.on(document, 'click', '[data-menu-close], #menu-sheet nav a', () => GX.closeMenu());
+    GX.on(document, 'click', '[data-menu-close]', () => GX.closeMenu());
+    GX.on(document, 'click', '#menu-sheet nav a', () => GX.closeMenu(false)); // following a link: no need to refocus the button
 
     // Cursor glow (desktop only)
     const glow = GX.$('.cursor-glow');

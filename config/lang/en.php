@@ -16,6 +16,7 @@ return [
     'nav.livestock'     => 'Available stock',
     'nav.model'         => 'Our model',
     'nav.contact'       => 'Contact',
+    'nav.faq'           => 'FAQ',
     'nav.account'       => 'My account',
     'nav.login'         => 'Log in',
     'nav.logout'        => 'Log out',

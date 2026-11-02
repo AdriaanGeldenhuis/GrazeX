@@ -11,7 +11,37 @@
   const shell = $('.adm');
 
   /* ---------- Menu / search / bell ---------- */
-  GX.on(document, 'click', '[data-adm-menu]', () => shell?.classList.toggle('menu-open'));
+  // Below 1100px the sidebar slides in over the page: closed it is inert; open it keeps focus inside and Escape closes it
+  const side = $('.adm-side');
+  const wide = window.matchMedia('(min-width: 1100px)');
+  let releaseSide = null;
+  let sideOpener = null;
+  const syncSide = () => {
+    const open = !!shell?.classList.contains('menu-open');
+    if (side) side.inert = !wide.matches && !open;
+    $$('button[data-adm-menu]').forEach((b) => b.setAttribute('aria-expanded', open ? 'true' : 'false'));
+  };
+  const setMenu = (open, opener = null, returnFocus = true) => {
+    if (!shell) return;
+    shell.classList.toggle('menu-open', open);
+    syncSide();
+    releaseSide?.();
+    releaseSide = null;
+    if (open && !wide.matches && side) {
+      sideOpener = opener;
+      releaseSide = GX.trapFocus(side);
+      side.querySelector('a, button')?.focus();
+    } else if (!open) {
+      // Back to the button that opened it (the top "Menu" or the bottom bar's "More")
+      if (returnFocus) (sideOpener && sideOpener.isConnected ? sideOpener : $('.adm-menu-btn'))?.focus();
+      sideOpener = null;
+    }
+  };
+  GX.on(document, 'click', '[data-adm-menu]', (e, b) => setMenu(!shell?.classList.contains('menu-open'), b.matches('button') ? b : null));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && shell?.classList.contains('menu-open')) setMenu(false); });
+  // Rotated or resized to the wide layout while the menu was open: the sidebar is part of the page again
+  wide.addEventListener?.('change', () => (wide.matches && shell?.classList.contains('menu-open') ? setMenu(false, null, false) : syncSide()));
+  syncSide();
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && !e.target.closest('input, textarea, select, [contenteditable]')) { e.preventDefault(); $('[data-adm-search]')?.focus(); }
   });
@@ -286,7 +316,7 @@
     d.className = 'modal';
     d.style.width = 'min(900px, calc(100% - 24px))';
     d.innerHTML = `<div class="modal-head"><h3>Choose an image</h3><button class="nav-icon-btn" value="x">✕</button></div>
-      <div class="modal-body"><div class="media-grid" data-pick-grid><label class="media-add"><input type="file" accept="image/*" hidden>＋<br>Upload new</label></div></div>`;
+      <div class="modal-body"><div class="media-grid" data-pick-grid><label class="media-add"><input class="sr-only" type="file" accept="image/*">＋<br>Upload new</label></div></div>`;
     document.body.appendChild(d);
     const grid = $('[data-pick-grid]', d);
     const add = (m) => grid.insertAdjacentHTML('beforeend', `<button type="button" class="media-item" data-choose="${m.id}" data-thumb="${GX.esc(m.thumb)}"><img src="${GX.esc(m.thumb)}" alt=""></button>`);

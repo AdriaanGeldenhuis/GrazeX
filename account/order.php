@@ -170,7 +170,7 @@ require GX_ROOT . '/includes/layout/header.php';
         <h2 class="h4 mb-2"><?= $o['fulfilment'] === 'delivery' ? 'Delivery' : 'Collection' ?></h2>
         <?php if ($o['fulfilment'] === 'delivery'): ?>
           <p class="mb-1"><strong><?= e(fmt_date($o['delivery_date'], 'l j F')) ?></strong></p>
-          <p class="muted small mb-0"><?= e(implode(', ', array_filter([$o['ship_name'], $o['ship_farm_name'], $o['ship_line1'], $o['ship_town']]))) ?></p>
+          <p class="muted small mb-0"><?= e(implode(', ', array_filter([$o['ship_name'], $o['ship_farm_name'], $o['ship_line1'], $o['ship_line2'], $o['ship_town'], $o['ship_province'], $o['ship_postal_code']]))) ?></p>
         <?php else: ?>
           <p class="mb-1"><strong><?= e(fmt_date($o['collection_date'], 'l j F')) ?></strong><?= $slot ? ' · ' . e(substr($slot['start_time'], 0, 5) . '–' . substr($slot['end_time'], 0, 5)) : '' ?></p>
           <?php if ($point): ?><p class="muted small mb-0"><?= e($point['name']) ?><?= $point['address'] ? '<br>' . nl2br(e($point['address'])) : '' ?></p><?php endif; ?>

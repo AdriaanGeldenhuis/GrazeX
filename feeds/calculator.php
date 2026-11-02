@@ -13,17 +13,33 @@ $rows = db_all('SELECT r.id, r.animal_class, r.intake_grams_per_day, r.notes, s.
                 JOIN species s ON s.id = r.species_id
                 JOIN products p ON p.id = r.product_id AND p.is_active = 1
                 ORDER BY s.sort_order, p.name, r.animal_class');
+// Sizes and bulk prices for all products in two queries (not one per rule and per size)
+$productIds = array_values(array_unique(array_map(static fn($r) => (int) $r['product_id'], $rows)));
+$variantsByProduct = [];
+$tiersByVariant = [];
+if ($productIds) {
+    foreach (db_all('SELECT * FROM product_variants WHERE product_id IN (' . db_placeholders($productIds) . ') AND is_active = 1 AND weight_grams > 0
+                     ORDER BY weight_grams, id', $productIds) as $v) {
+        $variantsByProduct[(int) $v['product_id']][] = $v;
+    }
+    $variantIds = array_map(static fn($v) => (int) $v['id'], array_merge([], ...array_values($variantsByProduct)));
+    if ($variantIds) {
+        foreach (db_all('SELECT variant_id, min_qty, price_cents FROM price_tiers WHERE variant_id IN (' . db_placeholders($variantIds) . ') ORDER BY min_qty', $variantIds) as $t) {
+            $tiersByVariant[(int) $t['variant_id']][] = $t;
+        }
+    }
+}
 $rules = [];
 foreach ($rows as $r) {
-    $variants = db_all('SELECT * FROM product_variants WHERE product_id = ? AND is_active = 1 AND weight_grams > 0 ORDER BY weight_grams', [$r['product_id']]);
+    $variants = $variantsByProduct[(int) $r['product_id']] ?? [];
     $rules[] = [
         'id' => (int) $r['id'], 'species' => $r['species_slug'], 'species_name' => $r['species_name'], 'animal' => $r['animal_class'],
         'grams' => (int) $r['intake_grams_per_day'], 'notes' => $r['notes'], 'product' => $r['product_name'],
-        'url' => '/feeds/product.php?slug=' . rawurlencode($r['product_slug']),
+        'url' => product_url($r['product_slug']),
         'variants' => array_map(static fn($v) => [
             'id' => (int) $v['id'], 'name' => $v['name'], 'grams' => (int) $v['weight_grams'], 'stock' => max(0, (int) $v['stock_qty']),
             'price' => PricingService::basePrice($v),
-            'tiers' => array_map(static fn($t) => ['min' => (int) $t['min_qty'], 'price' => (int) $t['price_cents']], PricingService::tiers((int) $v['id'])),
+            'tiers' => array_map(static fn($t) => ['min' => (int) $t['min_qty'], 'price' => (int) $t['price_cents']], $tiersByVariant[(int) $v['id']] ?? []),
         ], $variants),
     ];
 }
@@ -58,9 +74,9 @@ require GX_ROOT . '/includes/layout/header.php';
     <form class="card card-pad calc-form" novalidate>
       <div class="field">
         <span class="label">1. Your animals</span>
-        <div class="chips" role="radiogroup" aria-label="Animal">
+        <div class="chips" role="group" aria-label="Animal">
           <?php $first = true; foreach ($speciesList as $slug => $name): ?>
-            <button class="chip" type="button" role="radio" data-calc-species="<?= e($slug) ?>" aria-pressed="<?= $first ? 'true' : 'false' ?>"><?= e($name) ?></button>
+            <button class="chip" type="button" data-calc-species="<?= e($slug) ?>" aria-pressed="<?= $first ? 'true' : 'false' ?>"><?= e($name) ?></button>
           <?php $first = false; endforeach; ?>
         </div>
       </div>

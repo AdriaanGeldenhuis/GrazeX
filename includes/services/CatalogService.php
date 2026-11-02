@@ -145,7 +145,7 @@ final class CatalogService
     {
         $r = self::products(['q' => $q, 'per_page' => $limit]);
         return array_map(static fn($i) => [
-            'name' => $i['name'], 'url' => '/feeds/product.php?slug=' . rawurlencode($i['slug']),
+            'name' => $i['name'], 'url' => product_url($i['slug']),
             'category' => $i['category_name'], 'price' => money((int) $i['min_price']),
             'image' => $i['media_id'] ? media_url((int) $i['media_id'], 480, 'orig') : null,
             'in_stock' => (int) $i['stock_total'] > 0,

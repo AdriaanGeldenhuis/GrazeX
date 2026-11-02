@@ -157,7 +157,7 @@ final class LivestockService
         foreach ($subs as $s) {
             $byEmail[mb_strtolower($s['email'])][] = $s;
         }
-        $url = app_url('/ranch/lot.php?slug=' . rawurlencode($l['slug']));
+        $url = app_url(lot_url($l['slug']));
         $n = 0;
         foreach ($byEmail as $rows) {
             $s = $rows[0];

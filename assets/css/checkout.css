@@ -9,7 +9,8 @@
 .co-head .muted { margin-left: auto; }
 .co-num { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; font-size: 14px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--accent-ink); flex: none; }
-.co-two { grid-template-columns: 1fr 1fr; }
+.co-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 359px) { .co-two { grid-template-columns: minmax(0, 1fr); } }
 .co-auth .tabs { margin: 14px 0 0; }
 .co-auth .tab-panel { padding-top: 18px; }
 

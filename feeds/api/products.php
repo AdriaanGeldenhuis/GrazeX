@@ -29,7 +29,7 @@ if ($result['items']) {
     foreach ($result['items'] as $i => $p) {
         $html .= partial('product-card', ['p' => $p, 'i' => $i]);
     }
-    $html .= '</div>' . pagination($result['page'], $result['pages'], '/feeds/shop.php');
+    $html .= '</div>' . pagination($result['page'], $result['pages'], $filters['category'] !== '' ? category_url($filters['category']) : '/feeds/shop.php', ['category']);
 } else {
     $html = '<div class="empty-state"><div class="es-icon"><svg class="icon icon-lg"><use href="#i-search"/></svg></div>'
           . '<h3>No products match</h3><p>Try another search or clear the filters.</p><a class="btn" href="/feeds/shop.php">Clear filters</a></div>';

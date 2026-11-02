@@ -101,12 +101,13 @@ function markdown(?string $md): string
 }
 
 /** Pagination links preserving the current query string. */
-function pagination(int $page, int $pages, string $baseUrl): string
+function pagination(int $page, int $pages, string $baseUrl, array $dropKeys = []): string
 {
     if ($pages <= 1) {
         return '';
     }
-    $q = $_GET;
+    // Keys already expressed by the base address (e.g. the category in /feeds/category/x) are left out of the query
+    $q = array_diff_key($_GET, array_flip($dropKeys));
     $link = static function (int $p) use ($q, $baseUrl): string {
         $q['page'] = $p;
         return $baseUrl . '?' . http_build_query($q);
@@ -120,4 +121,110 @@ function pagination(int $page, int $pages, string $baseUrl): string
         $out .= '<a class="btn btn-sm" href="' . e($link($page + 1)) . '" data-page="' . ($page + 1) . '">Next →</a>';
     }
     return $out . '</nav>';
+}
+
+// ---------------------------------------------------------------------
+// Public addresses: ONE form everywhere (links, canonical tags, sitemap, structured data, emails)
+// ---------------------------------------------------------------------
+function product_url(string $slug): string
+{
+    return '/feeds/product/' . rawurlencode($slug);
+}
+
+function lot_url(string $slug): string
+{
+    return '/ranch/lot/' . rawurlencode($slug);
+}
+
+function page_url(string $slug): string
+{
+    return '/pages/' . rawurlencode($slug);
+}
+
+function category_url(string $slug): string
+{
+    return '/feeds/category/' . rawurlencode($slug);
+}
+
+/** An old-style link (/pages/page.php?slug=x, /feeds/product.php?slug=x …) in its pretty form; anything else unchanged. */
+function pretty_url(string $url): string
+{
+    $map = ['#^/pages/page\.php\?slug=([a-z0-9-]+)$#' => 'page_url', '#^/feeds/product\.php\?slug=([a-z0-9-]+)$#' => 'product_url',
+            '#^/ranch/lot\.php\?slug=([a-z0-9-]+)$#' => 'lot_url', '#^/feeds/shop\.php\?category=([a-z0-9-]+)$#' => 'category_url'];
+    foreach ($map as $re => $fn) {
+        if (preg_match($re, $url, $m)) {
+            return $fn($m[1]);
+        }
+    }
+    return $url;
+}
+
+/**
+ * A detail page reached by any other address (…/product.php?slug=x, a trailing slash, …) moves permanently to the
+ * pretty one, so search engines and shared links settle on one URL. Only for plain GET/HEAD page views.
+ * Cannot loop: the pretty path is exactly what the rewrite rules serve.
+ */
+function redirect_to_pretty(string $prettyPath): void
+{
+    $path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH);
+    if ($path !== $prettyPath && in_array(request_method(), ['GET', 'HEAD'], true)) {
+        $q = $_GET;
+        unset($q['slug'], $q['category']);
+        redirect($prettyPath . ($q ? '?' . http_build_query($q) : ''), 301);
+    }
+}
+
+/** Structured data without empty values (Google flags null / "" fields). */
+function jsonld_clean(array $data): array
+{
+    $out = [];
+    foreach ($data as $k => $v) {
+        if (is_array($v)) {
+            $v = jsonld_clean($v);
+            if ($v === []) {
+                continue;
+            }
+        }
+        if ($v === null || $v === '') {
+            continue;
+        }
+        $out[$k] = $v;
+    }
+    return array_is_list($data) ? array_values($out) : $out;
+}
+
+/** schema.org BreadcrumbList from [[name, path], …]. */
+function jsonld_breadcrumbs(array $crumbs): array
+{
+    $items = [];
+    foreach (array_values($crumbs) as $i => [$name, $path]) {
+        $items[] = ['@type' => 'ListItem', 'position' => $i + 1, 'name' => $name, 'item' => app_url($path)];
+    }
+    return ['@context' => 'https://schema.org', '@type' => 'BreadcrumbList', 'itemListElement' => $items];
+}
+
+/** South African provinces (address forms). */
+function sa_provinces(): array
+{
+    return ['Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo', 'Mpumalanga', 'North West', 'Northern Cape', 'Western Cape'];
+}
+
+/** <option> list of provinces with $selected chosen. */
+function province_options(?string $selected = null): string
+{
+    $out = '<option value="">Choose…</option>';
+    foreach (sa_provinces() as $p) {
+        $out .= '<option value="' . e($p) . '"' . ($selected === $p ? ' selected' : '') . '>' . e($p) . '</option>';
+    }
+    return $out;
+}
+
+/** True when a division has FAQs to show (the nav links to the FAQ section only then). */
+function division_has_faqs(string $division): bool
+{
+    try {
+        return (bool) db_val('SELECT 1 FROM faqs WHERE is_active = 1 AND division_id = ? LIMIT 1', [division_id($division)]);
+    } catch (Throwable $e) {
+        return false;
+    }
 }

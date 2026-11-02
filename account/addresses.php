@@ -21,7 +21,7 @@ require GX_ROOT . '/includes/layout/header.php';
           <?php foreach ($addresses as $a): ?>
             <div class="card card-pad">
               <div class="row-between mb-1"><strong><?= e($a['label'] ?: ($a['farm_name'] ?: 'Address')) ?></strong><?php if ($a['is_default']): ?><span class="badge badge-accent">Default</span><?php endif; ?></div>
-              <p class="muted small mb-2"><?= e($a['recipient_name']) ?><?= $a['phone'] ? ' · ' . e($a['phone']) : '' ?><br><?= e(implode(', ', array_filter([$a['farm_name'], $a['line1'], $a['line2'], $a['town'], $a['postal_code']]))) ?>
+              <p class="muted small mb-2"><?= e($a['recipient_name']) ?><?= $a['phone'] ? ' · ' . e($a['phone']) : '' ?><br><?= e(implode(', ', array_filter([$a['farm_name'], $a['line1'], $a['line2'], $a['town'], $a['province'], $a['postal_code']]))) ?>
                 <?= $a['directions'] ? '<br><em>' . e($a['directions']) . '</em>' : '' ?><?= $a['gps_lat'] ? '<br>📍 ' . e($a['gps_lat']) . ', ' . e($a['gps_lng']) : '' ?></p>
               <div class="row">
                 <?php if (!$a['is_default']): ?><button class="btn btn-sm" type="button" data-act="/account/api/addresses.php" data-payload='<?= e(json_encode(['action' => 'default', 'id' => (int) $a['id']])) ?>'>Make default</button><?php endif; ?>
@@ -36,16 +36,21 @@ require GX_ROOT . '/includes/layout/header.php';
         <form data-api="/account/api/addresses.php" data-action="create" data-reload novalidate>
           <div class="grid-2">
             <div class="field"><label for="label">Label <span class="opt">(e.g. Home farm)</span></label><input class="input" id="label" name="label"></div>
-            <div class="field"><label for="farm_name">Farm name <span class="opt">(optional)</span></label><input class="input" id="farm_name" name="farm_name"></div>
+            <div class="field"><label for="farm_name">Farm name <span class="opt">(optional)</span></label><input class="input" id="farm_name" name="farm_name" autocomplete="organization"></div>
           </div>
           <div class="grid-2">
-            <div class="field"><label for="recipient_name">Receiver's name</label><input class="input" id="recipient_name" name="recipient_name" value="<?= e($customer['first_name'] . ' ' . $customer['last_name']) ?>" required></div>
-            <div class="field"><label for="phone">Receiver's phone</label><input class="input" id="phone" name="phone" type="tel" value="<?= e($customer['phone'] ?? '') ?>" required></div>
+            <div class="field"><label for="recipient_name">Receiver's name</label><input class="input" id="recipient_name" name="recipient_name" autocomplete="name" value="<?= e($customer['first_name'] . ' ' . $customer['last_name']) ?>" required></div>
+            <div class="field"><label for="phone">Receiver's phone</label><input class="input" id="phone" name="phone" type="tel" autocomplete="tel" value="<?= e($customer['phone'] ?? '') ?>" required></div>
           </div>
           <div class="grid-2">
-            <div class="field"><label for="line1">Street / farm road</label><input class="input" id="line1" name="line1" required></div>
-            <div class="field"><label for="town">Town</label><input class="input" id="town" name="town" required></div>
+            <div class="field"><label for="line1">Street / farm road</label><input class="input" id="line1" name="line1" autocomplete="address-line1" required></div>
+            <div class="field"><label for="line2">Area, plot or suburb <span class="opt">(optional)</span></label><input class="input" id="line2" name="line2" autocomplete="address-line2"></div>
           </div>
+          <div class="grid-2">
+            <div class="field"><label for="town">Town</label><input class="input" id="town" name="town" autocomplete="address-level2" required></div>
+            <div class="field"><label for="postal_code">Postal code <span class="opt">(optional)</span></label><input class="input" id="postal_code" name="postal_code" inputmode="numeric" autocomplete="postal-code"></div>
+          </div>
+          <div class="field"><label for="province">Province <span class="opt">(optional)</span></label><select class="select" id="province" name="province" autocomplete="address-level1"><?= province_options() ?></select></div>
           <div class="field"><label for="directions">Directions <span class="opt">(optional)</span></label><textarea class="textarea" id="directions" name="directions" rows="2"></textarea></div>
           <button class="btn btn-primary" type="submit">Save address</button>
         </form>

@@ -87,7 +87,8 @@ if ($fulfilment === 'delivery') {
         $addrIn = is_array($all['address'] ?? null) ? $all['address'] : [];
         [$addr, $aErr] = validate($addrIn + ['town' => $all['town'] ?? ''], [
             'recipient_name' => 'required|max:150', 'phone' => 'required|phone', 'farm_name' => 'nullable|max:150',
-            'line1' => 'required|max:191', 'postal_code' => 'nullable|max:10', 'directions' => 'nullable|max:1000',
+            'line1' => 'required|max:191', 'line2' => 'nullable|max:191', 'province' => 'nullable|in:' . implode(',', sa_provinces()),
+            'postal_code' => 'nullable|regex:/^[0-9]{4}$/', 'directions' => 'nullable|max:1000',
             'gps_lat' => 'nullable|numeric|min:-90|max:90', 'gps_lng' => 'nullable|numeric|min:-180|max:180', 'town' => 'required|max:120',
         ]);
         if ($aErr) {
@@ -130,21 +131,26 @@ db_exec('UPDATE customers SET phone = COALESCE(NULLIF(phone, \'\'), ?), company_
 // "Save this address": only now that the order exists, never twice, at most 20 per customer
 if (!empty($saveAddress)) {
     try {
-        $dup = db_val('SELECT id FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND town = ?', [$customer['id'], $saveAddress['line1'], $saveAddress['town']]);
+        // The same address = same street, area/plot and town (Plot 7 and Plot 9 on one farm road are two addresses)
+        $dup = db_val("SELECT id FROM customer_addresses WHERE customer_id = ? AND line1 = ? AND COALESCE(line2, '') = ? AND town = ?",
+            [$customer['id'], $saveAddress['line1'], (string) ($saveAddress['line2'] ?? ''), $saveAddress['town']]);
         $count = (int) db_val('SELECT COUNT(*) FROM customer_addresses WHERE customer_id = ?', [$customer['id']]);
         if ($dup) {
             // Same address again: keep it current (new directions / GPS pin / contact), never blank out what was there
             db_exec('UPDATE customer_addresses SET recipient_name = COALESCE(NULLIF(?, \'\'), recipient_name), phone = COALESCE(NULLIF(?, \'\'), phone),
                      farm_name = COALESCE(NULLIF(?, \'\'), farm_name), postal_code = COALESCE(NULLIF(?, \'\'), postal_code),
+                     province = COALESCE(NULLIF(?, \'\'), province),
                      directions = COALESCE(NULLIF(?, \'\'), directions), gps_lat = COALESCE(?, gps_lat), gps_lng = COALESCE(?, gps_lng) WHERE id = ?', [
-                $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['postal_code'], $saveAddress['directions'],
+                $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['postal_code'],
+                $saveAddress['province'] ?? null, $saveAddress['directions'],
                 $saveAddress['gps_lat'], $saveAddress['gps_lng'], $dup,
             ]);
         } elseif ($count < 20) {
-            db_insert('INSERT INTO customer_addresses (customer_id, recipient_name, phone, farm_name, line1, town, postal_code, directions, gps_lat, gps_lng, is_default)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)', [
-                $customer['id'], $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['line1'], $saveAddress['town'],
-                $saveAddress['postal_code'], $saveAddress['directions'], $saveAddress['gps_lat'], $saveAddress['gps_lng'], $count === 0 ? 1 : 0,
+            db_insert('INSERT INTO customer_addresses (customer_id, recipient_name, phone, farm_name, line1, line2, town, province, postal_code, directions, gps_lat, gps_lng, is_default)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', [
+                $customer['id'], $saveAddress['recipient_name'], $saveAddress['phone'], $saveAddress['farm_name'], $saveAddress['line1'], $saveAddress['line2'] ?? null,
+                $saveAddress['town'], $saveAddress['province'] ?? null, $saveAddress['postal_code'], $saveAddress['directions'], $saveAddress['gps_lat'], $saveAddress['gps_lng'],
+                $count === 0 ? 1 : 0,
             ]);
         }
     } catch (Throwable $e) {

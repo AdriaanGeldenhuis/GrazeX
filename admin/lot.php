@@ -64,7 +64,7 @@ admin_start($id ? 'Edit lot ' . $l['lot_no'] : 'New livestock lot', 'lots', ['pe
         <button class="btn btn-sm btn-green" type="button" data-admin-act="/admin/api/lots.php" data-payload='<?= e(json_encode(['action' => 'notify', 'id' => (int) $l['id']])) ?>'
                 data-confirm="Email <?= $subs ?> subscriber<?= $subs === 1 ? '' : 's' ?> about this lot?" data-ok="Send alert"><svg class="icon icon-sm"><use href="#i-bell"/></svg>Notify <?= $subs ?> subscriber<?= $subs === 1 ? '' : 's' ?></button>
       <?php endif; ?>
-      <?php if ($id): ?><a class="btn btn-sm" href="/ranch/lot.php?slug=<?= e($l['slug']) ?>" target="_blank" rel="noopener">View on site ↗</a><?php endif; ?>
+      <?php if ($id): ?><a class="btn btn-sm" href="<?= e(lot_url($l['slug'])) ?>" target="_blank" rel="noopener">View on site ↗</a><?php endif; ?>
     </div>
   </div>
 
@@ -112,7 +112,7 @@ admin_start($id ? 'Edit lot ' . $l['lot_no'] : 'New livestock lot', 'lots', ['pe
             <span class="badge badge-solid mi-first" hidden>Main</span>
             <div class="mi-actions"><button type="button" data-focal="<?= (int) $mid ?>">◎</button><button type="button" data-media-remove>✕</button></div></div>
         <?php endforeach; ?>
-        <label class="media-add"><input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden><svg class="icon icon-lg"><use href="#i-upload"/></svg>Add photos</label>
+        <label class="media-add"><input class="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple><svg class="icon icon-lg"><use href="#i-upload"/></svg>Add photos</label>
       </div>
     </div>
     <div class="form-grid mt-2"><?= af_text('video_url', 'YouTube video link', $l['video_url'], ['optional' => true, 'span' => true, 'placeholder' => 'https://youtu.be/…']) ?></div>
