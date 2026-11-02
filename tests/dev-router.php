@@ -50,8 +50,9 @@ foreach ($pretty as $re => [$target, $param]) {
     }
 }
 
-if ($uri === '/robots.txt' || $uri === '/sitemap.xml' || $uri === '/sw.js') {
-    require $root . ['/robots.txt' => '/robots.php', '/sitemap.xml' => '/sitemap.php', '/sw.js' => '/sw.php'][$uri];
+$generated = ['/robots.txt' => '/robots.php', '/sitemap.xml' => '/sitemap.php', '/sw.js' => '/sw.php', '/.well-known/assetlinks.json' => '/assetlinks.php'];
+if (isset($generated[$uri])) {
+    require $root . $generated[$uri];
     return true;
 }
 $path = $root . $uri;
