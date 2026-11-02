@@ -64,6 +64,8 @@ if ($payment) {
             break;
         case 'refund.succeeded':
             db_exec("UPDATE payments SET status = 'refunded', notes = CONCAT(COALESCE(notes,''), ' Refund confirmed by Yoco.') WHERE id = ?", [$payment['id']]);
+            db_exec("UPDATE orders SET payment_status = 'refunded' WHERE id = ? AND amount_paid_cents > 0
+                     AND NOT EXISTS (SELECT 1 FROM payments WHERE order_id = ? AND status = 'succeeded')", [$payment['order_id'], $payment['order_id']]);
             NotificationService::admin('refund', 'Yoco refund confirmed for ' . $payment['reference'], money((int) ($payload['amount'] ?? 0)) . ' refunded.',
                 '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id'], false);
             $result = 'refunded';

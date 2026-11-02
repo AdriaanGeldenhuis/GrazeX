@@ -3,6 +3,7 @@
  * Admin orders API.
  *   {action: transition, id, to} · {action: cancel, id, reason} · {action: finalise, id, weights{itemId: kg}}
  *   {action: refund, id, reason, restock} — completed orders only; needs the payments.refund permission
+ *   {action: mark_refunded, id, note} — money on a cancelled/expired order was paid back; needs payments.refund
  *   {action: note, id, admin_note} · {action: document, id, type}
  */
 declare(strict_types=1);
@@ -41,6 +42,13 @@ try {
             }
             OrderService::refund((int) $o['id'], mb_substr($reason, 0, 250), $aid, !empty(input('restock')));
             json_ok([], 'Order refunded — credit note issued. Pay the money back by EFT or in the Yoco portal.');
+        case 'mark_refunded':
+            if (!admin_can('payments.refund')) {
+                json_error('You do not have permission to refund orders.', 403);
+            }
+            $note = trim((string) input('note', '')) ?: 'Refunded';
+            OrderService::markMoneyRefunded((int) $o['id'], mb_substr($note, 0, 250), $aid);
+            json_ok([], 'Marked as refunded.');
         case 'finalise':
             $weights = [];
             foreach ((array) input('weights', []) as $itemId => $kg) {

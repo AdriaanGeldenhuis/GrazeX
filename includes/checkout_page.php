@@ -201,6 +201,7 @@ require GX_ROOT . '/includes/layout/header.php';
           <?php if ($isRanch && $quote['deposit'] > 0): ?>
             <p class="muted small">Pay the <strong><?= e(money($quote['deposit'])) ?></strong> deposit now to reserve. The balance is payable at collection<?= $quote['est_weight_kg'] > 0 ? ' (final weights confirmed on the day)' : '' ?>.</p>
           <?php endif; ?>
+          <div class="alert alert-warning" data-no-methods <?= $methods ? 'hidden' : '' ?>>Online payment isn't available for this order yet<?= !$isRanch ? ' — choose collection, or' : ' —' ?> please contact us to complete it.</div>
           <div class="option-cards" data-methods>
             <?php foreach ($methodInfo as $key => [$icon, $title, $text]): ?>
               <label class="option-card" data-method="<?= e($key) ?>" <?= in_array($key, $methods, true) ? '' : 'hidden' ?>>
@@ -218,7 +219,7 @@ require GX_ROOT . '/includes/layout/header.php';
           <?php if (!(int) ($customer['marketing_opt_in'] ?? 0)): ?>
             <label class="check mt-1"><input type="checkbox" name="marketing_opt_in" value="1"> Send me specials and livestock alerts.</label>
           <?php endif; ?>
-          <button class="btn btn-primary btn-lg btn-block mt-3 co-submit" type="submit"><svg class="icon"><use href="#i-lock"/></svg> <span data-submit-label><?= $isRanch ? 'Reserve' : 'Place order' ?></span> · <span data-total-now><?= e(money($isRanch ? $quote['deposit'] : $quote['total'])) ?></span></button>
+          <button class="btn btn-primary btn-lg btn-block mt-3 co-submit" type="submit" <?= $methods ? '' : 'disabled' ?>><svg class="icon"><use href="#i-lock"/></svg> <span data-submit-label><?= $isRanch ? 'Reserve' : 'Place order' ?></span> · <span data-total-now><?= e(money($isRanch ? $quote['deposit'] : $quote['total'])) ?></span></button>
           <p class="hint center mt-1">You'll get an email confirmation with your documents.</p>
         </section>
       </form>

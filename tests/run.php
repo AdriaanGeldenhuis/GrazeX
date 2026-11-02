@@ -14,6 +14,10 @@ require __DIR__ . '/../includes/bootstrap.php';
 
 $worker = $argv[1] ?? '';
 $testDb = env('db.name') . '_test';
+if (!preg_match('/^[A-Za-z0-9_]+_test$/', $testDb)) {
+    fwrite(STDERR, "The database name may only contain letters, digits and _ for the tests (got {$testDb}).\n");
+    exit(1);
+}
 $GLOBALS['GX_ENV']['db']['name'] = $testDb;
 
 // ---------------------------------------------------------------------
@@ -48,6 +52,14 @@ foreach (['install.sql', 'demo.sql'] as $f) {
     $admin->exec((string) file_get_contents(GX_ROOT . '/database/' . $f));
     while ($admin->query('SELECT 1')) { break; }
 }
+
+if ((string) env('yoco.test_webhook_secret', '') === '' || !str_starts_with((string) env('yoco.test_webhook_secret'), 'whsec_')) {
+    fwrite(STDERR, "Set YOCO_TEST_WEBHOOK_SECRET=whsec_<any base64> in your settings file — the webhook tests sign with it.\n");
+    exit(1);
+}
+// Card checkout only needs a key to be offered; no request ever reaches Yoco in these tests
+$GLOBALS['GX_ENV']['yoco']['mode'] = 'test';
+$GLOBALS['GX_ENV']['yoco']['test_secret_key'] = (string) env('yoco.test_secret_key', '') ?: 'sk_test_local';
 
 // Fixture: EFT is only offered once a division's bank details are filled in
 $admin->exec("UPDATE divisions SET bank_name = 'FNB', bank_account_name = 'GrazeX (Pty) Ltd', bank_account_no = '62000000001', bank_branch_code = '250655'");
@@ -275,7 +287,6 @@ final class TestHttp
             CURLOPT_HTTPHEADER => array_merge(['Content-Type: application/json'], $headers)]);
         $out = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
         return [$status, json_decode((string) $out, true) ?? ['raw' => $out]];
     }
 
@@ -301,7 +312,6 @@ final class TestHttp
         curl_setopt_array($ch, $opts);
         $out = curl_exec($ch);
         $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
         return [$status, $out];
     }
 }
@@ -446,6 +456,13 @@ OrderService::transition((int) $rf3['id'], 'completed');
 step('refund with restock', static fn() => OrderService::refund((int) $rf3['id'], 'Returned unopened', null, true));
 check('refund with returned goods restocks', stock(12) === $rfBefore - 2);
 check('only completed orders can be refunded', step('refund guard', static fn() => throws(static fn() => OrderService::refund((int) $ex2['id'], 'x'))) !== null);
+check('the customer gets a refund email (not "cancelled")', (bool) db_val("SELECT 1 FROM email_queue WHERE subject LIKE ? ", ['%' . $rf['order_no'] . ' refunded%']));
+step('cancel a paid order (setup)', static fn() => OrderService::cancel((int) $ex['id'], 'Customer changed mind', null));
+check('cancelled paid order still shows the money as received', order_row((int) $ex['id'])['payment_status'] === 'paid');
+step('mark money refunded', static fn() => OrderService::markMoneyRefunded((int) $ex['id'], 'EFT back on 3 Nov'));
+check('money on a cancelled order can be marked refunded', order_row((int) $ex['id'])['payment_status'] === 'refunded'
+    && !db_val("SELECT 1 FROM payments WHERE order_id = ? AND status = 'succeeded'", [$ex['id']]));
+check('… only once', throws(static fn() => OrderService::markMoneyRefunded((int) $ex['id'], 'again')) !== null);
 
 section('VAT rate, payment methods and R0 lines');
 check('non-VAT-registered division stores a 0% rate on the order', (int) db_val('SELECT vat_rate_bp FROM orders WHERE id = ?', [$r2['id']]) === 0);
@@ -455,6 +472,10 @@ db_exec("UPDATE divisions SET bank_account_no = NULL WHERE id = 2");
 $GLOBALS['GX_DIV_CACHE'] = [];
 check('EFT is hidden while a division has no bank details', !in_array('eft', OrderService::allowedPaymentMethods('ranch', 'collection', 1000), true));
 check('EFT is offered once bank details exist', in_array('eft', OrderService::allowedPaymentMethods('feeds', 'collection', 0), true));
+$keyWas = $GLOBALS['GX_ENV']['yoco']['test_secret_key'];
+$GLOBALS['GX_ENV']['yoco']['test_secret_key'] = '';
+check('no bank details + no card key: a deposit reservation has no payment method (checkout explains instead)', OrderService::allowedPaymentMethods('ranch', 'collection', 1000) === []);
+$GLOBALS['GX_ENV']['yoco']['test_secret_key'] = $keyWas;
 db_exec("UPDATE divisions SET bank_account_no = '62000000002' WHERE id = 2");
 $GLOBALS['GX_DIV_CACHE'] = [];
 db_exec('UPDATE lots SET avg_weight_kg = NULL WHERE id = 1');
@@ -531,6 +552,10 @@ check('two document types with the same prefix are refused', $st === 422 && isse
 [$st, $res] = $adm->api('POST', '/admin/api/lots.php', ['title' => 'Test lot', 'lot_no' => 'T-1', 'breed_id' => 1, 'category_id' => 1, 'sex' => 'mixed',
     'qty_total' => 5, 'pricing_mode' => 'per_kg', 'price' => '62.00', 'deposit_pct' => 20, 'status' => 'draft', 'avg_weight_kg' => '']);
 check('a per-kg lot without an average weight is refused', $st === 422 && isset($res['errors']['avg_weight_kg']), json_encode($res));
+[$st, $res] = $adm->api('POST', '/admin/api/lots.php', ['title' => 'Test lot', 'lot_no' => 'T-2', 'breed_id' => 1, 'category_id' => 1, 'sex' => 'mixed',
+    'qty_total' => 5, 'pricing_mode' => 'per_kg', 'price' => '62.00', 'deposit_pct' => 20, 'status' => 'draft', 'avg_weight_kg' => '',
+    'weighs' => ['1001' => ['weighed_on' => date('Y-m-d'), 'head_count' => 5, 'avg_weight_kg' => '31.5']]]);
+check('… but a weighing in the same save supplies it', $st === 200 && (float) db_val("SELECT avg_weight_kg FROM lots WHERE lot_no = 'T-2'") === 31.5, json_encode($res));
 
 $staff = new TestHttp($base);
 $staff->page('/admin/login.php');
@@ -552,9 +577,8 @@ $cust->page('/account/');
 as_customer($c3);
 CartService::add('feeds', 6, 1);
 $po = OrderService::place('feeds', ['billing_name' => 'Uploader', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(1), current_customer());
-$png = tempnam(sys_get_temp_dir(), 'gxpop') . '.png';
-$im = imagecreatetruecolor(40, 40);
-imagepng($im, $png);
+$png = (string) tempnam(sys_get_temp_dir(), 'gxpop');
+imagepng(imagecreatetruecolor(40, 40), $png);
 [$st, $res] = $cust->api('POST', '/account/api/pop-upload.php', ['order_no' => $po['order_no']], ['pop' => $png]);
 check('proof of payment upload works', $st === 200, $st . ' ' . json_encode($res));
 [$st] = $cust->api('POST', '/account/api/pop-upload.php', ['order_no' => $po['order_no']], ['pop' => $png]);
@@ -566,9 +590,22 @@ $cc = OrderService::place('feeds', ['billing_name' => 'Card Open', 'payment_meth
 yoco_pending($cc, 'ch_open');
 [$st] = $cust->api('POST', '/account/api/orders.php', ['action' => 'cancel', 'order_no' => $cc['order_no']]);
 check('customer cannot cancel while a card payment is in progress', $st === 409);
+$html = $cust->page('/account/order.php?no=' . rawurlencode($cc['order_no']));
+check('… and the order page explains instead of showing a Cancel button', !str_contains($html, 'Cancel this order') && str_contains($html, 'card payment for this order is in progress'));
 db_exec("UPDATE payments SET created_at = NOW() - INTERVAL 2 HOUR WHERE provider_checkout_id = 'ch_open'");
 [$st] = $cust->api('POST', '/account/api/orders.php', ['action' => 'cancel', 'order_no' => $cc['order_no']]);
 check('… but can once that checkout has lapsed', $st === 200);
+// Yoco refund confirmed by webhook → the order shows refunded once nothing paid remains
+as_customer($c3);
+CartService::add('feeds', 6, 1);
+$yr = OrderService::place('feeds', ['billing_name' => 'Yoco Refund', 'payment_method' => 'yoco', 'fulfilment' => 'collection'] + slot(1), current_customer());
+yoco_pending($yr, 'ch_refund');
+webhook_post($hook, 'evt_paid_r', 'ch_refund', (int) $yr['total_cents']);
+$rbody = json_encode(['id' => 'evt_refund_r', 'type' => 'refund.succeeded', 'payload' => ['amount' => (int) $yr['total_cents'], 'metadata' => ['checkoutId' => 'ch_refund']]]);
+$rts = (string) time();
+$rsig = base64_encode(hash_hmac('sha256', "evt_refund_r.{$rts}.{$rbody}", base64_decode(substr((string) env('yoco.test_webhook_secret'), 6)), true));
+$hook->raw('/payments/api/yoco-webhook.php', $rbody, ['webhook-id: evt_refund_r', 'webhook-timestamp: ' . $rts, 'webhook-signature: v1,' . $rsig]);
+check('Yoco refund webhook marks the order refunded', order_row((int) $yr['id'])['payment_status'] === 'refunded');
 
 section('PDF rendering');
 if (PdfService::available()) {
@@ -588,5 +625,8 @@ section('PHP compatibility');
 check('no PHP deprecation notices from GrazeX code', empty($GLOBALS['GX_DEPRECATIONS']), implode('; ', array_slice($GLOBALS['GX_DEPRECATIONS'] ?? [], 0, 3)));
 
 echo "\n" . ($fail ? "\033[31m{$fail} failed\033[0m, " : '') . "\033[32m{$pass} passed\033[0m\n";
+foreach (db_col("SELECT pop_path FROM payments WHERE pop_path LIKE 'storage/private/%'") as $f) {
+    @unlink(GX_ROOT . '/' . $f);
+}
 $admin->exec("DROP DATABASE IF EXISTS `{$testDb}`");
 exit($fail ? 1 : 0);

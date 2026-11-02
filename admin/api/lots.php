@@ -34,7 +34,16 @@ $d = validate_or_fail($in, [
     'video_url' => 'nullable|url|max:255', 'meta_title' => 'nullable|max:191', 'meta_description' => 'nullable|max:300',
 ]);
 if ($d['pricing_mode'] === 'per_kg' && (float) ($d['avg_weight_kg'] ?? 0) <= 0) {
-    json_error(t('error.validation'), 422, ['avg_weight_kg' => 'Enter the average live weight — per-kg lots are priced and the deposit is worked out from it.']);
+    // The newest weighing in this save sets the average (same rule as below), so that counts too
+    $weighed = false;
+    foreach ((array) ($in['weighs'] ?? []) as $w) {
+        if (af_date($w['weighed_on'] ?? '') && (float) str_replace(',', '.', (string) ($w['avg_weight_kg'] ?? '0')) > 0) {
+            $weighed = true;
+        }
+    }
+    if (!$weighed) {
+        json_error(t('error.validation'), 422, ['avg_weight_kg' => 'Enter the average live weight (or add a weighing) — per-kg lots are priced and the deposit is worked out from it.']);
+    }
 }
 $id = (int) ($in['id'] ?? 0);
 $slug = slugify($d['slug'] ?: $d['title'] . ' ' . $d['lot_no']);

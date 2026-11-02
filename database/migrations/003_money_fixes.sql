@@ -23,6 +23,10 @@ UPDATE email_templates SET body = REPLACE(body, '{{payment_instructions}}', '{{p
  WHERE template_key = 'order_placed';
 UPDATE email_templates SET body = CONCAT(body, '\n\n{{bank_details_md}}')
  WHERE template_key = 'payment_reminder' AND body NOT LIKE '%{{bank_details_md}}%';
+-- Refunds get their own email (with the credit note attached) instead of "Order cancelled".
+INSERT IGNORE INTO email_templates (template_key, name, subject, body) VALUES
+('order_refunded', 'Order refunded', 'Order {{order_no}} refunded',
+ 'Hi {{first_name}},\n\nWe have refunded order **{{order_no}}**. {{reason}}\n\nYour credit note is attached. The money is paid back the same way you paid — please allow a few working days for it to reflect.');
 
 -- 3. VAT: a division that is NOT VAT registered no longer stores a 15% rate on its orders.
 --    This only touches orders where no VAT was charged (vat_cents = 0) on a non-registered division.

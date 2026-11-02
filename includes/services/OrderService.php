@@ -554,6 +554,37 @@ final class OrderService
     }
 
     /**
+     * Record that money received on a cancelled / expired order was paid back (EFT or Yoco portal).
+     * The order itself stays closed; payments become "refunded" so reports stop counting them.
+     */
+    public static function markMoneyRefunded(int $orderId, string $note, ?int $adminId = null): array
+    {
+        $o = db_tx(static function () use ($orderId, $note, $adminId): array {
+            $o = db_one('SELECT * FROM orders WHERE id = ? FOR UPDATE', [$orderId]);
+            if (!$o || !in_array($o['status'], ['cancelled', 'expired'], true)) {
+                throw new DomainException('Only cancelled or expired orders use this — refund completed orders with Refund….');
+            }
+            if ((int) $o['amount_paid_cents'] <= 0 || $o['payment_status'] === 'refunded') {
+                throw new DomainException('There is no payment on this order to mark as refunded.');
+            }
+            db_exec("UPDATE payments SET status = 'refunded', notes = CONCAT(COALESCE(notes, ''), ' Refunded: ', ?) WHERE order_id = ? AND status = 'succeeded'",
+                [mb_substr($note, 0, 200), $orderId]);
+            db_exec("UPDATE orders SET payment_status = 'refunded' WHERE id = ?", [$orderId]);
+            self::history($orderId, $o['status'], $o['status'], 'Payment refunded: ' . $note, $adminId ? 'admin' : 'system', $adminId);
+            return db_one('SELECT * FROM orders WHERE id = ?', [$orderId]);
+        });
+        audit('order.money_refunded', 'order', $orderId, ['note' => $note]);
+        return $o;
+    }
+
+    /** True while a card checkout for this order may still be completed by the customer. */
+    public static function cardCheckoutOpen(int $orderId): bool
+    {
+        return (bool) db_val("SELECT 1 FROM payments WHERE order_id = ? AND method = 'yoco' AND status = 'pending'
+                              AND created_at > NOW() - INTERVAL ? MINUTE", [$orderId, setting_int('yoco_hold_minutes', 60)]);
+    }
+
+    /**
      * Refund a completed order: credit note against the invoice, payments marked refunded, optional restock
      * (only when the goods physically came back). The money itself is paid back outside the site (EFT / Yoco portal).
      */
@@ -610,13 +641,16 @@ final class OrderService
         });
 
         try {
+            $cnId = null;
             $inv = db_val("SELECT id FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice') AND is_void = 0 ORDER BY id DESC LIMIT 1", [$orderId]);
             if ($inv) {
-                DocumentService::creditNote((int) $inv, $finalStatus === 'refunded' ? 'refund' : 'cancel', $reason);
+                $cnId = DocumentService::creditNote((int) $inv, $finalStatus === 'refunded' ? 'refund' : 'cancel', $reason);
             }
             $first = (string) db_val('SELECT first_name FROM customers WHERE id = ?', [$o['customer_id']]);
-            NotificationService::email($finalStatus === 'expired' ? 'order_expired' : 'order_cancelled', $o['billing_email'], $o['billing_name'],
-                ['first_name' => $first, 'order_no' => $o['order_no'], 'reason' => $reason], (int) $o['division_id']);
+            $template = match ($finalStatus) { 'expired' => 'order_expired', 'refunded' => 'order_refunded', default => 'order_cancelled' };
+            NotificationService::email($template, $o['billing_email'], $o['billing_name'],
+                ['first_name' => $first, 'order_no' => $o['order_no'], 'reason' => $reason], (int) $o['division_id'],
+                $finalStatus === 'refunded' && $cnId ? DocumentService::attachment($cnId) : []);
             if ((int) $o['amount_paid_cents'] > 0 && $finalStatus !== 'refunded') {
                 NotificationService::admin('refund_due', 'Refund due on ' . $o['order_no'], money((int) $o['amount_paid_cents']) . ' was paid before the order was ' . $finalStatus . '.',
                     '/admin/order.php?id=' . $orderId, (int) $o['division_id']);

@@ -96,6 +96,12 @@
         const firstOk = form.querySelector('[data-method]:not([hidden]) input');
         if (firstOk) firstOk.checked = true;
       }
+      // No way to pay this order online: say so and keep the button off (instead of a silent validation error)
+      const noMethods = q.methods.length === 0;
+      const noBox = $('[data-no-methods]', form);
+      if (noBox) noBox.hidden = !noMethods;
+      const submitBtn = form.querySelector('.co-submit');
+      if (submitBtn && !submitBtn.classList.contains('is-loading')) submitBtn.disabled = noMethods;
 
       // Delivery zone + dates
       const info = $('[data-zone-info]', form);

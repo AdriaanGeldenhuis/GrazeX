@@ -57,16 +57,21 @@ final class YocoService
             [$order['id'], $order['division_id'], $purpose, $due, $idem, self::mode(), $order['order_no']]);
 
         $base = app_url('/payments/return.php?t=' . $order['pay_token']);
-        $res = self::request('POST', '/api/checkouts', [
-            'amount' => $due,
-            'currency' => 'ZAR',
-            'successUrl' => $base . '&r=success',
-            'cancelUrl' => $base . '&r=cancel',
-            'failureUrl' => $base . '&r=failed',
-            'externalId' => (string) $paymentId,
-            'clientReferenceId' => $order['order_no'],
-            'metadata' => ['order_no' => $order['order_no'], 'payment_id' => (string) $paymentId, 'purpose' => $purpose],
-        ], $idem);
+        try {
+            $res = self::request('POST', '/api/checkouts', [
+                'amount' => $due,
+                'currency' => 'ZAR',
+                'successUrl' => $base . '&r=success',
+                'cancelUrl' => $base . '&r=cancel',
+                'failureUrl' => $base . '&r=failed',
+                'externalId' => (string) $paymentId,
+                'clientReferenceId' => $order['order_no'],
+                'metadata' => ['order_no' => $order['order_no'], 'payment_id' => (string) $paymentId, 'purpose' => $purpose],
+            ], $idem);
+        } catch (Throwable $e) {
+            gx_log('error', 'Yoco checkout create failed', ['order' => $order['order_no'], 'error' => $e->getMessage()]);
+            $res = [];
+        }
         if (empty($res['id']) || empty($res['redirectUrl'])) {
             db_exec("UPDATE payments SET status = 'failed', notes = ? WHERE id = ?", ['Checkout create failed', $paymentId]);
             throw new RuntimeException('Card payments are unavailable right now. Please try again or choose EFT.');

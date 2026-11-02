@@ -57,6 +57,16 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
 </div>
 <?php endif; ?>
 
+<?php if ($closed && (int) $o['amount_paid_cents'] > 0 && $o['payment_status'] !== 'refunded'): ?>
+<div class="alert alert-warning mb-3">
+  <?= e(money((int) $o['amount_paid_cents'])) ?> was paid on this <?= e(strtolower(OrderService::label($o['status'])[0])) ?> order. Pay it back (EFT, or the Yoco portal for card payments), then record it here.
+  <?php if (admin_can('payments.refund')): ?>
+    <button class="btn btn-sm btn-danger mt-1" type="button" data-admin-act="<?= e($api) ?>" data-payload='<?= e(json_encode(['action' => 'mark_refunded', 'id' => (int) $o['id']])) ?>'
+            data-prompt="How was it refunded? (e.g. EFT on 3 Nov, Yoco portal)" data-prompt-field="note" data-confirm="Mark <?= e(money((int) $o['amount_paid_cents'])) ?> as refunded?" data-ok="Mark refunded" data-danger>Mark money refunded</button>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <div class="adm-grid-2">
   <div>
     <?php if ($isRanch && in_array($o['status'], ['reserved', 'deposit_paid'], true) && admin_can('orders.manage')): ?>
