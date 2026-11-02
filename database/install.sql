@@ -159,7 +159,7 @@ CREATE TABLE schema_migrations (
   PRIMARY KEY (version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security'), ('005_checkout'), ('006_admin_popia');
+INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes'), ('004_security'), ('005_checkout'), ('006_admin_popia'), ('007_app_push');
 
 -- ---------------------------------------------------------------------
 -- 2. ACCOUNTS (customers + admin users are separate on purpose)
@@ -1217,8 +1217,11 @@ CREATE TABLE wishlists (
 CREATE TABLE push_devices (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   customer_id    INT UNSIGNED NULL,
+  customer_sv    INT UNSIGNED NULL,
   admin_user_id  INT UNSIGNED NULL,
+  admin_sv       INT UNSIGNED NULL,
   platform       ENUM('android','ios','web') NOT NULL DEFAULT 'android',
+  app_version    VARCHAR(20)  NULL,
   token_hash     CHAR(64)     NOT NULL,
   token          TEXT         NOT NULL,
   last_seen_at   DATETIME     NULL,
@@ -1227,6 +1230,46 @@ CREATE TABLE push_devices (
   UNIQUE KEY uq_push_devices_token (token_hash),
   CONSTRAINT fk_push_devices_customer FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE,
   CONSTRAINT fk_push_devices_admin FOREIGN KEY (admin_user_id) REFERENCES admin_users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE push_queue (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  device_id    INT UNSIGNED NOT NULL,
+  channel      VARCHAR(20)  NOT NULL DEFAULT 'orders',
+  title        VARCHAR(120) NOT NULL,
+  body         VARCHAR(400) NOT NULL,
+  url          VARCHAR(500) NULL,
+  tag          VARCHAR(64)  NULL,
+  status       ENUM('queued','sending','sent','failed') NOT NULL DEFAULT 'queued',
+  attempts     TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  last_error   VARCHAR(255) NULL,
+  send_after   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  claimed_at   DATETIME     NULL,
+  sent_at      DATETIME     NULL,
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_push_queue_status (status, send_after),
+  KEY idx_push_queue_sent (sent_at),
+  KEY idx_push_queue_device (device_id, created_at),
+  CONSTRAINT fk_push_queue_device FOREIGN KEY (device_id) REFERENCES push_devices (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE customer_remember_tokens (
+  id                   INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  customer_id          INT UNSIGNED NOT NULL,
+  selector             CHAR(24)     NOT NULL,
+  validator_hash       CHAR(64)     NOT NULL,
+  prev_validator_hash  CHAR(64)     NULL,
+  rotated_at           DATETIME     NULL,
+  session_version      INT UNSIGNED NOT NULL,
+  user_agent           VARCHAR(255) NULL,
+  expires_at           DATETIME     NOT NULL,
+  last_used_at         DATETIME     NULL,
+  created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_remember_selector (selector),
+  KEY idx_remember_expires (expires_at),
+  CONSTRAINT fk_remember_customer FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
