@@ -111,7 +111,7 @@ admin_start('Inventory', 'inventory', ['perm' => 'inventory.manage']);
       <button class="btn btn-primary" type="button" data-admin-act="/admin/api/inventory.php" data-payload='{"action":"stocktake_start"}'>Start a stock take</button>
     </section>
   <?php else: ?>
-    <form data-admin-form data-api="/admin/api/inventory.php" data-action="stocktake_save" novalidate>
+    <form data-admin-form data-api="/admin/api/inventory.php" data-action="stocktake_save" data-reload novalidate>
       <input type="hidden" name="id" value="<?= (int) $openTake['id'] ?>">
       <p class="muted small">Started <?= e(fmt_datetime($openTake['created_at'])) ?>. Leave a line empty to skip it. Save as you go; complete when done.</p>
       <div class="table-wrap"><table class="table dt dt-cards">

@@ -21,7 +21,7 @@ $history = db_all('SELECT h.*, a.name AS admin_name FROM order_status_history h 
 $customer = db_one('SELECT * FROM customers WHERE id = ?', [$o['customer_id']]);
 $orderCount = (int) db_val('SELECT COUNT(*) FROM orders WHERE customer_id = ?', [$o['customer_id']]);
 $due = OrderService::amountDue($o);
-$next = OrderService::TRANSITIONS[$o['status']] ?? [];
+$next = OrderService::nextStatuses($o);
 $closed = in_array($o['status'], ['cancelled', 'expired', 'refunded'], true);
 $slot = $o['collection_slot_id'] ? db_one('SELECT start_time, end_time FROM collection_slots WHERE id = ?', [$o['collection_slot_id']]) : null;
 $api = '/admin/api/orders.php';
@@ -43,12 +43,15 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
 
 <?php if (admin_can('orders.manage') && !$closed): ?>
 <div class="od-actions mb-3">
-  <?php foreach ($next as $to): if (in_array($to, ['cancelled', 'paid', 'deposit_paid', 'finalised'], true)) continue; [$lbl, $cls] = $transitionLabels[$to] ?? [OrderService::label($to)[0], '']; ?>
+  <?php foreach ($next as $to): if (in_array($to, ['cancelled', 'finalised', 'refunded'], true)) continue; [$lbl, $cls] = $transitionLabels[$to] ?? [OrderService::label($to)[0], '']; ?>
     <button class="btn <?= e($cls) ?>" type="button" data-admin-act="<?= e($api) ?>" data-payload='<?= e(json_encode(['action' => 'transition', 'id' => (int) $o['id'], 'to' => $to])) ?>'><?= e($lbl) ?></button>
   <?php endforeach; ?>
   <?php if (in_array('cancelled', $next, true)): ?>
     <button class="btn btn-danger" type="button" data-admin-act="<?= e($api) ?>" data-payload='<?= e(json_encode(['action' => 'cancel', 'id' => (int) $o['id']])) ?>'
             data-prompt="Reason for cancelling (the customer will see this):" data-prompt-field="reason" data-confirm="Cancel <?= e($o['order_no']) ?>? Stock goes back on the shelf<?= (int) $o['amount_paid_cents'] ? ' and a refund is flagged' : '' ?>." data-ok="Cancel order" data-danger>Cancel order</button>
+  <?php endif; ?>
+  <?php if (in_array('refunded', $next, true) && admin_can('payments.refund')): ?>
+    <button class="btn btn-danger" type="button" data-modal-open="refund-modal">Refund…</button>
   <?php endif; ?>
   <?php if ($wa): ?><a class="btn btn-whatsapp" href="<?= e($wa) ?>" target="_blank" rel="noopener"><svg class="icon icon-fill"><use href="#i-whatsapp"/></svg>WhatsApp</a><?php endif; ?>
 </div>
@@ -66,7 +69,7 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
             <div class="repeat-row" style="grid-template-columns:1fr 160px">
               <div><strong><?= e($it['name']) ?></strong><br><span class="small muted"><?= (int) $it['qty'] ?> head · <?= $it['pricing_mode'] === 'per_kg' ? e(money((int) $it['unit_price_cents'])) . '/kg · est. ' . e(kg((float) $it['est_weight_kg'])) : 'per head ' . e(money((int) $it['unit_price_cents'])) ?></span></div>
               <?php if ($it['pricing_mode'] === 'per_kg'): ?>
-                <div class="field"><label>Actual total kg</label><input class="input" type="number" step="0.1" min="1" name="weights[<?= (int) $it['id'] ?>]" value="<?= e($it['actual_weight_kg'] ?? $it['est_weight_kg']) ?>" required></div>
+                <div class="field"><label for="w-<?= (int) $it['id'] ?>">Actual total kg</label><input class="input" id="w-<?= (int) $it['id'] ?>" type="number" step="0.1" min="1" inputmode="decimal" name="weights[<?= (int) $it['id'] ?>]" value="<?= e($it['actual_weight_kg'] ?? '') ?>" placeholder="est. <?= e((string) (float) $it['est_weight_kg']) ?>" required></div>
               <?php else: ?><div class="muted small">No weighing needed</div><?php endif; ?>
             </div>
           <?php endforeach; ?>
@@ -212,4 +215,18 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
     <div class="modal-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancel</button><button class="btn btn-primary" type="submit">Record payment</button></div>
   </form>
 </dialog>
+<?php if (in_array('refunded', $next, true) && admin_can('payments.refund')): ?>
+<dialog class="modal" id="refund-modal" aria-labelledby="refund-title">
+  <form data-modal-form data-api="<?= e($api) ?>" data-action="refund" novalidate>
+    <div class="modal-head"><h3 id="refund-title">Refund <?= e($o['order_no']) ?></h3><button class="nav-icon-btn" type="button" data-modal-close aria-label="Close">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" name="id" value="<?= (int) $o['id'] ?>">
+      <p class="muted small">A credit note is issued against the invoice and the payments are marked refunded. Pay the money back yourself (EFT, or the Yoco portal for card payments).</p>
+      <div class="field"><label for="rf-reason">Reason (shown on the credit note)</label><input class="input" id="rf-reason" name="reason" maxlength="250" required></div>
+      <label class="check"><input type="checkbox" name="restock" value="1"> The goods came back — put them back in stock</label>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancel</button><button class="btn btn-danger" type="submit">Refund order</button></div>
+  </form>
+</dialog>
+<?php endif; ?>
 <?php admin_end(); ?>

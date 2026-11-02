@@ -33,6 +33,9 @@ $d = validate_or_fail($in, [
     'short_description' => 'nullable|max:500', 'description_md' => 'nullable|max:60000', 'health_summary' => 'nullable|max:2000',
     'video_url' => 'nullable|url|max:255', 'meta_title' => 'nullable|max:191', 'meta_description' => 'nullable|max:300',
 ]);
+if ($d['pricing_mode'] === 'per_kg' && (float) ($d['avg_weight_kg'] ?? 0) <= 0) {
+    json_error(t('error.validation'), 422, ['avg_weight_kg' => 'Enter the average live weight — per-kg lots are priced and the deposit is worked out from it.']);
+}
 $id = (int) ($in['id'] ?? 0);
 $slug = slugify($d['slug'] ?: $d['title'] . ' ' . $d['lot_no']);
 if (db_val('SELECT id FROM lots WHERE slug = ? AND id <> ?', [$slug, $id])) {

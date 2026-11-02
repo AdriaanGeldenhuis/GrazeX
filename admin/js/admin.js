@@ -36,20 +36,22 @@
   });
   document.addEventListener('click', (e) => { if (bellPanel && !bellPanel.hidden && !e.target.closest('[data-adm-bell-panel], [data-adm-bell]')) bellPanel.hidden = true; });
 
-  /* ---------- FormData → nested object (supports a[b][0][c] names) ---------- */
+  /* ---------- FormData → nested object (supports a[b][0][c] names) ----------
+     Only "name[]" builds a list. Numeric keys such as weights[<order_item_id>] stay keyed by that id
+     (an object), because the APIs look rows up by id. Covered by tests/js/formToObject.test.mjs. */
   GX.formToObject = function (form) {
     const out = {};
     const set = (obj, path, val) => {
       let cur = obj;
       path.forEach((k, i) => {
         const last = i === path.length - 1;
-        const nextIsIndex = !last && /^\d*$/.test(path[i + 1]);
+        const nextIsPush = !last && path[i + 1] === '';
         if (k === '') { // push
-          if (last) cur.push(val); else { const n = nextIsIndex ? [] : {}; cur.push(n); cur = n; }
+          if (last) cur.push(val); else { const n = nextIsPush ? [] : {}; cur.push(n); cur = n; }
           return;
         }
         if (last) { cur[k] = val; return; }
-        if (cur[k] === undefined) cur[k] = nextIsIndex ? [] : {};
+        if (cur[k] === undefined) cur[k] = nextIsPush ? [] : {};
         cur = cur[k];
       });
     };
@@ -92,12 +94,24 @@
       payload[b.dataset.promptField || 'note'] = v;
     }
     GX.setLoading(b, true);
-    try {
-      const d = await GX.api(b.dataset.adminAct, { body: payload });
+    const run = async (body) => {
+      const d = await GX.api(b.dataset.adminAct, { body, quiet: true });
       GX.toast(d.message || 'Done');
       if (d.redirect) location.href = d.redirect;
       else if (b.dataset.noReload === undefined) setTimeout(() => location.reload(), 450);
-    } catch (_) { /* toast shown */ }
+    };
+    try {
+      await run(payload);
+    } catch (err) {
+      // The API asks for an explicit second confirmation (e.g. approving more than is due)
+      if (err.status === 409 && err.errors && err.errors.override) {
+        if (await GX.confirm(err.errors.override, { ok: 'Yes, continue', danger: true })) {
+          try { await run(Object.assign({}, payload, { override: 1 })); } catch (err2) { GX.toast(err2.message, 'error'); }
+        }
+      } else if (err.name !== 'AbortError') {
+        GX.toast(err.message, 'error');
+      }
+    }
     GX.setLoading(b, false);
   });
 

@@ -37,6 +37,25 @@ if (input('action') === 'division') {
     if ($vatReg && empty($d['vat_no'])) {
         json_error(t('error.validation'), 422, ['vat_no' => 'A VAT number is required when VAT registered.']);
     }
+    // Order and document numbers must never collide between Feeds and Ranch
+    $other = db_one('SELECT order_prefix, invoice_prefix, credit_prefix, receipt_prefix FROM divisions WHERE code <> ? LIMIT 1', [$code]);
+    $mine = array_intersect_key($d, array_flip(['order_prefix', 'invoice_prefix', 'credit_prefix', 'receipt_prefix']));
+    $clash = [];
+    foreach ($mine as $field => $prefix) {
+        if ($other && in_array(strtoupper((string) $prefix), array_map('strtoupper', array_values($other)), true)) {
+            $clash[$field] = 'Already used by the other division — choose a different prefix.';
+        }
+    }
+    if (count(array_unique(array_map('strtoupper', $mine))) !== count($mine)) {
+        foreach ($mine as $field => $prefix) {
+            if (count(array_keys(array_map('strtoupper', $mine), strtoupper((string) $prefix))) > 1) {
+                $clash[$field] ??= 'Each document type needs its own prefix.';
+            }
+        }
+    }
+    if ($clash) {
+        json_error(t('error.validation'), 422, $clash);
+    }
     db_exec('UPDATE divisions SET legal_name=?, registration_no=?, vat_registered=?, vat_no=?, address=?, phone=?, email=?, tagline=?, bank_name=?, bank_account_name=?,
              bank_account_no=?, bank_branch_code=?, bank_account_type=?, order_prefix=?, invoice_prefix=?, credit_prefix=?, receipt_prefix=?, document_footer=? WHERE code = ?', [
         $d['legal_name'], $d['registration_no'], $vatReg, $d['vat_no'], $d['address'], $d['phone'], $d['email'], $d['tagline'], $d['bank_name'], $d['bank_account_name'],

@@ -26,11 +26,14 @@ final class OrderService
         'refunded' => ['Refunded', 'badge-danger'],
     ];
 
-    /** Allowed manual transitions (admin). */
+    /**
+     * Allowed manual transitions (admin). "paid" / "deposit_paid" are never set by hand — only
+     * recordPayment() sets them, so money and status always agree. "refunded" goes through refund().
+     */
     public const TRANSITIONS = [
-        'pending_payment' => ['paid', 'cancelled'],
+        'pending_payment' => ['cancelled'],
         'awaiting_collection' => ['processing', 'ready_for_collection', 'completed', 'cancelled'],
-        'reserved' => ['deposit_paid', 'finalised', 'cancelled'],
+        'reserved' => ['finalised', 'cancelled'],
         'paid' => ['processing', 'ready_for_collection', 'out_for_delivery', 'completed', 'cancelled'],
         'deposit_paid' => ['finalised', 'cancelled'],
         'processing' => ['ready_for_collection', 'out_for_delivery', 'completed', 'cancelled'],
@@ -47,6 +50,19 @@ final class OrderService
     public static function label(string $status): array
     {
         return self::STATUS_LABELS[$status] ?? [ucfirst(str_replace('_', ' ', $status)), ''];
+    }
+
+    /**
+     * Statuses an admin may move this order to. Livestock must be handed over as "collected"
+     * (that issues the Document of Identification) before it can be completed.
+     */
+    public static function nextStatuses(array $o): array
+    {
+        $next = self::TRANSITIONS[$o['status']] ?? [];
+        if ((int) $o['division_id'] === division_id('ranch') && $o['status'] !== 'collected') {
+            $next = array_values(array_diff($next, ['completed']));
+        }
+        return $next;
     }
 
     // -----------------------------------------------------------------
@@ -145,6 +161,12 @@ final class OrderService
         if ($quote['errors']) {
             throw new DomainException(reset($quote['errors']));
         }
+        foreach ($quote['lines'] as $l) {
+            // Safety net: never sell at R0 (e.g. a per-kg lot without an average weight)
+            if ((int) $l['total'] <= 0) {
+                throw new DomainException($l['name'] . ' cannot be ordered online right now — please contact us.');
+            }
+        }
         $method = (string) $in['payment_method'];
         $allowed = self::allowedPaymentMethods($div, $quote['fulfilment'], $quote['deposit']);
         if (!in_array($method, $allowed, true)) {
@@ -219,7 +241,7 @@ final class OrderService
                 $addr['gps_lat'] ?? null, $addr['gps_lng'] ?? null,
                 $in['billing_name'], $customer['email'], $in['billing_phone'] ?? null, $in['billing_company'] ?? null, $in['billing_vat_no'] ?? null,
                 $in['billing_address'] ?? null, $in['buyer_id_number'] ?? null, $in['buyer_brand_mark'] ?? null, $in['transport_note'] ?? null,
-                $quote['vat_bp'] ?: PricingService::vatRateBp(), $quote['zero_rated'] ? 1 : 0, $quote['subtotal'], $quote['discount'], $quote['delivery'],
+                $quote['vat_bp'], $quote['zero_rated'] ? 1 : 0, $quote['subtotal'], $quote['discount'], $quote['delivery'],
                 $quote['vat'], $quote['total'], $quote['deposit'], $quote['coupon']['id'] ?? null,
                 $in['customer_note'] ?? null, $hold, random_token(32),
             ]);
@@ -231,7 +253,7 @@ final class OrderService
                          est_weight_kg, line_total_cents, vat_rate_bp, zero_rated, unit_cost_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [
                     $orderId, $isFeeds ? $l['target_id'] : null, $isFeeds ? null : $l['target_id'], $l['name'], $l['sku'], $l['variant'],
                     $l['qty'], $isFeeds ? 'unit' : $l['pricing_mode'], $isFeeds ? $l['unit'] : ($l['pricing_mode'] === 'per_kg' ? $l['price_cents'] : $l['unit']),
-                    $isFeeds ? null : $l['est_weight_kg'], $l['total'], $quote['vat_bp'] ?: PricingService::vatRateBp(), $l['zero_rated'] ? 1 : 0, $row['cost_cents'],
+                    $isFeeds ? null : $l['est_weight_kg'], $l['total'], $quote['vat_bp'], $l['zero_rated'] ? 1 : 0, $row['cost_cents'],
                 ]);
                 $opts = ['order_id' => $orderId, 'reference' => $orderNo, 'note' => 'Order ' . $orderNo];
                 $isFeeds ? StockService::adjustVariant((int) $l['target_id'], -(int) $l['qty'], 'sale', $opts)
@@ -256,6 +278,7 @@ final class OrderService
             $instructions = self::paymentInstructions($order);
             NotificationService::email('order_placed', $order['billing_email'], $order['billing_name'], [
                 'first_name' => $customer['first_name'], 'order_no' => $order['order_no'], 'payment_instructions' => $instructions,
+                'payment_instructions_md' => $instructions,
             ], $divisionId, DocumentService::attachment($docId), ['label' => 'View your order', 'url' => app_url('/account/order.php?no=' . rawurlencode($order['order_no']))]);
             NotificationService::admin('new_order', 'New ' . division($divisionId)['name'] . ' order ' . $order['order_no'] . ' (' . money((int) $order['total_cents']) . ')',
                 $order['billing_name'] . ' · ' . strtoupper(str_replace('_', ' ', $method)) . ' · ' . ($order['fulfilment'] === 'delivery' ? 'Delivery to ' . $order['ship_town'] : 'Collection ' . fmt_date($order['collection_date'])),
@@ -273,7 +296,9 @@ final class OrderService
         if (setting_bool('payment_yoco_enabled', true) && (string) env('yoco.' . env('yoco.mode', 'test') . '_secret_key', '') !== '') {
             $m[] = 'yoco';
         }
-        if (setting_bool('payment_eft_enabled', true)) {
+        // EFT only once the division's bank details are filled in (Admin → Settings) — otherwise the
+        // customer would be asked to pay without knowing where to pay.
+        if (setting_bool('payment_eft_enabled', true) && trim((string) (division($div)['bank_account_no'] ?? '')) !== '') {
             $m[] = 'eft';
         }
         $cashOk = $div === 'ranch' ? $deposit === 0 : $fulfilment === 'collection';
@@ -299,15 +324,23 @@ final class OrderService
         return max(0, (int) $o['total_cents'] - (int) $o['amount_paid_cents']);
     }
 
+    /** Markdown bank details for an EFT order (empty-safe). */
+    public static function bankDetailsMd(array $o): string
+    {
+        $d = division((int) $o['division_id']);
+        if (!$d || trim((string) $d['bank_account_no']) === '') {
+            return "Please contact us for our banking details. Use **{$o['order_no']}** as your payment reference.";
+        }
+        return "- Bank: **{$d['bank_name']}**\n- Account name: **{$d['bank_account_name']}**\n- Account no: **{$d['bank_account_no']}**"
+             . "\n- Branch code: **{$d['bank_branch_code']}**\n- Reference: **{$o['order_no']}**";
+    }
+
     /** Markdown payment instructions for emails / pages. */
     public static function paymentInstructions(array $o): string
     {
-        $d = division((int) $o['division_id']);
         $due = self::amountDue($o);
         if ($o['payment_method'] === 'eft') {
-            $bank = $d['bank_account_no']
-                ? "- Bank: **{$d['bank_name']}**\n- Account name: **{$d['bank_account_name']}**\n- Account no: **{$d['bank_account_no']}**\n- Branch code: **{$d['bank_branch_code']}**\n- Reference: **{$o['order_no']}**"
-                : "We will send our banking details shortly. Use **{$o['order_no']}** as your payment reference.";
+            $bank = self::bankDetailsMd($o);
             return "**Please pay " . money($due) . " by EFT** before " . fmt_datetime($o['hold_expires_at']) . " to keep your stock reserved.\n\n{$bank}\n\nThen upload your proof of payment in your account.";
         }
         if ($o['payment_method'] === 'yoco') {
@@ -334,6 +367,10 @@ final class OrderService
             $o = db_one('SELECT * FROM orders WHERE id = ? FOR UPDATE', [$orderId]);
             if (!$o) {
                 throw new DomainException('Order not found.');
+            }
+            if (in_array($o['status'], ['cancelled', 'refunded'], true)) {
+                // Money for a closed order: never reopen it or invoice it — the caller records it and flags a refund
+                throw new LatePaymentException('Payment received for ' . $o['status'] . ' order ' . $o['order_no'] . ' — refund needed.');
             }
             if ($paymentId) {
                 $p = db_one('SELECT * FROM payments WHERE id = ? AND order_id = ? FOR UPDATE', [$paymentId, $orderId]);
@@ -399,6 +436,17 @@ final class OrderService
 
         if ($result['new']) {
             self::afterPayment($result['order'], (int) $result['payment_id']);
+            $ro = $result['order'];
+            if ((int) $ro['amount_paid_cents'] > (int) $ro['total_cents']) {
+                try {
+                    NotificationService::admin('refund_due', 'Overpayment on ' . $ro['order_no'],
+                        money((int) $ro['amount_paid_cents']) . ' received against a total of ' . money((int) $ro['total_cents'])
+                        . ' — refund ' . money((int) $ro['amount_paid_cents'] - (int) $ro['total_cents']) . '.',
+                        '/admin/order.php?id=' . $ro['id'], (int) $ro['division_id']);
+                } catch (Throwable $e) {
+                    gx_log('error', 'Overpayment alert failed', ['order' => $ro['order_no'], 'error' => $e->getMessage()]);
+                }
+            }
         }
         return $result['order'];
     }
@@ -449,8 +497,12 @@ final class OrderService
         if (!$o) {
             throw new DomainException('Order not found.');
         }
-        if (!in_array($to, self::TRANSITIONS[$o['status']] ?? [], true)) {
-            throw new DomainException('Cannot change an order from "' . self::label($o['status'])[0] . '" to "' . self::label($to)[0] . '".');
+        if (!in_array($to, self::nextStatuses($o), true)) {
+            throw new DomainException('Cannot change an order from "' . self::label($o['status'])[0] . '" to "' . self::label($to)[0] . '".'
+                . ((int) $o['division_id'] === division_id('ranch') && $to === 'completed' ? ' Mark the livestock as collected first.' : ''));
+        }
+        if ($to === 'refunded') {
+            return self::refund($orderId, $note ?: 'Refunded', $adminId, false);
         }
         if ($to === 'cancelled') {
             return self::cancel($orderId, $note ?: 'Cancelled', $adminId);
@@ -463,7 +515,12 @@ final class OrderService
         }
 
         db_tx(static function () use ($o, $to, $note, $adminId): void {
-            db_exec('UPDATE orders SET status = ?, completed_at = IF(? = \'completed\', NOW(), completed_at), hold_expires_at = NULL WHERE id = ?', [$to, $to, $o['id']]);
+            // Only move the order if nobody changed it in the meantime (e.g. a payment or expiry)
+            $n = db_exec('UPDATE orders SET status = ?, completed_at = IF(? = \'completed\', NOW(), completed_at), hold_expires_at = NULL WHERE id = ? AND status = ?',
+                [$to, $to, $o['id'], $o['status']]);
+            if ($n !== 1) {
+                throw new DomainException('This order was updated in the meantime — reload the page and try again.');
+            }
             self::history((int) $o['id'], $o['status'], $to, $note, $adminId ? 'admin' : 'system', $adminId);
         });
         $o = db_one('SELECT * FROM orders WHERE id = ?', [$orderId]);
@@ -496,25 +553,54 @@ final class OrderService
         return $o;
     }
 
-    /** Cancel: restock, credit note if invoiced, email. */
-    public static function cancel(int $orderId, string $reason, ?int $adminId = null, string $finalStatus = 'cancelled'): array
+    /**
+     * Refund a completed order: credit note against the invoice, payments marked refunded, optional restock
+     * (only when the goods physically came back). The money itself is paid back outside the site (EFT / Yoco portal).
+     */
+    public static function refund(int $orderId, string $reason, ?int $adminId = null, bool $restock = false): array
     {
-        $o = db_tx(static function () use ($orderId, $reason, $adminId, $finalStatus): array {
+        return self::cancel($orderId, $reason, $adminId, 'refunded', $restock);
+    }
+
+    /** Cancel: restock, credit note if invoiced, email. */
+    public static function cancel(int $orderId, string $reason, ?int $adminId = null, string $finalStatus = 'cancelled', bool $restock = true): array
+    {
+        $o = db_tx(static function () use ($orderId, $reason, $adminId, $finalStatus, $restock): array {
             $o = db_one('SELECT * FROM orders WHERE id = ? FOR UPDATE', [$orderId]);
             if (!$o || in_array($o['status'], ['cancelled', 'expired', 'refunded'], true)) {
                 throw new DomainException('This order is already closed.');
             }
+            if ($finalStatus === 'refunded' && $o['status'] !== 'completed') {
+                throw new DomainException('Only completed orders can be refunded — cancel the order instead.');
+            }
             if (in_array($o['status'], ['collected', 'completed', 'out_for_delivery'], true) && $finalStatus !== 'refunded') {
                 throw new DomainException('This order has already been handed over and cannot be cancelled.');
             }
+            if ($finalStatus === 'expired') {
+                // Re-check under the lock: a payment / POP may have arrived since the order was picked for expiry
+                $stillDue = in_array($o['status'], ['pending_payment', 'reserved', 'awaiting_collection'], true)
+                    && $o['payment_status'] === 'unpaid'
+                    && (int) db_val('SELECT hold_expires_at IS NOT NULL AND hold_expires_at < NOW() FROM orders WHERE id = ?', [$orderId]) === 1
+                    && !db_val("SELECT 1 FROM payments WHERE order_id = ? AND status = 'awaiting_verification'", [$orderId]);
+                if (!$stillDue) {
+                    throw new DomainException('This order is no longer due to expire.');
+                }
+            }
             $type = $finalStatus === 'expired' ? 'expiry_return' : 'cancel_return';
-            foreach (db_all('SELECT * FROM order_items WHERE order_id = ?', [$orderId]) as $it) {
-                $opts = ['order_id' => $orderId, 'reference' => $o['order_no'], 'note' => ucfirst($finalStatus) . ': ' . $reason, 'admin_id' => $adminId];
-                $it['variant_id'] ? StockService::adjustVariant((int) $it['variant_id'], (int) $it['qty'], $type, $opts)
-                                  : ($it['lot_id'] ? StockService::adjustLot((int) $it['lot_id'], (int) $it['qty'], $type, $opts) : null);
+            if ($restock) {
+                foreach (db_all('SELECT * FROM order_items WHERE order_id = ?', [$orderId]) as $it) {
+                    $opts = ['order_id' => $orderId, 'reference' => $o['order_no'], 'note' => ucfirst($finalStatus) . ': ' . $reason, 'admin_id' => $adminId];
+                    $it['variant_id'] ? StockService::adjustVariant((int) $it['variant_id'], (int) $it['qty'], $type, $opts)
+                                      : ($it['lot_id'] ? StockService::adjustLot((int) $it['lot_id'], (int) $it['qty'], $type, $opts) : null);
+                }
             }
             db_exec('UPDATE orders SET status = ?, cancelled_at = NOW(), cancel_reason = ?, hold_expires_at = NULL WHERE id = ?', [$finalStatus, mb_substr($reason, 0, 255), $orderId]);
             db_exec("UPDATE payments SET status = 'cancelled' WHERE order_id = ? AND status IN ('pending','awaiting_verification')", [$orderId]);
+            if ($finalStatus === 'refunded') {
+                db_exec("UPDATE payments SET status = 'refunded', notes = CONCAT(COALESCE(notes, ''), ' Refunded: ', ?) WHERE order_id = ? AND status = 'succeeded'",
+                    [mb_substr($reason, 0, 200), $orderId]);
+                db_exec("UPDATE orders SET payment_status = 'refunded' WHERE id = ? AND amount_paid_cents > 0", [$orderId]);
+            }
             if ($o['coupon_id']) {
                 db_exec('DELETE FROM coupon_redemptions WHERE order_id = ?', [$orderId]);
                 db_exec('UPDATE coupons SET used_count = GREATEST(used_count - 1, 0) WHERE id = ?', [$o['coupon_id']]);
@@ -560,7 +646,10 @@ final class OrderService
             foreach (db_all('SELECT * FROM order_items WHERE order_id = ?', [$orderId]) as $it) {
                 $line = (int) $it['line_total_cents'];
                 if ($it['pricing_mode'] === 'per_kg') {
-                    $kg = isset($weights[$it['id']]) ? (float) $weights[$it['id']] : (float) $it['est_weight_kg'];
+                    if (!isset($weights[$it['id']])) {
+                        throw new DomainException('Enter the actual weight for ' . $it['name'] . ' — the invoice is based on it.');
+                    }
+                    $kg = (float) $weights[$it['id']];
                     if ($kg <= 0) {
                         throw new DomainException('Enter the actual weight for ' . $it['name'] . '.');
                     }
@@ -648,7 +737,7 @@ final class OrderService
             db_exec('UPDATE orders SET reminder_sent_at = NOW() WHERE id = ?', [$o['id']]);
             NotificationService::email('payment_reminder', $o['billing_email'], $o['billing_name'], [
                 'first_name' => $o['first_name'], 'order_no' => $o['order_no'], 'expires_at' => fmt_datetime($o['hold_expires_at']),
-                'amount_due' => money(self::amountDue($o)),
+                'amount_due' => money(self::amountDue($o)), 'bank_details_md' => self::bankDetailsMd($o),
             ], (int) $o['division_id'], [], ['label' => 'Upload proof of payment', 'url' => app_url('/account/order.php?no=' . rawurlencode($o['order_no']))], false);
         }
     }

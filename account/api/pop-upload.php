@@ -20,6 +20,9 @@ $due = OrderService::amountDue($o);
 if ($due <= 0 || in_array($o['status'], ['cancelled', 'expired', 'refunded', 'completed'], true)) {
     json_error('Nothing is due on this order.', 409);
 }
+if (db_val("SELECT 1 FROM payments WHERE order_id = ? AND status = 'awaiting_verification'", [$o['id']])) {
+    json_error('We already have a proof of payment for this order and are checking it. We will email you once it is confirmed.', 409);
+}
 try {
     $file = store_private_upload($_FILES['pop'] ?? null, 'pop');
 } catch (DomainException $e) {

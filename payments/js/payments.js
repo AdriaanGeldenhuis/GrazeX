@@ -20,6 +20,7 @@
     const check = Date.now() - started > 9000 && tries % 3 === 0 ? '&check=1' : '';
     try {
       const d = await GX.api('/payments/api/status.php?t=' + encodeURIComponent(box.dataset.token) + check, { quiet: true });
+      if (d.late) { show('late'); return; }
       if (d.paid) { show('paid'); return; }
       if (d.failed) { location.href = location.pathname + '?t=' + encodeURIComponent(box.dataset.token) + '&r=failed'; return; }
     } catch (_) { /* keep trying */ }

@@ -150,6 +150,15 @@ CREATE TABLE admin_notifications (
   CONSTRAINT fk_admin_notifications_division FOREIGN KEY (division_id) REFERENCES divisions (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Which database/migrations/*.sql files are already applied (install.sql includes them all)
+CREATE TABLE schema_migrations (
+  version     VARCHAR(100) NOT NULL,
+  applied_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO schema_migrations (version) VALUES ('001_install'), ('002_schema_migrations'), ('003_money_fixes');
+
 -- ---------------------------------------------------------------------
 -- 2. ACCOUNTS (customers + admin users are separate on purpose)
 -- ---------------------------------------------------------------------
@@ -1122,6 +1131,8 @@ CREATE TABLE stock_take_items (
   variant_id     INT UNSIGNED NOT NULL,
   system_qty     INT          NOT NULL,
   counted_qty    INT          NULL,
+  counted_at     DATETIME     NULL,
+  counted_mark   BIGINT UNSIGNED NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_stock_take_items (stock_take_id, variant_id),
   KEY idx_stock_take_items_variant (variant_id),
@@ -1337,9 +1348,9 @@ INSERT INTO faqs (division_id, question, answer, sort_order) VALUES
 (2, 'Can you arrange transport?', 'Let us know at checkout and we will put you in touch with a local transporter.', 3);
 
 INSERT INTO email_templates (template_key, name, subject, body) VALUES
-('order_placed',        'Order placed',                 'Order {{order_no}} received — thank you!',  'Hi {{first_name}},\n\nThanks for your order **{{order_no}}**. Your order confirmation is attached.\n\n{{payment_instructions}}'),
+('order_placed',        'Order placed',                 'Order {{order_no}} received — thank you!',  'Hi {{first_name}},\n\nThanks for your order **{{order_no}}**. Your order confirmation is attached.\n\n{{payment_instructions_md}}'),
 ('payment_received',    'Payment received',             'Payment received for {{order_no}}',           'Hi {{first_name}},\n\nWe received your payment of **{{amount}}** for order {{order_no}}. Your invoice is attached.'),
-('payment_reminder',    'EFT payment reminder',         'Reminder: order {{order_no}} is waiting for payment', 'Hi {{first_name}},\n\nYour order {{order_no}} is reserved until **{{expires_at}}**. Please pay {{amount_due}} using {{order_no}} as reference and upload your proof of payment.'),
+('payment_reminder',    'EFT payment reminder',         'Reminder: order {{order_no}} is waiting for payment', 'Hi {{first_name}},\n\nYour order {{order_no}} is reserved until **{{expires_at}}**. Please pay {{amount_due}} using {{order_no}} as reference and upload your proof of payment.\n\n{{bank_details_md}}'),
 ('pop_rejected',        'Proof of payment rejected',    'We could not verify your payment for {{order_no}}', 'Hi {{first_name}},\n\nWe could not match your proof of payment for {{order_no}}: {{reason}}. Please upload a new one or contact us.'),
 ('order_ready',         'Order ready for collection',   'Order {{order_no}} is ready',                 'Hi {{first_name}},\n\nGood news — order {{order_no}} is ready for collection on {{collection_date}}.'),
 ('order_out_for_delivery','Order out for delivery',     'Order {{order_no}} is on its way',             'Hi {{first_name}},\n\nOrder {{order_no}} is out for delivery today.'),

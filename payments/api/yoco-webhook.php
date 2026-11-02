@@ -30,15 +30,19 @@ if (!is_array($event) || empty($event['id']) || empty($event['type'])) {
 $payload = is_array($event['payload'] ?? null) ? $event['payload'] : [];
 $checkoutId = (string) ($payload['metadata']['checkoutId'] ?? '');
 
-// Idempotency: each event is processed once
+// Idempotency: each event is processed once. A repeat of an event whose first run failed
+// (processed_at still NULL) is processed again — settle()/recordPayment() are idempotent per payment row.
 try {
     db_exec('INSERT INTO payment_webhook_events (provider, event_id, event_type, checkout_id, payload) VALUES (?, ?, ?, ?, ?)',
         ['yoco', (string) $event['id'], (string) $event['type'], $checkoutId ?: null, $raw]);
 } catch (PDOException $e) {
-    if ((int) ($e->errorInfo[1] ?? 0) === 1062) {
+    if ((int) ($e->errorInfo[1] ?? 0) !== 1062) {
+        throw $e;
+    }
+    $prev = db_one('SELECT processed_at FROM payment_webhook_events WHERE provider = ? AND event_id = ?', ['yoco', (string) $event['id']]);
+    if ($prev && $prev['processed_at'] !== null) {
         json_ok(['duplicate' => true]);
     }
-    throw $e;
 }
 
 $result = 'ignored';
