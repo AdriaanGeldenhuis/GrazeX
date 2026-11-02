@@ -18,7 +18,7 @@ $action = (string) input('action', '');
 
 switch ($action) {
     case 'register':
-        rate_limit_or_fail('register', client_ip(), 6, 3600);
+        rate_limit_or_fail('register', rate_limit_ip(), 6, 3600);
         $d = validate_or_fail(input_all(), [
             'first_name' => 'required|max:100', 'last_name' => 'required|max:100', 'email' => 'required|email|max:191',
             'phone' => 'required|phone', 'password' => 'required|password', 'marketing_opt_in' => 'nullable|bool',
@@ -40,13 +40,22 @@ switch ($action) {
 
     case 'login':
         $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191', 'password' => 'required|max:200']);
-        rate_limit_or_fail('login_ip', client_ip(), 20, 900);
-        rate_limit_or_fail('login_email', $d['email'], 6, 900);
+        rate_limit_or_fail('login_ip', rate_limit_ip(), 20, 900);
+        // Per account AND address (counted before checking, cleared on success): a stranger cannot lock someone else out
+        $acct = $d['email'] . '|' . rate_limit_ip();
+        rate_limit_or_fail('login_email', $acct, 6, 900);
+        // Account-wide cap across all addresses (credential stuffing); "Forgot password" unlocks it
+        if (rate_limit_blocked('login_account', $d['email'])) {
+            header('Retry-After: 3600');
+            json_error('Too many failed logins for this account. Use "Forgot password" to get back in, or try again later.', 429);
+        }
         $c = attempt_customer_login($d['email'], $d['password']);
         if (!$c) {
+            rate_limit_hit('login_account', $d['email'], 30, 3600);
             json_error('That email and password don\'t match. Please try again.', 422, ['password' => 'Incorrect email or password.']);
         }
-        rate_limit_clear('login_email', $d['email']);
+        rate_limit_clear('login_email', $acct);
+        rate_limit_clear('login_account', $d['email']);
         login_customer($c);
         json_ok(['redirect' => safe_next((string) input('next', ''), '/account/')], 'Welcome back, ' . $c['first_name'] . '!');
 
@@ -55,28 +64,34 @@ switch ($action) {
         json_ok(['redirect' => '/'], 'You are logged out.');
 
     case 'forgot':
-        rate_limit_or_fail('forgot', client_ip(), 5, 3600);
+        rate_limit_or_fail('forgot', rate_limit_ip(), 5, 3600);
         $d = validate_or_fail(input_all(), ['email' => 'required|email|max:191']);
+        // Same limit, same answer and same timing whether or not the account exists (no account enumeration)
+        rate_limit_or_fail('forgot_email', $d['email'], 3, 3600);
         $c = db_one("SELECT * FROM customers WHERE email = ? AND status = 'active'", [$d['email']]);
         if ($c) {
-            rate_limit_or_fail('forgot_email', $d['email'], 3, 3600);
             $token = customer_token_create((int) $c['id'], 'reset_password', 60);
             $link = app_url('/account/reset.php?token=' . $token);
-            NotificationService::email('reset_password', $c['email'], $c['first_name'], ['first_name' => $c['first_name'], 'link' => $link], null, [], ['label' => 'Choose a new password', 'url' => $link]);
+            $qid = NotificationService::email('reset_password', $c['email'], $c['first_name'], ['first_name' => $c['first_name'], 'link' => $link],
+                null, [], ['label' => 'Choose a new password', 'url' => $link], false);
+            if ($qid) {
+                register_shutdown_function(static fn() => MailService::sendNow($qid));
+            }
         }
         // Same answer whether or not the account exists (no account enumeration)
         json_ok([], 'If that email has an account, a reset link is on its way.');
 
     case 'reset':
-        rate_limit_or_fail('reset', client_ip(), 10, 3600);
+        rate_limit_or_fail('reset', rate_limit_ip(), 10, 3600);
         $d = validate_or_fail(input_all(), ['token' => 'required|regex:/^[a-f0-9]{64}$/', 'password' => 'required|password', 'password_confirm' => 'required|same:password']);
         $cid = customer_token_consume($d['token'], 'reset_password');
         if (!$cid) {
             json_error('This reset link has expired or was already used. Please request a new one.', 422);
         }
-        // New password + log out every other session
+        // New password + log out every other session (and lift any login block on the account)
         db_exec('UPDATE customers SET password_hash = ?, session_version = session_version + 1, email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = ?',
             [customer_password_hash($d['password']), $cid]);
+        rate_limit_clear('login_account', (string) db_val('SELECT email FROM customers WHERE id = ?', [$cid]));
         login_customer(db_one('SELECT * FROM customers WHERE id = ?', [$cid]));
         audit('customer.password_reset', 'customer', $cid);
         json_ok(['redirect' => '/account/'], 'Your password has been changed.');

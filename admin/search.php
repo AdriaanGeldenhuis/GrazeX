@@ -8,12 +8,14 @@ require GX_ROOT . '/includes/layout/admin-shell.php';
 $q = mb_substr(query_str('q'), 0, 80);
 $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $q) . '%';
 $res = ['orders' => [], 'customers' => [], 'products' => [], 'lots' => []];
+require_admin();
 if (mb_strlen($q) >= 2) {
     $ids = admin_division_ids();
-    $res['orders'] = db_all('SELECT id, order_no, billing_name, status, total_cents FROM orders WHERE division_id IN (' . db_placeholders($ids) . ') AND (order_no LIKE ? OR billing_name LIKE ? OR billing_phone LIKE ? OR billing_email LIKE ?) ORDER BY id DESC LIMIT 10', array_merge($ids, [$like, $like, $like, $like]));
-    $res['customers'] = db_all("SELECT id, first_name, last_name, email FROM customers WHERE email LIKE ? OR CONCAT(first_name, ' ', last_name) LIKE ? OR phone LIKE ? OR farm_name LIKE ? LIMIT 10", [$like, $like, $like, $like]);
-    $res['products'] = db_all('SELECT DISTINCT p.id, p.name FROM products p LEFT JOIN product_variants v ON v.product_id = p.id WHERE p.name LIKE ? OR v.sku LIKE ? LIMIT 10', [$like, $like]);
-    $res['lots'] = db_all('SELECT id, lot_no, title FROM lots WHERE lot_no LIKE ? OR title LIKE ? OR tag_no LIKE ? LIMIT 10', [$like, $like, $like]);
+    // Each block only for admins allowed to see it (and only their divisions)
+    $res['orders'] = !admin_can('orders.view') ? [] : db_all('SELECT id, order_no, billing_name, status, total_cents FROM orders WHERE division_id IN (' . db_placeholders($ids) . ') AND (order_no LIKE ? OR billing_name LIKE ? OR billing_phone LIKE ? OR billing_email LIKE ?) ORDER BY id DESC LIMIT 10', array_merge($ids, [$like, $like, $like, $like]));
+    $res['customers'] = !admin_can('customers.view') ? [] : db_all("SELECT id, first_name, last_name, email FROM customers WHERE email LIKE ? OR CONCAT(first_name, ' ', last_name) LIKE ? OR phone LIKE ? OR farm_name LIKE ? LIMIT 10", [$like, $like, $like, $like]);
+    $res['products'] = !admin_can('products.manage') || !in_array(division_id('feeds'), $ids, true) ? [] : db_all('SELECT DISTINCT p.id, p.name FROM products p LEFT JOIN product_variants v ON v.product_id = p.id WHERE p.name LIKE ? OR v.sku LIKE ? LIMIT 10', [$like, $like]);
+    $res['lots'] = !admin_can('lots.manage') || !in_array(division_id('ranch'), $ids, true) ? [] : db_all('SELECT id, lot_no, title FROM lots WHERE lot_no LIKE ? OR title LIKE ? OR tag_no LIKE ? LIMIT 10', [$like, $like, $like]);
 }
 if (count($res['orders']) === 1 && !array_filter([$res['customers'], $res['products'], $res['lots']])) {
     redirect('/admin/order.php?id=' . (int) $res['orders'][0]['id']);

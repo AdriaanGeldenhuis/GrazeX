@@ -15,7 +15,7 @@ if ($filter) {
     $params[] = division_id($filter);
 }
 $perPage = 15;
-$pageNo = max(1, query_int('page', 1));
+$pageNo = query_page();
 $total = (int) db_val("SELECT COUNT(*) FROM orders o WHERE {$where}", $params);
 $orders = db_all("SELECT o.*, d.code AS div_code FROM orders o JOIN divisions d ON d.id = o.division_id WHERE {$where}
                   ORDER BY o.placed_at DESC LIMIT {$perPage} OFFSET " . (($pageNo - 1) * $perPage), $params);

@@ -1,6 +1,8 @@
 # Pretty URLs for GrazeX Feeds
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  # Run the root rules first (force HTTPS, block dotfiles/.sql/.log) — without this they are skipped in this folder
+  RewriteOptions InheritBefore
   RewriteRule ^product/([a-z0-9-]+)/?$ product.php?slug=$1 [L,QSA]
   RewriteRule ^category/([a-z0-9-]+)/?$ shop.php?category=$1 [L,QSA]
 </IfModule>

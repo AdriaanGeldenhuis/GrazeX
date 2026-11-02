@@ -54,6 +54,8 @@ function env(string $key, mixed $default = null): mixed
 
 define('GX_DEBUG', (bool) env('app_debug', false));
 define('GX_IS_CLI', PHP_SAPI === 'cli');
+// Full error text / stack traces only on a local or development install — even if APP_DEBUG is left on live
+define('GX_SHOW_ERRORS', GX_DEBUG && in_array(strtolower((string) env('app_env', 'production')), ['local', 'development', 'dev', 'test'], true));
 
 // ---------------------------------------------------------------------
 // Runtime folders (storage/ is not deployed, so create it on first run)
@@ -86,7 +88,7 @@ define('GX_IS_CLI', PHP_SAPI === 'cli');
 // Error handling
 // ---------------------------------------------------------------------
 error_reporting(E_ALL);
-ini_set('display_errors', GX_DEBUG ? '1' : '0');
+ini_set('display_errors', GX_SHOW_ERRORS ? '1' : '0');
 ini_set('log_errors', '1');
 ini_set('error_log', GX_ROOT . '/storage/logs/php-' . date('Y-m') . '.log');
 
@@ -122,6 +124,26 @@ set_error_handler(static function (int $severity, string $message, string $file,
     throw new ErrorException($message, 0, $severity, $file, $line);
 });
 
+register_shutdown_function(static function (): void {
+    $err = error_get_last();
+    if (!$err || !in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) {
+        return;
+    }
+    $ref = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+    gx_log('error', 'Fatal: ' . $err['message'], ['ref' => $ref, 'file' => $err['file'], 'line' => $err['line'], 'uri' => $_SERVER['REQUEST_URI'] ?? 'cli']);
+    if (GX_IS_CLI || headers_sent()) {
+        return;
+    }
+    http_response_code(500);
+    header('Cache-Control: no-store');
+    if (defined('GX_IS_API') || str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => false, 'error' => 'Something went wrong. Please try again. (ref ' . $ref . ')', 'ref' => $ref]);
+    } else {
+        echo '<!doctype html><meta charset="utf-8"><title>GrazeX</title><p style="font-family:system-ui;padding:24px">Something went wrong. Please try again. (Reference ' . $ref . ')</p>';
+    }
+});
+
 /** Is this a "database not reachable / not set up" problem (as opposed to a bug)? */
 function gx_is_db_setup_error(Throwable $e): bool
 {
@@ -136,8 +158,9 @@ function gx_is_db_setup_error(Throwable $e): bool
 set_exception_handler(static function (Throwable $e): void {
     $ref = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
     $dbSetup = gx_is_db_setup_error($e);
+    // The trace always goes to the (private) log, so live problems can be traced from the reference code
     gx_log('error', $e->getMessage(), ['ref' => $ref, 'type' => get_class($e), 'file' => $e->getFile(), 'line' => $e->getLine(),
-        'uri' => $_SERVER['REQUEST_URI'] ?? 'cli', 'trace' => GX_DEBUG ? $e->getTraceAsString() : null]);
+        'uri' => $_SERVER['REQUEST_URI'] ?? 'cli', 'trace' => $e->getTraceAsString()]);
     if (GX_IS_CLI) {
         fwrite(STDERR, $e->getMessage() . "\n");
         exit(1);
@@ -152,7 +175,7 @@ set_exception_handler(static function (Throwable $e): void {
         if (!headers_sent()) {
             header('Content-Type: application/json; charset=utf-8');
         }
-        echo json_encode(['ok' => false, 'error' => GX_DEBUG ? $e->getMessage() : $msg . ' (ref ' . $ref . ')', 'ref' => $ref]);
+        echo json_encode(['ok' => false, 'error' => GX_SHOW_ERRORS ? $e->getMessage() : $msg . ' (ref ' . $ref . ')', 'ref' => $ref]);
         exit;
     }
     $title = $dbSetup ? 'Back <span style="color:#ff7a00">soon.</span>' : 'Something went <span style="color:#ff7a00">wrong.</span>';
@@ -165,7 +188,7 @@ set_exception_handler(static function (Throwable $e): void {
        . '<p style="color:#a7aea8;font-size:17px;line-height:1.6">' . $text . '</p>'
        . '<p style="margin:26px 0"><a href="/" style="display:inline-block;padding:14px 22px;border-radius:14px;background:linear-gradient(90deg,#ff7a00,#ff9f1a);color:#141414;font-weight:800;text-decoration:none">Back to GrazeX</a></p>'
        . '<p style="color:#7f8781;font-size:12px">Reference ' . $ref . '</p>'
-       . (GX_DEBUG ? '<pre style="text-align:left;white-space:pre-wrap;color:#9ea59f;font-size:12px">' . htmlspecialchars((string) $e) . '</pre>' : '')
+       . (GX_SHOW_ERRORS ? '<pre style="text-align:left;white-space:pre-wrap;color:#9ea59f;font-size:12px">' . htmlspecialchars((string) $e) . '</pre>' : '')
        . '</main></body></html>';
     exit;
 });
@@ -202,6 +225,10 @@ require GX_ROOT . '/includes/totp.php';
 // Request setup
 // ---------------------------------------------------------------------
 if (!GX_IS_CLI) {
+    if ($gxCanonical = canonical_host_redirect()) {
+        header('Location: ' . $gxCanonical, true, 301);
+        exit;
+    }
     send_security_headers();
     if (!defined('GX_NO_SESSION')) {
         session_start_secure();

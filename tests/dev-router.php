@@ -14,6 +14,11 @@ if (($testDb = getenv('GX_TEST_DB')) !== false && $testDb !== '') {
         exit('GX_TEST_DB must look like name_test — refusing to run against another database.');
     }
     define('GX_TEST_DB_NAME', $testDb);
+    // Tests may pretend to come from another address (e.g. an attacker vs the owner)
+    $fake = $_SERVER['HTTP_X_TEST_REMOTE_ADDR'] ?? '';
+    if ($fake !== '' && filter_var($fake, FILTER_VALIDATE_IP)) {
+        $_SERVER['REMOTE_ADDR'] = $fake;
+    }
 }
 $uri = rawurldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 

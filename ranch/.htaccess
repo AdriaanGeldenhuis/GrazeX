@@ -1,5 +1,7 @@
 # Pretty URLs for GrazeX Ranch
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  # Run the root rules first (force HTTPS, block dotfiles/.sql/.log) — without this they are skipped in this folder
+  RewriteOptions InheritBefore
   RewriteRule ^lot/([a-z0-9-]+)/?$ lot.php?slug=$1 [L,QSA]
 </IfModule>

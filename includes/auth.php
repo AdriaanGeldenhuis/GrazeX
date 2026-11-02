@@ -35,6 +35,14 @@ function current_customer(bool $refresh = false): ?array
     return $cache;
 }
 
+/** A fixed hash with the same algorithm and cost as real ones, verified for unknown emails (equal timing). */
+function gx_dummy_hash(): string
+{
+    return defined('PASSWORD_ARGON2ID')
+        ? '$argon2id$v=19$m=65536,t=4,p=1$ZVIzUy5GNzdZeUFjNUIxYg$0duCByE55EhAxSNpoZrgJi5w9SU5wLSbjTh/BAsBD6E'
+        : '$2y$12$1ojWDKw9oci1XNKmhkw.KuoRuNLD8sMTXBWOkbQtXAABwDj8A.JOe';
+}
+
 function customer_password_hash(string $password): string
 {
     return defined('PASSWORD_ARGON2ID')
@@ -88,7 +96,7 @@ function require_customer_api(): array
 function attempt_customer_login(string $email, string $password): ?array
 {
     $row = db_one('SELECT * FROM customers WHERE email = ?', [mb_strtolower(trim($email))]);
-    $hash = $row['password_hash'] ?? '$2y$12$JiwPOQdSNkjju0hlMtB8f.uGaZYGpNx.vwceGuUaCYUgQB1xEerim';
+    $hash = $row['password_hash'] ?? gx_dummy_hash();
     $ok = password_verify($password, $hash);
     if (!$row || !$ok || $row['status'] !== 'active') {
         return null;
@@ -116,10 +124,12 @@ function customer_token_consume(string $token, string $purpose): ?int
     if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
         return null;
     }
-    return db_tx(static function () use ($token, $purpose): ?int {
+    // Links sent before the site key changed keep working (their hash was made with an older key)
+    $hashes = array_map(static fn(string $k) => hash_hmac('sha256', $token, $k), gx_key_ring());
+    return db_tx(static function () use ($hashes, $purpose): ?int {
         $row = db_one('SELECT id, customer_id FROM customer_tokens
-                       WHERE token_hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > NOW() FOR UPDATE',
-            [token_hash($token), $purpose]);
+                       WHERE token_hash IN (' . db_placeholders($hashes) . ') AND purpose = ? AND used_at IS NULL AND expires_at > NOW() LIMIT 1 FOR UPDATE',
+            array_merge($hashes, [$purpose]));
         if (!$row) {
             return null;
         }

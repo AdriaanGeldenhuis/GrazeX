@@ -30,6 +30,10 @@ if ($export !== '') {
         exit;
     };
     $r = static fn(int $c) => number_format($c / 100, 2, '.', '');
+    if ($export === 'customers' && !admin_can('customers.view')) {
+        http_response_code(403);
+        exit('You do not have permission to export customers.');
+    }
     audit('report.export', null, null, ['type' => $export]);
     switch ($export) {
         case 'orders':
@@ -86,7 +90,7 @@ admin_start('Reports', 'reports', ['perm' => 'reports.view']);
   <a class="btn btn-sm" href="/admin/reports.php?export=orders&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Orders CSV</a>
   <a class="btn btn-sm" href="/admin/reports.php?export=documents&amp;<?= $qs ?>"><svg class="icon icon-sm"><use href="#i-download"/></svg>Invoices &amp; credit notes CSV (for your accountant)</a>
   <a class="btn btn-sm" href="/admin/reports.php?export=stock"><svg class="icon icon-sm"><use href="#i-download"/></svg>Stock valuation CSV</a>
-  <a class="btn btn-sm" href="/admin/reports.php?export=customers"><svg class="icon icon-sm"><use href="#i-download"/></svg>Customers CSV</a>
+  <?php if (admin_can('customers.view')): ?><a class="btn btn-sm" href="/admin/reports.php?export=customers"><svg class="icon icon-sm"><use href="#i-download"/></svg>Customers CSV</a><?php endif; ?>
 </div>
 
 <div class="kpis">

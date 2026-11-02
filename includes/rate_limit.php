@@ -2,7 +2,7 @@
 /**
  * DB-backed fixed-window rate limiter (works on shared hosting, no Redis needed).
  *
- *   rate_limit_or_fail('login', client_ip(), 10, 900);          // 10 per 15 min per IP
+ *   rate_limit_or_fail('login', rate_limit_ip(), 10, 900);      // 10 per 15 min per IP (IPv6: per /64)
  *   rate_limit_or_fail('login_email', $email, 5, 900);         // 5 per 15 min per account
  */
 declare(strict_types=1);
@@ -43,6 +43,31 @@ function rate_limit_or_fail(string $action, string $key, int $max, int $windowSe
         header('Retry-After: ' . $windowSeconds);
         json_error(t('error.rate_limited'), 429);
     }
+}
+
+/** True while this bucket is blocked. Does not count a hit (used to count only failed logins). */
+function rate_limit_blocked(string $action, string $key): bool
+{
+    $until = db_val('SELECT blocked_until FROM rate_limits WHERE bucket = ?', [hash('sha256', $action . '|' . mb_strtolower($key))]);
+    return $until !== null && strtotime((string) $until) > time();
+}
+
+/**
+ * The client address used as a rate-limit key. IPv6 clients usually control a whole /64,
+ * so they are limited per /64 (audit logs keep the full address via client_ip()).
+ */
+function rate_limit_ip(): string
+{
+    return ip_bucket(client_ip());
+}
+
+/** An address as a rate-limit bucket: IPv4 as is, IPv6 as its /64. */
+function ip_bucket(string $ip): string
+{
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && ($bin = @inet_pton($ip)) !== false && strlen($bin) === 16) {
+        return (string) inet_ntop(substr($bin, 0, 8) . str_repeat("\0", 8)) . '/64';
+    }
+    return $ip;
 }
 
 /** Clear a bucket (e.g. after a successful login). */

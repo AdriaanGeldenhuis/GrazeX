@@ -39,7 +39,8 @@ function admin_badges(): array
             'payments' => (int) db_val("SELECT COUNT(*) FROM payments WHERE status = 'awaiting_verification'"),
             'orders' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('paid','awaiting_collection','deposit_paid','processing')"),
             'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new'"),
-            'bell' => (int) db_val('SELECT COUNT(*) FROM admin_notifications WHERE is_read = 0'),
+            'bell' => (int) db_val('SELECT COUNT(*) FROM admin_notifications WHERE is_read = 0 AND (division_id IS NULL OR division_id IN ('
+                . db_placeholders(admin_division_ids()) . '))', admin_division_ids()),
         ];
     }
     return $b;
@@ -62,7 +63,7 @@ function admin_start(string $title, string $active, array $opts = []): array
   <aside class="adm-side" aria-label="Admin navigation">
     <a class="adm-brand" href="/admin/"><span class="brand"><span>Graze<b>X</b></span></span><span class="badge">Admin</span></a>
     <nav class="adm-nav">
-      <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]): if (!admin_can($perm)) continue; ?>
+      <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]): if (!admin_can($perm) || ($key === 'users' && $admin['role_slug'] !== 'owner')) continue; ?>
         <a href="<?= e($href) ?>"<?= $active === $key ? ' aria-current="page"' : '' ?>>
           <svg class="icon icon-sm"><use href="#i-<?= e($icon) ?>"/></svg><span><?= e($label) ?></span>
           <?php if (!empty($badges[$key])): ?><span class="adm-count"><?= (int) $badges[$key] ?></span><?php endif; ?>
@@ -92,6 +93,10 @@ function admin_start(string $title, string $active, array $opts = []): array
     </header>
     <div class="adm-bell-panel card" data-adm-bell-panel hidden></div>
     <main id="main" class="adm-content">
+    <?php if ($gxProblems = gx_settings_problems()): ?>
+      <div class="alert alert-danger mb-3" role="alert"><strong>Settings file incomplete:</strong> add <?= e(implode(', ', $gxProblems)) ?> to <code>.env.php</code> / <code>.env</code> on the server.
+        Password-reset links, saved secrets and links in emails depend on it.</div>
+    <?php endif; ?>
 <?php
     return $admin;
 }

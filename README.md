@@ -41,7 +41,9 @@ tests/                run.php (enjin- + API-toetse) · js/ (admin-JS-toetse) · 
 2. **Databasis:** *Manage MySQL* → *Add*. Skryf die naam, gebruiker, wagwoord en host neer. Die host lyk soos `sqlNN.jnbN.host-h.net`. Op 'n **managed server** (`dediNNN.cpt1.host-h.net`) gebruik `DB_HOST=localhost`. As die bedienernaam nie bereikbaar is nie, probeer die app self `localhost`.
 3. **SQL:** phpMyAdmin → kies die databasis → *SQL*-oortjie → plak die hele `database/install.sql` → *Go*.
    - Wil jy eers met voorbeeldprodukte en -lotte speel? Plak daarna ook `database/demo.sql`. Verwyder dit voor jy live gaan.
-4. **Deploy:** merge na `main` en GitHub stuur alles na Xneelo (met PHPMailer en Dompdf).
+4. **Deploy:** merge na `main` en GitHub stuur alles na Xneelo (met PHPMailer en Dompdf), maar net as die toetse slaag.
+   - Opsioneel, maar aanbeveel: voeg die GitHub-secret **`SSH_KNOWN_HOSTS`** by (die uitvoer van `ssh-keyscan -p POORT JOU-BEDIENER`). Dan stuur die deploy net na jóú bediener.
+   - Die deploy vee nooit self lêers op die bediener uit nie. Lêers wat weg moet (bv. ou toetslêers), sit jy in `deploy/remove-from-server.txt`.
 5. **Instellings-lêer:** maak **`.env.php`** of **`.env`** in die website-root (`public_html`). Die app lees enige van hierdie lêers:
    - `.env.php` — PHP: `define('DB_HOST', '…');`, of `$host = '…';`, of `return ['DB_HOST' => '…'];`
    - `.env` — `KEY=VALUE`-reëls (sien **`.env.example`** vir al die sleutels)
@@ -68,7 +70,11 @@ tests/                run.php (enjin- + API-toetse) · js/ (admin-JS-toetse) · 
 12. **SSL:** Let's Encrypt is by Xneelo ingesluit, en `.htaccess` dwing HTTPS af.
 
 ### Kry jy 'n fout?
-- Maak **`https://jou-domein/setup/`** oop. Dit sê in gewone taal wat skort, byvoorbeeld:
+- **Voor** die eienaar-rekening bestaan: maak **`https://jou-domein/setup/`** oop. Dit sê in gewone taal wat skort.
+  - Sodra die eienaar bestaan, sluit `/setup/` homself (lêer `storage/private/setup.lock`) en wys dit niks meer nie, ook nie as die databasis af is nie.
+  - Die slot word vanself opgehef as die databasis weer leeg ingevoer is (geen eienaar nie).
+- **Ná** opstelling: kyk na die rooi banier in die admin (ontbrekende instellings) en na `storage/logs/app-DATUM.log`.
+- Die setup-blad (voor opstelling) gee boodskappe soos:
   - "settings file not found"
   - "database is empty — paste install.sql"
   - "the database refused the username or password"
@@ -82,7 +88,8 @@ tests/                run.php (enjin- + API-toetse) · js/ (admin-JS-toetse) · 
 - [ ] Terms, Privacy en Returns deur jou **prokureur** nagegaan (Admin → Lists & setup → Pages)
 - [ ] BTW-status en die nulkoers-instelling deur jou **rekenmeester** bevestig
 - [ ] Die formaat van die Document of Identification (Stock Theft Act) bevestig
-- [ ] 2FA aan vir elke admin (Admin → My profile)
+- [ ] 2FA aan vir elke admin (Admin → My profile), en die 8 herstelkodes veilig gestoor (dit wys net een keer)
+- [ ] Geen rooi "Settings file incomplete"-banier in die admin nie (APP_KEY en APP_URL is gestel)
 - [ ] 'n Toetsbestelling met elke betaalmetode gedoen, en die e-posse ontvang
 - [ ] `bash tests/http/smoke.sh https://jou-domein` wys alles groen
 

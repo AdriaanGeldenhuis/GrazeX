@@ -47,6 +47,10 @@
     let res, data;
     try {
       res = await fetch(url, { method, headers, body: payload, credentials: 'same-origin', signal });
+      // Keep the page's CSRF token current (it changes after login / password change)
+      const fresh = res.headers.get('X-CSRF-Token');
+      const meta = GX.$('meta[name="csrf-token"]');
+      if (fresh && meta && meta.content !== fresh) meta.content = fresh;
       data = await res.json().catch(() => ({ ok: false, error: 'Unexpected response from the server.' }));
     } catch (err) {
       if (err.name === 'AbortError') throw err;

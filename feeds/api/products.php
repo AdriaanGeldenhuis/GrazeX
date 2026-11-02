@@ -9,6 +9,7 @@ define('GX_IS_API', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 require_method('GET');
+rate_limit_or_fail('catalogue', rate_limit_ip(), 120, 60);
 
 $filters = [
     'q'        => mb_substr(query_str('q'), 0, 80),
@@ -17,7 +18,7 @@ $filters = [
     'sort'     => array_key_exists(query_str('sort'), CatalogService::SORTS) ? query_str('sort') : 'featured',
     'in_stock' => query_str('in_stock') === '1',
     'specials' => query_str('specials') === '1',
-    'page'     => max(1, query_int('page', 1)),
+    'page'     => query_page(),
     'per_page' => 12,
 ];
 $result = CatalogService::products($filters);

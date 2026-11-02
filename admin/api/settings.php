@@ -74,6 +74,9 @@ foreach ((array) input('s', []) as $key => $value) {
         continue;
     }
     $value = mb_substr(trim((string) $value), 0, 5000);
+    if ($key === 'announcement_link' && $value !== '' && !preg_match('#^(https://|/(?![/\\\\]))#i', $value)) {
+        json_error(t('error.validation'), 422, ["s[{$key}]" => 'The link must start with https:// or be a page on this site (e.g. /feeds/specials.php).']);
+    }
     if (str_starts_with((string) $key, 'social_') || $key === 'map_url') {
         if ($value !== '' && !preg_match('#^https://#i', $value)) {
             json_error(t('error.validation'), 422, ["s[{$key}]" => 'Links must start with https://']);

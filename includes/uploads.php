@@ -32,6 +32,16 @@ function upload_check(?array $file, array $allowedMimes, int $maxBytes): array
     if (!in_array($mime, $allowedMimes, true)) {
         throw new DomainException('That file type is not allowed.');
     }
+    if (str_starts_with($mime, 'image/')) {
+        // Read the size from the header BEFORE decoding: a small file can unpack to gigabytes (image bomb)
+        $dim = @getimagesize($file['tmp_name']);
+        if (!$dim || $dim[0] < 1 || $dim[1] < 1) {
+            throw new DomainException('That image could not be read.');
+        }
+        if ($dim[0] > GX_IMAGE_MAX_SIDE || $dim[1] > GX_IMAGE_MAX_SIDE || $dim[0] * $dim[1] > GX_IMAGE_MAX_PIXELS) {
+            throw new DomainException('That image is too large — please send a photo of at most 40 megapixels.');
+        }
+    }
     return [$file['tmp_name'], $mime];
 }
 
@@ -235,7 +245,15 @@ function stream_private_file(string $relPath, string $downloadName): never
     $mime = (new finfo(FILEINFO_MIME_TYPE))->file($abs) ?: 'application/octet-stream';
     header('Content-Type: ' . $mime);
     header('Content-Length: ' . filesize($abs));
-    header('Content-Disposition: inline; filename="' . preg_replace('/[^A-Za-z0-9._-]/', '_', $downloadName) . '"');
+    $safeName = preg_replace('/[^A-Za-z0-9._-]/', '_', $downloadName);
+    if ($mime === 'application/pdf') {
+        // Uploaded PDFs are downloaded and opened outside the site (a customer's PDF never runs on our domain)
+        header('Content-Disposition: attachment; filename="' . $safeName . '"');
+    } else {
+        // Images are shown inline (handy for checking a POP), sandboxed so nothing in them can run
+        header('Content-Disposition: inline; filename="' . $safeName . '"');
+        header("Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    }
     header('Cache-Control: private, no-store');
     header('X-Content-Type-Options: nosniff');
     readfile($abs);

@@ -10,7 +10,7 @@ define('GX_NO_SESSION', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 require_method('GET');
-rate_limit_or_fail('pay_status', client_ip(), 120, 300);
+rate_limit_or_fail('pay_status', rate_limit_ip(), 120, 300);
 
 $token = query_str('t');
 $order = preg_match('/^[a-f0-9]{64}$/', $token) ? db_one('SELECT id, status, payment_status, amount_paid_cents, total_cents FROM orders WHERE pay_token = ?', [$token]) : null;

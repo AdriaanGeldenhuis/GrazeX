@@ -20,12 +20,15 @@ const GX_DIVISIONS = [
 // Sessions
 const GX_SESSION_NAME        = 'GXSESSID';
 const GX_ADMIN_IDLE_SECONDS  = 7200;   // admin logged out after 2h idle
+const GX_ADMIN_MAX_SECONDS   = 43200;  // … and after 12h however active (log in again)
 const GX_CART_COOKIE_PREFIX  = 'gx_cart_';
 const GX_CART_COOKIE_DAYS    = 30;
 
 // Uploads
 const GX_UPLOAD_MAX_BYTES    = 8 * 1024 * 1024;  // 8 MB per image
 const GX_POP_MAX_BYTES       = 5 * 1024 * 1024;  // 5 MB per proof of payment
+const GX_IMAGE_MAX_PIXELS    = 40000000;         // uploads above 40 MP are refused before decoding (image bombs)
+const GX_IMAGE_MAX_SIDE      = 12000;
 const GX_IMAGE_MIMES         = ['image/jpeg', 'image/png', 'image/webp'];
 const GX_POP_MIMES           = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 const GX_IMAGE_WIDTHS        = [480, 960, 1600];   // generated widths (16:9 crops + originals)

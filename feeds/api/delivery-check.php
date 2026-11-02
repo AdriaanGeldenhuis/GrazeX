@@ -10,7 +10,7 @@ define('GX_NO_SESSION', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
 require_method('GET');
-rate_limit_or_fail('delivery_check', client_ip(), 60, 60);
+rate_limit_or_fail('delivery_check', rate_limit_ip(), 60, 60);
 
 if (isset($_GET['suggest'])) {
     json_ok(['towns' => DeliveryService::suggestTowns(query_str('suggest'))]);

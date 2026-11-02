@@ -40,10 +40,42 @@ function redirect(string $url, int $code = 302): never
     exit;
 }
 
+/**
+ * The setup wizard locks itself with a file (not only a database row), so it stays locked —
+ * and shows no server diagnostics — even while the database is unreachable.
+ */
+function setup_locked(): bool
+{
+    $file = GX_ROOT . '/storage/private/setup.lock';
+    clearstatcache(true, $file); // another request may have just written or removed it
+    return is_file($file);
+}
+
+/**
+ * True when the lock should be ignored: the database answers but has no owner (e.g. install.sql was imported
+ * again), or its tables are missing. While the database is unreachable the lock stays in force.
+ */
+function setup_lock_is_stale(): bool
+{
+    try {
+        return (int) db_val("SELECT COUNT(*) FROM admin_users a JOIN roles r ON r.id = a.role_id WHERE r.slug = 'owner'") === 0;
+    } catch (PDOException $e) {
+        return (int) ($e->errorInfo[1] ?? 0) === 1146; // table does not exist: empty database
+    }
+}
+
+function setup_lock_write(): void
+{
+    if (!setup_locked()) {
+        @file_put_contents(GX_ROOT . '/storage/private/setup.lock', date('c') . "\n");
+    }
+}
+
 /** Only allow same-site relative redirect targets (prevents open redirects). */
 function safe_next(?string $next, string $fallback = '/'): string
 {
-    if (!$next || !str_starts_with($next, '/') || str_starts_with($next, '//') || str_contains($next, '\\')) {
+    if (!$next || !str_starts_with($next, '/') || str_starts_with($next, '//') || str_contains($next, '\\')
+        || preg_match('/[\x00-\x20\x7F]/', $next)) {
         return $fallback;
     }
     return $next;
@@ -143,9 +175,69 @@ function uuid4(): string
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($b), 4));
 }
 
+/**
+ * The site's secret key: APP_KEY from the settings file (32+ characters). Without one, a random key kept in
+ * storage/private/app.key is used — never a publicly known value — and the admin shows a warning.
+ * Values made with an older key stay readable through gx_key_ring().
+ */
+function gx_app_key(): string
+{
+    $k = (string) env('app_key', '');
+    if (!gx_env_placeholder($k) && strlen($k) >= 32) {
+        return $k;
+    }
+    return gx_stored_key() ?? gx_derived_key();
+}
+
+/** Random fallback key, created once (exclusively, so two requests can never make different keys). */
+function gx_stored_key(bool $create = true): ?string
+{
+    static $key = false;
+    if ($key !== false && ($key !== null || !$create)) {
+        return $key;
+    }
+    $file = GX_ROOT . '/storage/private/app.key';
+    if ($create && !is_file($file) && is_dir(dirname($file)) && ($fp = @fopen($file, 'x'))) {
+        fwrite($fp, bin2hex(random_bytes(32)) . "\n");
+        fclose($fp);
+        @chmod($file, 0600);
+    }
+    $k = is_file($file) ? trim((string) @file_get_contents($file)) : '';
+    return $key = strlen($k) >= 32 ? $k : null;
+}
+
+/** Last-resort key when storage/ is not writable (changes if the database password changes). */
+function gx_derived_key(): string
+{
+    return hash('sha256', 'gx-fallback|' . env('db.user', '') . '|' . env('db.pass', '') . '|' . env('db.name', '') . '|' . env('db.host', ''));
+}
+
+/** Every key a stored value may have been made with: current first, then older ones (incl. the empty legacy key). */
+function gx_key_ring(): array
+{
+    $ring = [gx_app_key(), (string) env('app_key', '')];
+    if ($stored = gx_stored_key(false)) { // only if it exists — never created just to read
+        $ring[] = $stored;
+    }
+    $ring[] = gx_derived_key();
+    $ring[] = '';
+    return array_values(array_unique($ring));
+}
+
+/** Settings the owner must still add to the settings file (shown in the admin). */
+function gx_settings_problems(): array
+{
+    $missing = array_values(array_diff(gx_env_missing($GLOBALS['GX_ENV'] ?? []), ['DB_PASS']));
+    $k = (string) env('app_key', '');
+    if (!in_array('APP_KEY', $missing, true) && strlen($k) < 32) {
+        $missing[] = 'APP_KEY (must be at least 32 characters)';
+    }
+    return $missing;
+}
+
 function token_hash(string $token): string
 {
-    return hash_hmac('sha256', $token, (string) env('app_key', 'grazex'));
+    return hash_hmac('sha256', $token, gx_app_key());
 }
 
 function str_limit(?string $text, int $limit = 140): string
@@ -241,6 +333,12 @@ function query_int(string $key, int $default = 0): int
     return is_numeric($v) ? (int) $v : $default;
 }
 
+/** ?page= as a safe page number (1…10000) — huge values must never reach OFFSET arithmetic. */
+function query_page(string $key = 'page'): int
+{
+    return max(1, min(10000, query_int($key, 1)));
+}
+
 function query_str(string $key, string $default = ''): string
 {
     $v = $_GET[$key] ?? null;
@@ -256,6 +354,10 @@ function json_response(array $payload, int $status = 200): never
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
+        // The token may have changed (login, password change): the page updates its copy from this header
+        if (session_status() === PHP_SESSION_ACTIVE && function_exists('csrf_token')) {
+            header('X-CSRF-Token: ' . csrf_token());
+        }
     }
     echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     exit;
@@ -286,6 +388,25 @@ function require_method(string ...$methods): void
         header('Allow: ' . implode(', ', $methods));
         json_error('Method not allowed.', 405);
     }
+}
+
+/**
+ * www.example.com ↔ example.com: GET/HEAD requests on the other variant go to the APP_URL host (one site, one
+ * session cookie, one set of search results). Never for POSTs (webhooks, forms) and never for unrelated hosts.
+ */
+function canonical_host_redirect(): ?string
+{
+    $app = parse_url((string) env('app_url', ''));
+    $want = strtolower((string) ($app['host'] ?? ''));
+    $have = strtolower((string) preg_replace('/:\d+$/', '', (string) ($_SERVER['HTTP_HOST'] ?? '')));
+    if ($want === '' || $have === '' || $want === $have || !in_array(request_method(), ['GET', 'HEAD'], true)) {
+        return null;
+    }
+    if ($have !== 'www.' . $want && 'www.' . $have !== $want) {
+        return null;
+    }
+    $origin = ($app['scheme'] ?? 'https') . '://' . $want . (isset($app['port']) ? ':' . $app['port'] : '');
+    return $origin . ($_SERVER['REQUEST_URI'] ?? '/');
 }
 
 // ---------------------------------------------------------------------
@@ -368,7 +489,7 @@ function audit(string $action, ?string $entityType = null, ?int $entityId = null
 // ---------------------------------------------------------------------
 function secret_encrypt(string $plain): string
 {
-    $key = hash('sha256', (string) env('app_key', ''), true);
+    $key = hash('sha256', gx_app_key(), true);
     $iv = random_bytes(12);
     $tag = '';
     $cipher = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
@@ -381,7 +502,12 @@ function secret_decrypt(?string $stored): ?string
     if ($raw === false || strlen($raw) < 29) {
         return null;
     }
-    $key = hash('sha256', (string) env('app_key', ''), true);
-    $plain = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', $key, OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
-    return $plain === false ? null : $plain;
+    // Current key first, then every older key (adding APP_KEY later must never make saved secrets unreadable)
+    foreach (gx_key_ring() as $k) {
+        $plain = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', hash('sha256', $k, true), OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
+        if ($plain !== false) {
+            return $plain;
+        }
+    }
+    return null;
 }

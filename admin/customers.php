@@ -14,7 +14,7 @@ if ($flag === 'vat') { $where[] = "c.vat_farmer_status = 'pending'"; }
 if ($flag === 'delete') { $where[] = 'c.deletion_requested_at IS NOT NULL'; }
 if ($flag === 'marketing') { $where[] = 'c.marketing_opt_in = 1'; }
 $perPage = 40;
-$pageNo = max(1, query_int('page', 1));
+$pageNo = query_page();
 $sqlWhere = implode(' AND ', $where);
 $total = (int) db_val("SELECT COUNT(*) FROM customers c WHERE {$sqlWhere}", $params);
 $rows = db_all("SELECT c.*, (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) AS orders,

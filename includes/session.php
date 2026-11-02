@@ -34,21 +34,34 @@ function session_start_secure(): void
     ]);
     session_start();
 
+    // An id replaced by the hourly rotation keeps working for 2 minutes (requests already on their way),
+    // then it is emptied — so a parallel request never logs the user out, and an old stolen id dies quickly.
+    if (isset($_SESSION['_expires_at'])) {
+        if ((int) $_SESSION['_expires_at'] < time()) {
+            $_SESSION = [];
+            session_regenerate_id(true);
+            $_SESSION['_created'] = time();
+        }
+        return;
+    }
     if (!isset($_SESSION['_created'])) {
         $_SESSION['_created'] = time();
     } elseif (time() - (int) $_SESSION['_created'] > 3600) {
-        // Rotate the id every hour to limit the value of a stolen cookie
-        session_regenerate_id(true);
+        // Rotate the id every hour to limit the value of a stolen cookie (the old id is marked, not deleted)
+        $_SESSION['_expires_at'] = time() + 120;
+        session_regenerate_id(false);
+        unset($_SESSION['_expires_at']);
         $_SESSION['_created'] = time();
     }
 }
 
-/** Call after login / privilege change. */
+/** Call after login / logout / privilege change: new id and a new CSRF token. */
 function session_rotate(): void
 {
     if (session_status() === PHP_SESSION_ACTIVE) {
         session_regenerate_id(true);
         $_SESSION['_created'] = time();
+        unset($_SESSION['_csrf'], $_SESSION['_expires_at']);
     }
 }
 
