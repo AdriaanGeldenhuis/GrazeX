@@ -36,7 +36,14 @@ $have = array_column($blocks, 'block_key');
 $bgSlots = [];
 if ($isBg) {
     foreach (page_background_slots() as $scene => $slot) {
-        $bgSlots[$scene] = $slot + ['media_id' => page_background_media($scene)];
+        $mid = page_background_media($scene);
+        $sceneThumb = asset('/assets/img/bg/' . $scene . '-480.webp');
+        $bgSlots[$scene] = $slot + [
+            'media_id' => $mid,
+            'scene_thumb' => $sceneThumb,
+            'thumb' => ($mid ? media_url($mid, 480, 'wide') : null) ?: $sceneThumb,
+            'dim' => (int) round(page_background_dim($scene) * 100),
+        ];
     }
 }
 
@@ -55,16 +62,29 @@ admin_start('Site content', 'content', ['perm' => 'content.manage']);
   <input type="hidden" name="scope" value="<?= e($formScope) ?>">
   <?php if ($isBg): ?>
     <div class="alert alert-info mb-2">
-      <div>The big photo behind each part of the website. Use a wide landscape photo (at least 1920 × 1080). The website darkens it a little so text stays readable.
+      <div>The big photo behind each part of the website. Use a wide landscape photo (at least 1920 × 1080).
+        <strong>Darken</strong> lays a dark layer over it so text stays easy to read — the preview shows how it will look.
         <strong>Remove</strong> puts the built-in GrazeX scene back. To choose which part of the photo phones show, set its focus point in <a class="link" href="/admin/media.php">Media</a>.</div>
     </div>
-    <section class="card card-pad">
-      <div class="form-grid">
-        <?php foreach ($bgSlots as $scene => $slot): ?>
+    <div class="bg-slots">
+      <?php foreach ($bgSlots as $scene => $slot): $dimId = 'bg-dim-' . $scene; ?>
+        <section class="card card-pad bg-slot" style="--shade:<?= e((string) ($slot['dim'] / 100)) ?>">
+          <div class="bg-preview" data-bg-preview data-scene-src="<?= e($slot['scene_thumb']) ?>">
+            <img src="<?= e($slot['thumb']) ?>" alt="" width="480" height="270" loading="lazy">
+            <span class="bg-preview-text"><small>Preview</small><?= e($slot['label']) ?></span>
+          </div>
           <?= af_image('images[bg_' . $scene . ']', $slot['label'], $slot['media_id'], ['hint' => $slot['hint']]) ?>
-        <?php endforeach; ?>
-      </div>
-    </section>
+          <div class="field">
+            <label for="<?= e($dimId) ?>">Darken</label>
+            <div class="bg-dim-row">
+              <input type="range" id="<?= e($dimId) ?>" name="blocks[bg_<?= e($scene) ?>_dim]" min="0" max="<?= PAGE_BG_MAX_DIM ?>" step="5" value="<?= (int) $slot['dim'] ?>" data-bg-dim>
+              <output for="<?= e($dimId) ?>" data-bg-dim-out><?= (int) $slot['dim'] ?>%</output>
+            </div>
+            <span class="hint">0% = the photo as it is · <?= PAGE_BG_MAX_DIM ?>% = very dark</span>
+          </div>
+        </section>
+      <?php endforeach; ?>
+    </div>
   <?php else: ?>
     <p class="muted small mb-2">Background photos behind the pages are on the <a class="link" href="/admin/content.php?s=backgrounds">Page backgrounds</a> tab.</p>
     <section class="card card-pad">

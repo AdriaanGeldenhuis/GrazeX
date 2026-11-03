@@ -329,6 +329,7 @@
       $('input[type=hidden]', field).value = id;
       $('.ip-preview', field).innerHTML = `<img src="${GX.esc(thumb)}" alt="">`;
       field.closest('form')?.setAttribute('data-dirty', '1');
+      field.dispatchEvent(new CustomEvent('image:change', { bubbles: true, detail: { thumb } }));
       d.close();
     };
     GX.on(grid, 'click', '[data-choose]', (ev, it) => choose(it.dataset.choose, it.dataset.thumb));
@@ -341,6 +342,18 @@
     const field = b.closest('[data-image-field]');
     $('input[type=hidden]', field).value = '';
     $('.ip-preview', field).innerHTML = '<span class="muted small">No image</span>';
+    field.dispatchEvent(new CustomEvent('image:change', { bubbles: true, detail: { thumb: '' } }));
+  });
+
+  /* ---------- Page backgrounds: live preview of the photo and how dark it is ---------- */
+  document.addEventListener('image:change', (e) => {
+    const box = e.target.closest('.bg-slot')?.querySelector('[data-bg-preview]');
+    if (box) $('img', box).src = e.detail.thumb || box.dataset.sceneSrc;
+  });
+  GX.on(document, 'input', '[data-bg-dim]', (e, r) => {
+    const slot = r.closest('.bg-slot');
+    slot.style.setProperty('--shade', String(Number(r.value) / 100));
+    $('[data-bg-dim-out]', slot).textContent = `${r.value}%`;
   });
 
   /* ---------- Prefill a modal form: <button data-modal-open="id" data-fill='{"field":"value"}'> ---------- */

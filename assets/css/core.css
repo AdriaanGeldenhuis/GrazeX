@@ -144,13 +144,16 @@ table { border-collapse: collapse; width: 100%; }
 /* division colour grade + readability (lighter where the hero sits, deep where content lists) */
 .page-bg::before { content: ""; position: absolute; inset: 0; z-index: 1; mix-blend-mode: soft-light;
   background: radial-gradient(90% 70% at 72% 18%, rgba(var(--accent-rgb), .35), transparent 62%); }
+/* --bg-shade: the extra darkness chosen in Admin > Site content > Page backgrounds (0 to .8) */
 .page-bg::after { content: ""; position: absolute; inset: 0; z-index: 2;
   background:
+    linear-gradient(rgba(6, 7, 8, var(--bg-shade, 0)), rgba(6, 7, 8, var(--bg-shade, 0))),
     linear-gradient(180deg, rgba(6, 7, 8, .5) 0%, rgba(6, 7, 8, 0) 17%, rgba(6, 7, 8, .04) 55%, rgba(6, 7, 8, .5) 80%, rgba(6, 7, 8, .85) 100%),
     radial-gradient(140% 100% at 50% 45%, transparent 52%, rgba(0, 0, 0, .5) 100%); }
 /* Inner pages (forms, lists, checkout): the scene stays, a touch calmer */
 body:not(.page-gateway):not(.page-store-home) .page-bg::after {
   background:
+    linear-gradient(rgba(6, 7, 8, var(--bg-shade, 0)), rgba(6, 7, 8, var(--bg-shade, 0))),
     linear-gradient(180deg, rgba(6, 7, 8, .55) 0%, rgba(6, 7, 8, .2) 22%, rgba(6, 7, 8, .45) 60%, rgba(6, 7, 8, .82) 100%),
     radial-gradient(140% 100% at 50% 40%, transparent 45%, rgba(0, 0, 0, .5) 100%); }
 @keyframes bgIn { from { opacity: 0; transform: scale(1.2); } }

@@ -229,6 +229,16 @@ function division_has_faqs(string $division): bool
     }
 }
 
+/** The darkest a background can be made in Admin (percent of extra shade). */
+const PAGE_BG_MAX_DIM = 80;
+
+/** Extra shade over an area's background, 0.0–0.8 (Admin > Site content > Page backgrounds > Darken). */
+function page_background_dim(string $scene): float
+{
+    $v = content_scope('global')['bg_' . $scene . '_dim']['value'] ?? '0';
+    return max(0, min(PAGE_BG_MAX_DIM, (int) $v)) / 100;
+}
+
 /**
  * The areas that have a background, the Admin label for each, and where a photo was stored before
  * the "Page backgrounds" tab existed (scope, key).
@@ -291,8 +301,10 @@ function page_background(array $page): ?array
         'portrait' => $img('p720') . ' 720w, ' . $img('p1080') . ' 1080w',
         'photo' => false,
         'position' => null,
+        'dim' => 0.0,
     ];
     try {
+        $bg['dim'] = page_background_dim($scene);
         $mediaId = page_background_media($scene);
         if ($mediaId && ($src = media_url($mediaId, 1600))) {
             $m = media_row($mediaId);

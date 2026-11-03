@@ -1856,6 +1856,13 @@ $bgTab = $p4->page('/admin/content.php?s=backgrounds');
 check('the Page backgrounds tab shows the live Ranch photo and saves to the global scope',
     str_contains($bgTab, 'name="images[bg_ranch]" value="' . $bgMid . '"') && str_contains($bgTab, 'name="scope" value="global"'));
 check('… and the home page card photos say they are not the page backgrounds', str_contains($p4->page('/admin/content.php?s=gateway'), 'Home page — Ranch card photo'));
+[$st] = $p4->api('POST', '/admin/api/content.php', ['action' => 'save', 'scope' => 'global', 'blocks' => ['bg_ranch_dim' => '35', 'bg_feeds_dim' => '400', 'bg_nowhere_dim' => '20']]);
+check('Darken lays a dark layer over a background (35%), never darker than 80%, and only for real areas',
+    $st === 200 && str_contains($bgOf('/ranch/'), 'style="--bg-shade:0.35"') && str_contains($bgOf('/feeds/'), 'style="--bg-shade:0.8"')
+    && !db_val("SELECT 1 FROM content_blocks WHERE block_key = 'bg_nowhere_dim'"));
+check('… the Page backgrounds tab shows the Darken setting', str_contains($p4->page('/admin/content.php?s=backgrounds'), 'name="blocks[bg_ranch_dim]" min="0" max="80" step="5" value="35"'));
+[$st] = $p4->api('POST', '/admin/api/content.php', ['action' => 'save', 'scope' => 'global', 'blocks' => ['bg_ranch_dim' => '0']]);
+check('… and 0% shows the photo as it is', $st === 200 && !str_contains($bgOf('/ranch/'), '--bg-shade'));
 db_exec("DELETE FROM content_blocks WHERE (scope = 'global' AND block_key LIKE 'bg\\_%') OR (scope = 'ranch' AND block_key = 'page_bg')");
 db_exec('DELETE FROM media WHERE id = ?', [$bgMid]);
 foreach (array_merge(...array_values(array_map('array_values', $bgVariants))) as $bgFile) {
