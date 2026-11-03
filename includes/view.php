@@ -229,9 +229,53 @@ function division_has_faqs(string $division): bool
     }
 }
 
+/** The darkest a background can be made in Admin (percent of extra shade). */
+const PAGE_BG_MAX_DIM = 80;
+
+/** Extra shade over an area's background, 0.0–0.8 (Admin > Site content > Page backgrounds > Darken). */
+function page_background_dim(string $scene): float
+{
+    $v = content_scope('global')['bg_' . $scene . '_dim']['value'] ?? '0';
+    return max(0, min(PAGE_BG_MAX_DIM, (int) $v)) / 100;
+}
+
+/**
+ * The areas that have a background, the Admin label for each, and where a photo was stored before
+ * the "Page backgrounds" tab existed (scope, key).
+ */
+function page_background_slots(): array
+{
+    return [
+        'home' => ['label' => 'Home page', 'hint' => 'Behind the home page (/), the 404 page and other general pages', 'legacy' => ['gateway', 'page_bg']],
+        'feeds' => ['label' => 'GrazeX Feeds', 'hint' => 'Behind every Feeds page: shop, products, specials, calculator, cart and checkout', 'legacy' => ['feeds', 'page_bg']],
+        'ranch' => ['label' => 'GrazeX Ranch', 'hint' => 'Behind every Ranch page: livestock board, lots, our model, cart and checkout', 'legacy' => ['ranch', 'page_bg']],
+        'account' => ['label' => 'My account', 'hint' => 'Behind log in, register and the customer account pages', 'legacy' => ['gateway', 'account_bg']],
+        'pages' => ['label' => 'Info & contact pages', 'hint' => 'Behind About, Terms, Privacy, Returns, Delivery and Contact', 'legacy' => ['gateway', 'pages_bg']],
+    ];
+}
+
+/**
+ * The uploaded photo for an area's background, or null for the built-in scene.
+ * Admin > Site content > Page backgrounds saves "bg_<area>" in the global scope; once that row exists it decides
+ * (also when its photo was removed). Before that, an older per-tab photo still counts.
+ */
+function page_background_media(string $scene): ?int
+{
+    $slot = page_background_slots()[$scene] ?? null;
+    if (!$slot) {
+        return null;
+    }
+    $global = content_scope('global');
+    if (array_key_exists('bg_' . $scene, $global)) {
+        return (int) $global['bg_' . $scene]['media_id'] ?: null;
+    }
+    [$scope, $key] = $slot['legacy'];
+    return (int) (content_scope($scope)[$key]['media_id'] ?? 0) ?: null;
+}
+
 /**
  * Full-screen background scene behind a page (the page content floats over it).
- * Each area has its own scene in /assets/img/bg/; Admin > Site content can swap in a real photo.
+ * Each area has its own scene in /assets/img/bg/; Admin > Site content > Page backgrounds can swap in a real photo.
  * $page['bg'] picks a scene ('home', 'feeds', 'ranch', 'account', 'pages') or false for none.
  * Returns null when the page has no background (admin, setup).
  */
@@ -245,7 +289,7 @@ function page_background(array $page): ?array
         'pages' => 'pages',
         default => null,
     };
-    if (!is_string($scene) || !in_array($scene, ['home', 'feeds', 'ranch', 'account', 'pages'], true)) {
+    if (!is_string($scene) || !array_key_exists($scene, page_background_slots())) {
         return null;
     }
     // Versioned URLs (?v=): static images are cached for a year, so a new scene must get a new address
@@ -255,21 +299,21 @@ function page_background(array $page): ?array
         'src' => $img('1600'),
         'srcset' => $img('960') . ' 960w, ' . $img('1600') . ' 1600w, ' . $img('2560') . ' 2560w',
         'portrait' => $img('p720') . ' 720w, ' . $img('p1080') . ' 1080w',
+        'photo' => false,
+        'position' => null,
+        'dim' => 0.0,
     ];
-    // An uploaded photo (Admin > Site content) replaces the scene; phones get its centre via object-fit
-    [$scope, $key] = match ($scene) {
-        'feeds' => ['feeds', 'page_bg'],
-        'ranch' => ['ranch', 'page_bg'],
-        'account' => ['gateway', 'account_bg'],
-        'pages' => ['gateway', 'pages_bg'],
-        default => ['gateway', 'page_bg'],
-    };
     try {
-        $mediaId = (int) (content_scope($scope)[$key]['media_id'] ?? 0);
+        $bg['dim'] = page_background_dim($scene);
+        $mediaId = page_background_media($scene);
         if ($mediaId && ($src = media_url($mediaId, 1600))) {
+            $m = media_row($mediaId);
             $bg['src'] = $src;
             $bg['srcset'] = media_srcset($mediaId, 'wide') ?: $src;
             $bg['portrait'] = null;
+            $bg['photo'] = true;
+            // Phones show a narrow slice of the wide photo: keep the focus point (Admin > Media) in view
+            $bg['position'] = round((float) ($m['focal_x'] ?? .5) * 100, 1) . '% ' . round((float) ($m['focal_y'] ?? .5) * 100, 1) . '%';
         }
     } catch (Throwable $e) {
         gx_log('warning', 'Background photo unavailable: ' . $e->getMessage());

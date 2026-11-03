@@ -109,12 +109,12 @@ function &media_cache(): array
     return $cache;
 }
 
-/** One media row (id, base_path, variants), loaded once per request. */
+/** One media row (id, base_path, variants, focal point), loaded once per request. */
 function media_row(int $mediaId): ?array
 {
     $cache = &media_cache();
     if (!array_key_exists($mediaId, $cache)) {
-        $cache[$mediaId] = db_one('SELECT id, base_path, variants FROM media WHERE id = ?', [$mediaId]);
+        $cache[$mediaId] = db_one('SELECT id, base_path, variants, focal_x, focal_y FROM media WHERE id = ?', [$mediaId]);
     }
     return $cache[$mediaId];
 }
@@ -130,7 +130,7 @@ function media_prime(array $ids): void
     foreach ($ids as $i) {
         $cache[$i] = null;
     }
-    foreach (db_all('SELECT id, base_path, variants FROM media WHERE id IN (' . db_placeholders($ids) . ')', $ids) as $r) {
+    foreach (db_all('SELECT id, base_path, variants, focal_x, focal_y FROM media WHERE id IN (' . db_placeholders($ids) . ')', $ids) as $r) {
         $cache[(int) $r['id']] = $r;
     }
 }

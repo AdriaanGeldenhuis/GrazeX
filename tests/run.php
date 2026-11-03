@@ -1830,6 +1830,44 @@ $home = $pv->page('/');
 preg_match_all('#class="hs-num" data-count="(\d+)">(\d+)</span>#', $home, $hs, PREG_SET_ORDER);
 check('home stats show the real numbers in the page (not 0 until JavaScript runs)', count($hs) === 3 && !array_filter($hs, static fn($m) => $m[1] !== $m[2]), json_encode($hs));
 check('both home portal images come in phone sizes (srcset)', preg_match_all('#class="portal portal-(ranch|feeds)[^>]*>\s*<img [^>]*srcset="[^"]*480w#', $home) === 2);
+
+// Page backgrounds: each area has its scene; a photo from Admin > Site content > Page backgrounds replaces it
+$bgGd = imagecreatetruecolor(1600, 900);
+imagefill($bgGd, 0, 0, imagecolorallocate($bgGd, 40, 90, 140));
+@mkdir(GX_ROOT . '/uploads/media/test', 0755, true);
+$bgBase = 'uploads/media/test/' . random_token(6);
+$bgVariants = media_generate_variants($bgGd, $bgBase, .3, .6);
+$bgMid = db_insert("INSERT INTO media (base_path, original_name, mime, width, height, size_bytes, focal_x, focal_y, variants) VALUES (?, 'bg.png', 'image/webp', 1600, 900, 1, .3, .6, ?)",
+    [$bgBase, json_encode($bgVariants, JSON_UNESCAPED_SLASHES)]);
+$bgOf = static fn(string $path): string => preg_match('#<div class="page-bg"[^>]*>.*?</div>#s', $pv->page($path), $bgM) ? $bgM[0] : '';
+check('home, Feeds and Ranch each show their own background scene',
+    str_contains($bgOf('/'), 'data-scene="home"') && str_contains($bgOf('/feeds/'), 'data-scene="feeds"') && str_contains($bgOf('/ranch/'), 'data-scene="ranch"'));
+db_exec("INSERT INTO content_blocks (scope, block_key, type, label, media_id) VALUES ('ranch', 'page_bg', 'image', 'Page bg', ?)", [$bgMid]);
+check('a background photo saved on the old Ranch tab still shows behind the Ranch pages (and only there)',
+    str_contains($bgOf('/ranch/'), $bgBase) && !str_contains($bgOf('/feeds/'), $bgBase));
+[$st] = $p4->api('POST', '/admin/api/content.php', ['action' => 'save', 'scope' => 'global', 'images' => ['bg_ranch' => '']]);
+check('… until Page backgrounds says otherwise: Remove brings the built-in scene back', $st === 200 && !str_contains($bgOf('/ranch/'), $bgBase) && str_contains($bgOf('/ranch/'), '/assets/img/bg/ranch-'));
+[$st] = $p4->api('POST', '/admin/api/content.php', ['action' => 'save', 'scope' => 'global', 'images' => ['bg_ranch' => $bgMid]]);
+$bgRanch = $bgOf('/ranch/');
+check('a photo chosen on Page backgrounds replaces the Ranch scene, keeping its focus point in view on phones',
+    $st === 200 && str_contains($bgRanch, $bgBase) && str_contains($bgRanch, 'data-photo') && str_contains($bgRanch, 'object-position:30% 60%'));
+check('… behind every Ranch page (the livestock board too), not behind Feeds', str_contains($bgOf('/ranch/livestock.php'), $bgBase) && !str_contains($bgOf('/feeds/'), $bgBase));
+$bgTab = $p4->page('/admin/content.php?s=backgrounds');
+check('the Page backgrounds tab shows the live Ranch photo and saves to the global scope',
+    str_contains($bgTab, 'name="images[bg_ranch]" value="' . $bgMid . '"') && str_contains($bgTab, 'name="scope" value="global"'));
+check('… and the home page card photos say they are not the page backgrounds', str_contains($p4->page('/admin/content.php?s=gateway'), 'Home page — Ranch card photo'));
+[$st] = $p4->api('POST', '/admin/api/content.php', ['action' => 'save', 'scope' => 'global', 'blocks' => ['bg_ranch_dim' => '35', 'bg_feeds_dim' => '400', 'bg_nowhere_dim' => '20']]);
+check('Darken lays a dark layer over a background (35%), never darker than 80%, and only for real areas',
+    $st === 200 && str_contains($bgOf('/ranch/'), 'style="--bg-shade:0.35"') && str_contains($bgOf('/feeds/'), 'style="--bg-shade:0.8"')
+    && !db_val("SELECT 1 FROM content_blocks WHERE block_key = 'bg_nowhere_dim'"));
+check('… the Page backgrounds tab shows the Darken setting', str_contains($p4->page('/admin/content.php?s=backgrounds'), 'name="blocks[bg_ranch_dim]" min="0" max="80" step="5" value="35"'));
+[$st] = $p4->api('POST', '/admin/api/content.php', ['action' => 'save', 'scope' => 'global', 'blocks' => ['bg_ranch_dim' => '0']]);
+check('… and 0% shows the photo as it is', $st === 200 && !str_contains($bgOf('/ranch/'), '--bg-shade'));
+db_exec("DELETE FROM content_blocks WHERE (scope = 'global' AND block_key LIKE 'bg\\_%') OR (scope = 'ranch' AND block_key = 'page_bg')");
+db_exec('DELETE FROM media WHERE id = ?', [$bgMid]);
+foreach (array_merge(...array_values(array_map('array_values', $bgVariants))) as $bgFile) {
+    @unlink(GX_ROOT . '/' . $bgFile);
+}
 $calc = $pv->page('/feeds/calculator.php');
 check('calculator animal buttons use valid ARIA (pressed toggle buttons, not radio roles)', !str_contains($calc, 'role="radio"') && str_contains($calc, 'aria-pressed='));
 preg_match('#data-rules="([^"]*)"#', $calc, $m);
