@@ -183,7 +183,7 @@ require GX_ROOT . '/includes/layout/header.php';
         <?php if ($docs): ?>
           <ul class="doc-list">
             <?php foreach ($docs as $doc): ?>
-              <li><a href="/account/api/document.php?id=<?= (int) $doc['id'] ?>" target="_blank" rel="noopener"><svg class="icon icon-sm"><use href="#i-<?= e($docIcons[$doc['doc_type']] ?? 'file') ?>"/></svg><?= e(DocumentService::TITLES[$doc['doc_type']] ?? $doc['doc_type']) ?><small><?= e($doc['doc_no']) ?></small></a></li>
+              <li><a href="/account/api/document.php?id=<?= (int) $doc['id'] ?>" target="_blank" rel="noopener" data-download><svg class="icon icon-sm"><use href="#i-<?= e($docIcons[$doc['doc_type']] ?? 'file') ?>"/></svg><?= e(DocumentService::TITLES[$doc['doc_type']] ?? $doc['doc_type']) ?><small><?= e($doc['doc_no']) ?></small></a></li>
             <?php endforeach; ?>
           </ul>
         <?php else: ?><p class="muted small mb-0">Your documents appear here.</p><?php endif; ?>

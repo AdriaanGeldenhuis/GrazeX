@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="gx_black">#FF050606</color>
+    <color name="gx_panel">#FF0F1210</color>
+    <color name="gx_text">#FFF4F4EF</color>
+    <color name="gx_muted">#FFA7AEA8</color>
+    <color name="gx_orange">#FFFF7A00</color>
+</resources>

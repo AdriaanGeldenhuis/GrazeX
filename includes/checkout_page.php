@@ -223,7 +223,7 @@ require GX_ROOT . '/includes/layout/header.php';
         <section class="card card-pad co-section">
           <div class="co-head"><span class="co-num">4</span><h2 class="h3">Confirm</h2></div>
           <div class="field"><label for="customer_note">Notes for us <span class="opt">(optional)</span></label><textarea class="textarea" id="customer_note" name="customer_note" rows="2"></textarea></div>
-          <label class="check"><input type="checkbox" name="accept_terms" value="1" required> I accept the <a class="link" href="<?= e(page_url('terms')) ?>" target="_blank">terms &amp; conditions</a> and <a class="link" href="<?= e(page_url('privacy')) ?>" target="_blank">privacy policy</a>.</label>
+          <label class="check"><input type="checkbox" name="accept_terms" value="1" required> I accept the <a class="link" href="<?= e(page_url('terms')) ?>" target="_blank" rel="noopener" data-page-dialog="terms">terms &amp; conditions</a> and <a class="link" href="<?= e(page_url('privacy')) ?>" target="_blank" rel="noopener" data-page-dialog="privacy">privacy policy</a>.</label>
           <?php if (!(int) ($customer['marketing_opt_in'] ?? 0)): ?>
             <label class="check mt-1"><input type="checkbox" name="marketing_opt_in" value="1"> Send me specials and livestock alerts.</label>
           <?php endif; ?>

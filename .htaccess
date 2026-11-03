@@ -20,12 +20,14 @@ ErrorDocument 404 /404.php
   RewriteRule ^sitemap\.xml$ sitemap.php [L]
   # The service worker is generated too (it lists the current asset versions)
   RewriteRule ^sw\.js$ sw.php [L]
+  # Android App Links: proves the GrazeX app may open this site's links (from ANDROID_PACKAGE / ANDROID_SHA256)
+  RewriteRule ^\.well-known/assetlinks\.json$ assetlinks.php [L]
 
   # Pretty URL for information pages
   RewriteRule ^pages/([a-z0-9-]+)/?$ pages/page.php?slug=$1 [L,QSA]
 
   # Never serve internal folders
-  RewriteRule ^(config|includes|templates|storage|database|cron|vendor|tests)(/|$) - [F,L,NC]
+  RewriteRule ^(config|includes|templates|storage|database|cron|vendor|tests|appfiles)(/|$) - [F,L,NC]
 
   # Never serve dotfiles (except .well-known for SSL validation)
   RewriteRule (^|/)\.(?!well-known/) - [F,L]

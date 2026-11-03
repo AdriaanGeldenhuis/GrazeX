@@ -23,7 +23,7 @@ if (($testDb = getenv('GX_TEST_DB')) !== false && $testDb !== '') {
 $uri = rawurldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 
 // Blocked folders / files (same as .htaccess)
-if (preg_match('#^/(config|includes|templates|storage|database|cron|vendor|tests)(/|$)#i', $uri)
+if (preg_match('#^/(config|includes|templates|storage|database|cron|vendor|tests|appfiles)(/|$)#i', $uri)
     || preg_match('#(^|/)\.(?!well-known/)#', $uri)
     || preg_match('#^/uploads/.*\.(php\d?|phtml|phar|pl|py|cgi|sh)$#i', $uri)
     || preg_match('#(^|/)(composer\.(json|lock))$#i', $uri)
@@ -50,8 +50,9 @@ foreach ($pretty as $re => [$target, $param]) {
     }
 }
 
-if ($uri === '/robots.txt' || $uri === '/sitemap.xml' || $uri === '/sw.js') {
-    require $root . ['/robots.txt' => '/robots.php', '/sitemap.xml' => '/sitemap.php', '/sw.js' => '/sw.php'][$uri];
+$generated = ['/robots.txt' => '/robots.php', '/sitemap.xml' => '/sitemap.php', '/sw.js' => '/sw.php', '/.well-known/assetlinks.json' => '/assetlinks.php'];
+if (isset($generated[$uri])) {
+    require $root . $generated[$uri];
     return true;
 }
 $path = $root . $uri;

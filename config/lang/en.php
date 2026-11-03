@@ -72,4 +72,28 @@ return [
 
     // Setup
     'setup.title'        => 'Set up GrazeX',
+
+    // Push notifications in the app (title + body per email template; a template without these sends no push)
+    'push.payment_received.title'       => 'Payment received — {order_no}',
+    'push.payment_received.body'        => 'Thank you! We received {amount}.',
+    'push.order_ready.title'            => 'Order {order_no} is ready',
+    'push.order_ready.body'             => 'Your order is ready for collection.',
+    'push.order_out_for_delivery.title' => 'Order {order_no} is on its way',
+    'push.order_out_for_delivery.body'  => 'Your order is out for delivery.',
+    'push.order_completed.title'        => 'Order {order_no} completed',
+    'push.order_completed.body'         => 'Thank you! Your documents are under My orders.',
+    'push.order_cancelled.title'        => 'Order {order_no} cancelled',
+    'push.order_cancelled.body'         => 'Tap to see the details.',
+    'push.order_expired.title'          => 'Order {order_no} expired',
+    'push.order_expired.body'           => 'It was not paid in time, so the stock was released.',
+    'push.order_refunded.title'         => 'Order {order_no} refunded',
+    'push.order_refunded.body'          => 'Your refund has been processed.',
+    'push.order_finalised.title'        => 'Final invoice for {order_no}',
+    'push.order_finalised.body'         => 'The weights are confirmed. Balance due: {balance_due}.',
+    'push.payment_reminder.title'       => 'Payment due for {order_no}',
+    'push.payment_reminder.body'        => 'Pay {amount_due} before {expires_at} to keep your order.',
+    'push.pop_rejected.title'           => 'Proof of payment not accepted',
+    'push.pop_rejected.body'            => 'Please upload a new proof of payment for order {order_no}.',
+    'push.livestock_alert.title'        => 'New livestock available',
+    'push.livestock_alert.body'         => '{lot_title} matches your alert.',
 ];

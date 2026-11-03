@@ -232,6 +232,8 @@ if (!GX_IS_CLI) {
     send_security_headers();
     if (!defined('GX_NO_SESSION')) {
         session_start_secure();
+        // "Keep me logged in": restore the customer's login before any page or API looks at it
+        remember_autologin();
     }
     if (!defined('GX_SKIP_MAINTENANCE') && setting_bool('maintenance_mode') && !current_admin()) {
         http_response_code(503);

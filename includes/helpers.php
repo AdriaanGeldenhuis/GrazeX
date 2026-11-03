@@ -343,6 +343,38 @@ function user_agent(): string
     return substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
 }
 
+/**
+ * Is this page shown inside the GrazeX Android app (its WebView adds "GrazeXApp/<version>" to the user agent)?
+ * Only for looks and defaults — anyone can send that header, so it never grants anything.
+ */
+function gx_in_app(): bool
+{
+    return (bool) preg_match('#\bGrazeXApp/\d#', (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''));
+}
+
+/**
+ * Digital Asset Links for /.well-known/assetlinks.json: the GrazeX app (ANDROID_PACKAGE) signed with one of the
+ * ANDROID_SHA256 keys may open this site's links. Fingerprints may be written with or without colons. Empty until set.
+ */
+function android_asset_links(): array
+{
+    $package = trim((string) env('android.package', '')) ?: 'za.co.grazex.app';
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/', $package)) {
+        $package = 'za.co.grazex.app';
+    }
+    $fingerprints = [];
+    foreach (preg_split('/[\s,;]+/', strtoupper((string) env('android.sha256', ''))) ?: [] as $fp) {
+        $hex = str_replace(':', '', $fp);
+        if (preg_match('/^[0-9A-F]{64}$/', $hex)) {
+            $fingerprints[] = implode(':', str_split($hex, 2));
+        }
+    }
+    return $fingerprints ? [[
+        'relation' => ['delegate_permission/common.handle_all_urls'],
+        'target' => ['namespace' => 'android_app', 'package_name' => $package, 'sha256_cert_fingerprints' => array_values(array_unique($fingerprints))],
+    ]] : [];
+}
+
 function is_https(): bool
 {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
@@ -456,6 +488,10 @@ function canonical_host_redirect(): ?string
     $want = strtolower((string) ($app['host'] ?? ''));
     $have = strtolower((string) preg_replace('/:\d+$/', '', (string) ($_SERVER['HTTP_HOST'] ?? '')));
     if ($want === '' || $have === '' || $want === $have || !in_array(request_method(), ['GET', 'HEAD'], true)) {
+        return null;
+    }
+    // Android's App Links check fetches /.well-known/assetlinks.json on both hosts and does not follow redirects
+    if (str_starts_with((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH), '/.well-known/')) {
         return null;
     }
     if ($have !== 'www.' . $want && 'www.' . $have !== $want) {

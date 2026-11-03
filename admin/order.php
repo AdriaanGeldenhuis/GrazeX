@@ -127,7 +127,7 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
                 <?= $p['verified_name'] ? '<br><span class="tiny dim">by ' . e($p['verified_name']) . '</span>' : '' ?><?= $p['rejection_reason'] ? '<br><span class="tiny dim">' . e($p['rejection_reason']) . '</span>' : '' ?></td>
               <td class="num"><?= e(money((int) $p['amount_cents'])) ?></td>
               <td class="actions">
-                <?php if ($p['pop_path']): ?><a class="btn btn-sm" href="/admin/api/documents.php?pop=<?= (int) $p['id'] ?>" target="_blank" rel="noopener">View POP</a><?php endif; ?>
+                <?php if ($p['pop_path']): ?><a class="btn btn-sm" href="/admin/api/documents.php?pop=<?= (int) $p['id'] ?>" target="_blank" rel="noopener" data-download>View POP</a><?php endif; ?>
                 <?php if ($p['status'] === 'awaiting_verification' && admin_can('payments.verify')): ?>
                   <button class="btn btn-sm btn-green" type="button" data-admin-act="/admin/api/payments.php" data-payload='<?= e(json_encode(['action' => 'approve', 'id' => (int) $p['id']])) ?>' data-prompt="Amount received (R):" data-prompt-field="amount" data-prompt-default="<?= e(number_format((int) $p['amount_cents'] / 100, 2, '.', '')) ?>">Approve</button>
                   <button class="btn btn-sm btn-danger" type="button" data-admin-act="/admin/api/payments.php" data-payload='<?= e(json_encode(['action' => 'reject', 'id' => (int) $p['id']])) ?>' data-prompt="Why can't you match this payment? (sent to customer)" data-prompt-field="reason">Reject</button>
@@ -183,7 +183,7 @@ admin_start('Order ' . $o['order_no'], 'orders', ['perm' => 'orders.view']);
       <ul class="doc-list">
         <?php foreach ($docs as $d): ?>
           <li class="row-between" style="gap:6px">
-            <a class="link small" href="/admin/api/documents.php?id=<?= (int) $d['id'] ?>" target="_blank" rel="noopener"><?= e(DocumentService::TITLES[$d['doc_type']] ?? $d['doc_type']) ?> · <?= e($d['doc_no']) ?></a>
+            <a class="link small" href="/admin/api/documents.php?id=<?= (int) $d['id'] ?>" target="_blank" rel="noopener" data-download><?= e(DocumentService::TITLES[$d['doc_type']] ?? $d['doc_type']) ?> · <?= e($d['doc_no']) ?></a>
             <?php if ($d['is_void']): ?><span class="badge badge-danger">Void</span><?php endif; ?>
             <?php if (!in_array($d['doc_type'], ['pick_list', 'collection_slip', 'delivery_note'], true)): ?>
               <button class="btn btn-sm btn-ghost" type="button" data-admin-act="/admin/api/documents.php" data-payload='<?= e(json_encode(['action' => 'resend', 'id' => (int) $d['id']])) ?>' data-no-reload title="Email to customer">✉</button>

@@ -19,8 +19,26 @@ $gxOgImage    = $page['og_image'] ?: ($page['division'] === 'ranch' ? '/assets/i
 $gxCanonical  = app_url($page['canonical'] ?? (strtok($_SERVER['REQUEST_URI'] ?? '/', '?') ?: '/'));
 $gxHasAnnounce = setting_bool('announcement_enabled') && setting('announcement_text') && $page['division'] !== 'admin';
 $gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : ''));
+// Inside the GrazeX Android app: the bridge script links this phone to the logins on it for push notifications
+$gxInApp = gx_in_app();
+$gxPushWho = $gxPushLinked = [];
+if ($gxInApp && PushService::configured()) {
+    // Staff only on admin pages (asking current_admin() elsewhere would keep the admin idle timeout from running)
+    $gxUsers = ['customer' => current_customer()];
+    if ($page['division'] === 'admin' && !empty($_SESSION['admin_id'])) {
+        $gxUsers['admin'] = current_admin();
+    }
+    foreach ($gxUsers as $gxWho => $gxUser) {
+        if ($gxUser) {
+            $gxPushWho[] = $gxWho;
+            if (PushService::checkLink($gxWho)) {
+                $gxPushLinked[] = $gxWho;
+            }
+        }
+    }
+}
 ?><!doctype html>
-<html lang="<?= e(current_lang()) ?>" class="no-js">
+<html lang="<?= e(current_lang()) ?>" class="no-js<?= $gxInApp ? ' in-app' : '' ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -49,6 +67,8 @@ $gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : '
 <link rel="stylesheet" href="<?= e(asset($gxCss)) ?>">
 <?php endforeach; ?>
 <script src="<?= e(asset('/assets/js/core.js')) ?>" defer></script>
+<?php if ($gxInApp): ?><script src="<?= e(asset('/assets/js/app-bridge.js')) ?>" defer></script>
+<?php endif; ?>
 <?php foreach ($page['js'] as $gxJs): ?>
 <script src="<?= e(asset($gxJs)) ?>" defer></script>
 <?php endforeach; ?>
@@ -56,7 +76,7 @@ $gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : '
 <script type="application/ld+json"><?= json_encode(jsonld_clean($gxLd), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?></script>
 <?php endforeach; ?>
 </head>
-<body data-division="<?= e($page['division']) ?>" class="<?= e($gxBodyClass) ?>">
+<body data-division="<?= e($page['division']) ?>" class="<?= e($gxBodyClass) ?>"<?php if ($gxPushWho): ?> data-push="<?= e(implode(' ', $gxPushWho)) ?>" data-push-linked="<?= e(implode(' ', $gxPushLinked)) ?>"<?php endif; ?>>
 <a class="skip-link" href="#main"><?= e(t('nav.skip')) ?></a>
 <?php require GX_ROOT . '/includes/layout/icons.php'; ?>
 <div class="noise" aria-hidden="true"></div>

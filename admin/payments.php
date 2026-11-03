@@ -37,7 +37,7 @@ admin_start('Payments', 'payments', ['perm' => 'payments.verify']);
         <?php if ($isImg): ?>
           <a href="/admin/api/documents.php?pop=<?= (int) $p['id'] ?>" target="_blank" rel="noopener"><img class="pop-thumb" src="/admin/api/documents.php?pop=<?= (int) $p['id'] ?>" alt="Proof of payment for <?= e($p['order_no']) ?>" loading="lazy"></a>
         <?php else: ?>
-          <a class="btn btn-block" href="/admin/api/documents.php?pop=<?= (int) $p['id'] ?>" target="_blank" rel="noopener"><svg class="icon"><use href="#i-file"/></svg>Open PDF proof of payment</a>
+          <a class="btn btn-block" href="/admin/api/documents.php?pop=<?= (int) $p['id'] ?>" target="_blank" rel="noopener" data-download><svg class="icon"><use href="#i-file"/></svg>Open PDF proof of payment</a>
         <?php endif; ?>
         <dl class="kv mt-2"><dt>Expected</dt><dd><strong><?= e(money((int) $p['amount_cents'])) ?></strong> (<?= e($p['purpose']) ?>)</dd><dt>Reference</dt><dd><?= e($p['order_no']) ?></dd><dt>Uploaded</dt><dd><?= e(fmt_datetime($p['pop_uploaded_at'])) ?></dd></dl>
         <p class="hint">Check your bank statement for this reference and amount before approving.</p>

@@ -383,6 +383,10 @@ body.has-announce.is-scrolled .site-nav, .is-scrolled .site-nav { top: calc(10px
 dialog.modal { width: min(560px, calc(100% - 24px)); max-height: calc(100vh - 40px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
   background: #0f1210; color: var(--text); box-shadow: var(--shadow-lg); }
 dialog.modal::backdrop { background: rgba(0, 0, 0, .7); backdrop-filter: blur(4px); }
+/* A page (terms, privacy) in a dialog: the title and buttons stay put, the text scrolls */
+dialog.modal-page { width: min(720px, calc(100% - 24px)); }
+dialog.modal-page[open] { display: flex; flex-direction: column; overflow: hidden; }
+dialog.modal-page .modal-body { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
 dialog.modal[open] { animation: modalIn .3s var(--ease); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .modal-head h3 { font-size: 19px; }

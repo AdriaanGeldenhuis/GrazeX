@@ -189,6 +189,30 @@
 
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { GX.drawer.close(); GX.closeMenu?.(); } });
 
+  // ---------- Terms / privacy in a dialog: the form being filled in (checkout, registration) stays as it is ----------
+  GX.on(document, 'click', 'a[data-page-dialog]', async (e, a) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button) return; // "open in new tab" still works
+    e.preventDefault();
+    let d;
+    try {
+      d = await GX.api('/pages/api/page.php?slug=' + encodeURIComponent(a.dataset.pageDialog), { quiet: true });
+    } catch (_) {
+      window.open(a.href, '_blank', 'noopener'); // offline or not found: the page itself, in a new tab as before
+      return;
+    }
+    const dlg = document.createElement('dialog');
+    dlg.className = 'modal modal-page';
+    dlg.setAttribute('aria-labelledby', 'page-dialog-title');
+    dlg.innerHTML = `<div class="modal-head"><h3 id="page-dialog-title">${GX.esc(d.title)}</h3>
+        <button class="btn btn-ghost btn-sm" type="button" data-modal-close aria-label="Close">${GX.icon('close')}</button></div>
+      <div class="modal-body prose" tabindex="0">${d.html}<p class="tiny dim mt-3">Last updated ${GX.esc(d.updated)}</p></div>
+      <div class="modal-foot"><a class="link small" href="${GX.esc(d.url)}" target="_blank" rel="noopener">Open as a page</a>
+        <button class="btn btn-primary" type="button" data-modal-close>Close</button></div>`;
+    document.body.appendChild(dlg);
+    dlg.addEventListener('close', () => { dlg.remove(); a.focus(); });
+    dlg.showModal();
+  });
+
   // ---------- Forms: AJAX submit with inline errors ----------
   GX.clearErrors = (form) => {
     GX.$$('.field.has-error', form).forEach((f) => f.classList.remove('has-error'));

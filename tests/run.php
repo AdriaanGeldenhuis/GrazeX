@@ -276,6 +276,10 @@ check('stock never negative', stock(7) === 0);
 final class TestHttp
 {
     public string $csrf = '';
+    /** Headers sent with every request (e.g. the app's User-Agent). */
+    public array $extra = [];
+    /** Headers of the last response: lower-case name → list of values. */
+    public array $lastHeaders = [];
     private string $jar;
 
     public function __construct(public string $base)
@@ -305,12 +309,42 @@ final class TestHttp
         return [$status, json_decode((string) $raw, true) ?? ['raw' => $raw]];
     }
 
+    /** A cookie in this client's jar (null when it has none). */
+    public function cookie(string $name): ?string
+    {
+        foreach (file($this->jar, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+            $f = explode("\t", preg_replace('/^#HttpOnly_/', '', $line));
+            if (count($f) === 7 && !str_starts_with($line, '# ') && $f[5] === $name) {
+                return $f[6];
+            }
+        }
+        return null;
+    }
+
+    /** Forget a cookie, like a browser that was closed (session cookie) or cleared. */
+    public function dropCookie(string $name): void
+    {
+        $keep = array_filter(file($this->jar, FILE_IGNORE_NEW_LINES) ?: [], static function (string $line) use ($name): bool {
+            $f = explode("\t", preg_replace('/^#HttpOnly_/', '', $line));
+            return !(count($f) === 7 && $f[5] === $name);
+        });
+        file_put_contents($this->jar, implode("\n", $keep) . "\n");
+    }
+
+    /** Put a cookie in the jar (e.g. a copied remember-me value on another device). */
+    public function setCookie(string $name, string $value): void
+    {
+        $this->dropCookie($name);
+        file_put_contents($this->jar, "127.0.0.1\tFALSE\t/\tFALSE\t0\t{$name}\t{$value}\n", FILE_APPEND);
+    }
+
     /** GET and return [status, lower-cased response headers]. */
-    public function headers(string $path): array
+    public function headers(string $path, array $extra = []): array
     {
         $ch = curl_init($this->base . $path);
         $hdrs = [];
         curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_COOKIEJAR => $this->jar, CURLOPT_COOKIEFILE => $this->jar, CURLOPT_TIMEOUT => 60,
+            CURLOPT_HTTPHEADER => array_merge($this->extra, $extra),
             CURLOPT_HEADERFUNCTION => static function ($c, string $h) use (&$hdrs): int {
                 if (str_contains($h, ':')) {
                     [$k, $v] = explode(':', $h, 2);
@@ -336,7 +370,8 @@ final class TestHttp
     private function send(string $method, string $path, ?array $body, ?array $files, string $accept, array $extra = []): array
     {
         $ch = curl_init($this->base . $path);
-        $headers = array_merge(['Accept: ' . $accept, 'X-Requested-With: fetch'], $extra);
+        $headers = array_merge(['Accept: ' . $accept, 'X-Requested-With: fetch'], $this->extra, $extra);
+        $this->lastHeaders = [];
         if ($method !== 'GET') {
             $headers[] = 'X-CSRF-Token: ' . $this->csrf;
         }
@@ -355,6 +390,10 @@ final class TestHttp
         $opts[CURLOPT_HEADERFUNCTION] = function ($c, string $h): int {
             if (preg_match('/^X-CSRF-Token:\s*([a-f0-9]+)/i', $h, $m)) {
                 $this->csrf = $m[1];
+            }
+            if (str_contains($h, ':')) {
+                [$k, $v] = explode(':', $h, 2);
+                $this->lastHeaders[strtolower(trim($k))][] = trim($v);
             }
             return strlen($h);
         };
@@ -1854,6 +1893,474 @@ $pBody['address']['line2'] = 'Plot 9';
 [$st] = $ah->api('POST', '/feeds/api/checkout.php', $pBody);
 check('Plot 7 and Plot 9 on the same road are saved as two addresses (the first is not overwritten)', $st === 200
     && db_col("SELECT line2 FROM customer_addresses WHERE customer_id = ? AND line1 = '5 River Rd' ORDER BY line2", [$c5d['id']]) === ['Plot 7', 'Plot 9'], (string) $st);
+
+section('Phase 6: keep me logged in');
+$appUa = 'User-Agent: Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36 GrazeXApp/1.0';
+$rmPw = 'Remember-Me-123!';
+$mkRemember = static function (string $email) use ($rmPw): int {
+    return db_insert('INSERT INTO customers (email, password_hash, first_name, last_name, phone, email_verified_at) VALUES (?,?,?,?,?,NOW())',
+        [$email, customer_password_hash($rmPw), 'Remy', 'Member', '0821234567']);
+};
+$ipN = 0;
+$loginAs = static function (string $email, bool $remember, array $extra = []) use ($base, $rmPw, &$ipN): TestHttp {
+    $h = new TestHttp($base);
+    $h->extra = array_merge(['X-Test-Remote-Addr: 10.46.0.' . (++$ipN)], $extra);
+    $h->page('/account/login.php');
+    $h->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => $email, 'password' => $rmPw] + ($remember ? ['remember' => '1'] : []));
+    return $h;
+};
+// The app was closed (session cookie gone): is the person still logged in on the next page?
+$stillIn = static function (TestHttp $h): bool {
+    $h->dropCookie(GX_SESSION_NAME);
+    [$st] = $h->headers('/account/');
+    return $st === 200;
+};
+$rmCid = $mkRemember('remember@test.local');
+$rm = $loginAs('remember@test.local', true);
+$rmSet = implode(' | ', array_filter($rm->lastHeaders['set-cookie'] ?? [], static fn($c) => str_starts_with($c, 'GXREMEMBER=')));
+check('"Keep me logged in" sets a 60-day HttpOnly, SameSite=Lax cookie', preg_match('/^GXREMEMBER=[a-f0-9]{24}\.[a-f0-9]{64};/', $rmSet) === 1
+    && stripos($rmSet, 'httponly') !== false && stripos($rmSet, 'samesite=lax') !== false
+    && preg_match('/Max-Age=(\d+)/i', $rmSet, $mm) === 1 && (int) $mm[1] >= 59 * 86400, $rmSet);
+$rmCookie = (string) $rm->cookie('GXREMEMBER');
+[$rmSel, $rmSecret] = array_pad(explode('.', $rmCookie), 2, '');
+$rmRow = db_one('SELECT * FROM customer_remember_tokens WHERE selector = ?', [$rmSel]);
+check('… only a hash of its secret is stored, bound to the login version', $rmRow && remember_secret_matches($rmSecret, $rmRow['validator_hash'])
+    && !str_contains(json_encode($rmRow), $rmSecret) && (int) $rmRow['customer_id'] === $rmCid && (int) $rmRow['session_version'] === 1);
+check('the app was closed (no session cookie): the cookie logs them in again', $stillIn($rm));
+$rmCookie2 = (string) $rm->cookie('GXREMEMBER');
+check('… with a new secret on the same token', $rmCookie2 !== $rmCookie && str_starts_with($rmCookie2, $rmSel . '.')
+    && (int) db_val('SELECT COUNT(*) FROM customer_remember_tokens WHERE customer_id = ?', [$rmCid]) === 1);
+$late = new TestHttp($base);
+$late->setCookie('GXREMEMBER', $rmCookie);
+[$st] = $late->headers('/account/');
+check('a request sent with the previous value a moment earlier still gets in (2-minute grace)', $st === 200);
+db_exec('UPDATE customer_remember_tokens SET rotated_at = NOW() - INTERVAL 5 MINUTE WHERE selector = ?', [$rmSel]);
+$thief = new TestHttp($base);
+$thief->setCookie('GXREMEMBER', $rmCookie);
+[$st] = $thief->headers('/account/');
+check('the replaced value later on (a copied cookie) is refused and the token destroyed', $st === 302
+    && !db_val('SELECT 1 FROM customer_remember_tokens WHERE selector = ?', [$rmSel]) && $thief->cookie('GXREMEMBER') === null);
+check('… so the real phone has to log in again too (and its cookie is cleared)', !$stillIn($rm) && $rm->cookie('GXREMEMBER') === null);
+check('… and every login of the account ends (also a session the copy already opened)', (int) db_val('SELECT session_version FROM customers WHERE id = ?', [$rmCid]) === 2);
+db_exec('UPDATE customers SET session_version = 1 WHERE id = ?', [$rmCid]);
+
+// The owner logs out while a copy of their cookie has already been used elsewhere (their secret is stale)
+$own = $loginAs('remember@test.local', true);
+$copy = new TestHttp($base);
+$copy->setCookie('GXREMEMBER', (string) $own->cookie('GXREMEMBER'));
+[$st] = $copy->headers('/account/'); // the copy logs in (new secret); the owner's value is now the old one
+db_exec('UPDATE customer_remember_tokens SET rotated_at = NOW() - INTERVAL 5 MINUTE WHERE customer_id = ?', [$rmCid]);
+[$st2] = $own->api('POST', '/account/api/auth.php', ['action' => 'logout']);
+[$st3] = $copy->headers('/account/'); // the copy's session, still holding its session cookie
+check('logging out with a stale cookie (a copy was used) deletes the token and ends the copy\'s open session', $st === 200 && $st2 === 200
+    && $st3 === 302 && !db_val('SELECT 1 FROM customer_remember_tokens WHERE customer_id = ?', [$rmCid]), "$st $st2 $st3");
+db_exec('UPDATE customers SET session_version = 1 WHERE id = ?', [$rmCid]);
+
+// A page left open for a day: its CSRF token is stale, the remember cookie logs them back in — "Log out" still works
+$idle = $loginAs('remember@test.local', true);
+$idle->dropCookie(GX_SESSION_NAME);
+$idle->csrf = 'stale-token-from-yesterday';
+[$st, $res] = $idle->api('POST', '/account/api/auth.php', ['action' => 'logout']);
+check('"Log out" on a page left open overnight logs out (no CSRF error, remembered login gone)', $st === 200 && $idle->cookie('GXREMEMBER') === null
+    && !$stillIn($idle), $st . ' ' . json_encode($res));
+
+$nr = $loginAs('remember@test.local', false);
+check('without the tick box: no remember cookie, and closing the app logs out', $nr->cookie('GXREMEMBER') === null && !$stillIn($nr));
+$webLogin = (new TestHttp($base))->page('/account/login.php');
+$appH = new TestHttp($base);
+$appH->extra = [$appUa];
+$appLogin = $appH->page('/account/login.php');
+check('the tick box is off on the website and on in the app', str_contains($webLogin, 'name="remember" value="1">') && str_contains($appLogin, 'name="remember" value="1" checked'));
+check('… on the registration form too', str_contains($appH->page('/account/register.php'), 'name="remember" value="1" checked'));
+check('the app gets html.in-app and the bridge script; the website does not', str_contains($appLogin, 'class="no-js in-app"')
+    && str_contains($appLogin, '/assets/js/app-bridge.js') && !str_contains($webLogin, 'app-bridge.js') && !str_contains($webLogin, 'in-app'));
+
+$lo = $loginAs('remember@test.local', true);
+$loCopy = (string) $lo->cookie('GXREMEMBER');
+[$st] = $lo->api('POST', '/account/api/auth.php', ['action' => 'logout']);
+$loOther = new TestHttp($base);
+$loOther->setCookie('GXREMEMBER', $loCopy);
+[$st2] = $loOther->headers('/account/');
+check('logging out ends the remembered login (cookie removed, token deleted)', $st === 200 && $lo->cookie('GXREMEMBER') === null && $st2 === 302
+    && !db_val('SELECT 1 FROM customer_remember_tokens WHERE selector = ?', [explode('.', $loCopy)[0]]));
+
+$pwA = $loginAs('remember@test.local', true);
+$pwB = $loginAs('remember@test.local', true);
+$pwA->page('/account/profile.php');
+[$st, $res] = $pwA->api('POST', '/account/api/profile.php', ['action' => 'password', 'current_password' => $rmPw, 'password' => $rmPw . 'x', 'password_confirm' => $rmPw . 'x']);
+check('changing the password: other phones\' remembered logins stop', $st === 200 && !$stillIn($pwB), json_encode($res));
+check('… while this phone stays remembered', $stillIn($pwA));
+db_exec('UPDATE customers SET password_hash = ? WHERE id = ?', [customer_password_hash($rmPw), $rmCid]);
+
+$leA = $loginAs('remember@test.local', true);
+$leB = $loginAs('remember@test.local', true);
+$leA->page('/account/profile.php');
+[$st] = $leA->api('POST', '/account/api/profile.php', ['action' => 'logout_others']);
+check('"Log out everywhere else" ends the other phones\' remembered logins, not this one', $st === 200 && !$stillIn($leB) && $stillIn($leA));
+
+$exp = $loginAs('remember@test.local', true);
+db_exec('UPDATE customer_remember_tokens SET expires_at = NOW() - INTERVAL 1 MINUTE WHERE selector = ?', [explode('.', (string) $exp->cookie('GXREMEMBER'))[0]]);
+check('an expired token does not log in', !$stillIn($exp));
+
+$adm6Pw = 'Push-Owner-123!';
+$adm6Id = db_insert("INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES ((SELECT id FROM roles WHERE slug = 'owner'), ?, ?, 'Push Owner', 'all')",
+    ['pushowner@test.local', admin_password_hash($adm6Pw)]);
+$adm6 = new TestHttp($base);
+$adm6->extra = [$appUa, 'X-Test-Remote-Addr: 10.46.1.1'];
+$adm6->page('/admin/login.php');
+[$st] = $adm6->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'pushowner@test.local', 'password' => $adm6Pw]);
+check('(a staff member logs in to the admin in the app)', $st === 200);
+$blk = $loginAs('remember@test.local', true);
+[$st] = $adm6->api('POST', '/admin/api/customers.php', ['action' => 'block', 'id' => $rmCid]);
+check('blocking the customer ends every remembered login', $st === 200 && !$stillIn($blk) && !db_val('SELECT 1 FROM customer_remember_tokens WHERE customer_id = ?', [$rmCid]));
+$adm6->api('POST', '/admin/api/customers.php', ['action' => 'unblock', 'id' => $rmCid]);
+
+section('Phase 6: push notifications');
+$fbFile = GX_ROOT . '/storage/private/firebase-service-account.json';
+$fbTokenFile = GX_ROOT . '/storage/private/fcm-access-token.json';
+$fbBackup = is_file($fbFile) ? (string) file_get_contents($fbFile) : null;
+// Put a real service-account file back even if the run stops half-way
+register_shutdown_function(static function () use ($fbFile, $fbTokenFile, $fbBackup): void {
+    @unlink($fbFile);
+    @unlink($fbTokenFile);
+    if ($fbBackup !== null) {
+        file_put_contents($fbFile, $fbBackup);
+        chmod($fbFile, 0600);
+    }
+});
+@unlink($fbFile);
+@unlink($fbTokenFile);
+PushService::useCredentials(null);
+$pushCid = $mkRemember('push6@test.local');
+$offCid = $mkRemember('pushoff6@test.local');
+$offDev = PushService::register('dOff6:APA91b' . str_repeat('Of7', 40), 'customer', $offCid, 1);
+check('without the Firebase file push is off: a linked phone gets nothing queued', !PushService::configured() && $offDev > 0
+    && PushService::toCustomer($offCid, 'payment_received', ['order_no' => 'X', 'amount' => 'R 1']) === 0
+    && !db_val('SELECT 1 FROM push_queue WHERE device_id = ?', [$offDev]));
+$fbKey = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+openssl_pkey_export($fbKey, $fbPem);
+$fbPub = openssl_pkey_get_details($fbKey)['key'];
+file_put_contents($fbFile, json_encode(['type' => 'service_account', 'project_id' => 'grazex-test', 'client_email' => 'push@grazex-test.iam.gserviceaccount.com',
+    'private_key' => $fbPem, 'token_uri' => 'https://oauth2.googleapis.com/token']));
+chmod($fbFile, 0600);
+PushService::useCredentials(null);
+check('with the service-account file in storage/private push is on', PushService::configured());
+$fcmCalls = [];
+$fcmGone = [];
+$fcmReplies = [];
+PushService::useTransport(static function (string $url, array $headers, string $body) use (&$fcmCalls, &$fcmGone, &$fcmReplies): array {
+    $fcmCalls[] = ['url' => $url, 'headers' => $headers, 'body' => $body];
+    if (str_contains($url, 'oauth2.googleapis.com')) {
+        return [200, json_encode(['access_token' => 'ya29.test-' . count($fcmCalls), 'expires_in' => 3599, 'token_type' => 'Bearer'])];
+    }
+    if (in_array(json_decode($body, true)['message']['token'] ?? '', $fcmGone, true)) {
+        return [404, '{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}'];
+    }
+    return array_shift($fcmReplies) ?? [200, '{"name":"projects/grazex-test/messages/0:1"}'];
+});
+
+$ph = $loginAs('push6@test.local', true, [$appUa]);
+$phHome = $ph->page('/account/');
+check('in the app, a logged-in page asks the bridge to link this phone', str_contains($phHome, 'data-push="customer" data-push-linked=""'));
+$pTok = 'dTest6:APA91b' . str_repeat('Xy9_-', 30);
+[$st, $res] = $ph->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => $pTok, 'app_version' => '1.0']);
+$pDev = db_one('SELECT * FROM push_devices WHERE token_hash = ?', [hash('sha256', $pTok)]);
+check('the app links its push token to the customer and this login', $st === 200 && $pDev && (int) $pDev['customer_id'] === $pushCid
+    && (int) $pDev['customer_sv'] === 1 && $pDev['app_version'] === '1.0' && $pDev['admin_user_id'] === null, json_encode($res));
+check('… after which pages say this login is linked', str_contains($ph->page('/account/'), 'data-push="customer" data-push-linked="customer"'));
+$noRem = $loginAs('push6@test.local', false, [$appUa]);
+$noRem->page('/account/');
+[$st, $res] = $noRem->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => 'dNoRem6:APA91b' . str_repeat('Nr1', 40)]);
+check('a login without "Keep me logged in" does not link the phone (no news on a borrowed phone later)', $st === 200 && ($res['data']['push'] ?? null) === false
+    && !db_val('SELECT 1 FROM push_devices WHERE token_hash = ?', [hash('sha256', 'dNoRem6:APA91b' . str_repeat('Nr1', 40))])
+    && str_contains($noRem->page('/account/'), 'data-push-linked="customer"'), json_encode($res));
+[$st] = $ph->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => 'not a token!']);
+check('a junk token is refused', $st === 422);
+$keep = $ph->csrf;
+$ph->csrf = 'bad';
+[$st] = $ph->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => $pTok]);
+$ph->csrf = $keep;
+$nobody = new TestHttp($base);
+$nobody->page('/');
+[$st2] = $nobody->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => $pTok]);
+check('registering needs the CSRF token and a login', $st === 419 && $st2 === 401);
+check('the website (not the app) never asks to link a phone, also when logged in', !str_contains($loginAs('push6@test.local', true)->page('/account/'), 'data-push='));
+// The phone was forgotten (e.g. app uninstalled) while the session lives on: the next page links it again
+$fgCid = $mkRemember('pushforget@test.local');
+$fg = $loginAs('pushforget@test.local', true, [$appUa]);
+$fg->page('/account/');
+$fg->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => 'dForget6:APA91b' . str_repeat('Fg5', 40)]);
+db_exec('DELETE FROM push_devices WHERE customer_id = ?', [$fgCid]);
+check('a phone that was forgotten is linked again on the next page (same session)', str_contains($fg->page('/account/'), 'data-push="customer" data-push-linked=""'));
+// Shop pages in the app don't touch the admin session (its idle timeout keeps running)
+$admShop = $adm6->page('/feeds/');
+check('in the app, shop pages leave the admin session alone (no staff link there)', !str_contains($admShop, 'data-push="admin'));
+
+$fcmCalls = [];
+$n = PushService::toCustomer($pushCid, 'payment_received', ['order_no' => 'GXF-PUSH1', 'amount' => 'R 150.00'], '/account/order.php?no=GXF-PUSH1', 'order-GXF-PUSH1');
+$pq = db_one('SELECT * FROM push_queue WHERE device_id = ? ORDER BY id DESC LIMIT 1', [$pDev['id']]);
+check('order news is queued for the phone and sent straight away', $n === 1 && $pq['status'] === 'sent' && $pq['title'] === 'Payment received — GXF-PUSH1'
+    && $pq['body'] === 'Thank you! We received R 150.00.', json_encode($pq));
+parse_str((string) ($fcmCalls[0]['body'] ?? ''), $jwtForm);
+[$jh, $jc, $js] = array_pad(explode('.', (string) ($jwtForm['assertion'] ?? '')), 3, '');
+$b64d = static fn(string $s): string => (string) base64_decode(strtr($s, '-_', '+/') . str_repeat('=', (4 - strlen($s) % 4) % 4));
+$jClaims = json_decode($b64d($jc), true) ?: [];
+check('the access token comes from a JWT signed with the service-account key (RS256)', ($jwtForm['grant_type'] ?? '') === 'urn:ietf:params:oauth:grant-type:jwt-bearer'
+    && openssl_verify($jh . '.' . $jc, $b64d($js), $fbPub, OPENSSL_ALGO_SHA256) === 1 && (json_decode($b64d($jh), true)['alg'] ?? '') === 'RS256'
+    && ($jClaims['iss'] ?? '') === 'push@grazex-test.iam.gserviceaccount.com' && ($jClaims['scope'] ?? '') === 'https://www.googleapis.com/auth/firebase.messaging'
+    && ($jClaims['aud'] ?? '') === 'https://oauth2.googleapis.com/token' && ($jClaims['exp'] ?? 0) - ($jClaims['iat'] ?? 0) === 3600);
+$fcmMsg = json_decode((string) ($fcmCalls[1]['body'] ?? '{}'), true)['message'] ?? [];
+check('the FCM v1 message: data-only, to this token, opens the order', str_ends_with($fcmCalls[1]['url'] ?? '', '/v1/projects/grazex-test/messages:send')
+    && in_array('Authorization: Bearer ya29.test-1', $fcmCalls[1]['headers'] ?? [], true) && ($fcmMsg['token'] ?? '') === $pTok && !isset($fcmMsg['notification'])
+    && ($fcmMsg['data']['url'] ?? '') === '/account/order.php?no=GXF-PUSH1' && ($fcmMsg['data']['channel'] ?? '') === 'orders'
+    && ($fcmMsg['android']['collapse_key'] ?? '') === 'order-GXF-PUSH1' && array_filter($fcmMsg['data'] ?? [], 'is_string') === ($fcmMsg['data'] ?? []), json_encode($fcmMsg));
+$fcmCalls = [];
+PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-PUSH1']);
+check('the Google access token is cached (no second token request) in a private file', count($fcmCalls) === 1 && !str_contains($fcmCalls[0]['url'], 'oauth2')
+    && (fileperms($fbTokenFile) & 0777) === 0600 && !str_contains((string) file_get_contents($fbTokenFile), 'PRIVATE KEY'));
+
+$fcmReplies = [[503, '{"error":{"code":503,"message":"The service is currently unavailable.","status":"UNAVAILABLE"}}']];
+PushService::toCustomer($pushCid, 'order_out_for_delivery', ['order_no' => 'GXF-PUSH1']);
+$pq = db_one('SELECT * FROM push_queue WHERE device_id = ? ORDER BY id DESC LIMIT 1', [$pDev['id']]);
+check('Google busy (503): the push waits and is tried again later', $pq['status'] === 'queued' && (int) $pq['attempts'] === 1 && strtotime($pq['send_after']) > time(), json_encode($pq));
+db_exec('UPDATE push_queue SET attempts = 4, send_after = NOW() WHERE id = ?', [$pq['id']]);
+$fcmReplies = [[503, '{"error":{"code":503,"status":"UNAVAILABLE"}}']];
+PushService::sendQueued();
+check('… and gives up after 5 tries', db_val('SELECT status FROM push_queue WHERE id = ?', [$pq['id']]) === 'failed');
+$fcmCalls = [];
+$fcmReplies = [[401, '{"error":{"code":401,"message":"Request had invalid authentication credentials.","status":"UNAUTHENTICATED"}}']];
+PushService::toCustomer($pushCid, 'order_completed', ['order_no' => 'GXF-PUSH1']);
+check('a refused access token (401) is renewed and the push sent once more', count($fcmCalls) === 3 && str_contains($fcmCalls[1]['url'], 'oauth2')
+    && db_val('SELECT status FROM push_queue WHERE device_id = ? ORDER BY id DESC LIMIT 1', [$pDev['id']]) === 'sent');
+// A push still waiting when the login ends (password change on another device) is not sent
+$fcmReplies = [[503, '{"error":{"code":503,"status":"UNAVAILABLE"}}']];
+PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-LATE']);
+$lateQ = (int) db_val("SELECT id FROM push_queue WHERE title LIKE '%GXF-LATE%'");
+db_exec('UPDATE customers SET session_version = session_version + 1 WHERE id = ?', [$pushCid]);
+db_exec('UPDATE push_queue SET send_after = NOW() WHERE id = ?', [$lateQ]);
+$fcmCalls = [];
+PushService::sendQueued();
+check('a push queued before the login ended is not sent afterwards', db_val('SELECT status FROM push_queue WHERE id = ?', [$lateQ]) === 'failed' && !$fcmCalls);
+db_exec('UPDATE customers SET session_version = session_version - 1 WHERE id = ?', [$pushCid]);
+// Google unreachable: one try, then the run stops (a page or cron never waits on timeout after timeout)
+$busyCid = $mkRemember('pushbusy@test.local');
+foreach ([1, 2, 3] as $bi) {
+    PushService::register('dBusy' . $bi . ':APA91b' . str_repeat('Bu4', 40), 'customer', $busyCid, 1);
+}
+$fcmReplies = [[0, 'Connection timed out'], [0, 'Connection timed out'], [0, 'Connection timed out']];
+$fcmCalls = [];
+PushService::toCustomer($busyCid, 'order_ready', ['order_no' => 'GXF-BUSY']);
+check('Google unreachable: the send run stops after the first failure; the rest waits in the queue', count(array_filter($fcmCalls, static fn($c) => str_contains($c['url'], 'messages:send'))) === 1
+    && (int) db_val("SELECT COUNT(*) FROM push_queue WHERE title LIKE '%GXF-BUSY%' AND status = 'queued'") === 3);
+$fcmReplies = [];
+db_exec("DELETE FROM push_queue WHERE title LIKE '%GXF-BUSY%'");
+// The server's Firebase project is not the app's: a set-up mistake — no phone is forgotten
+$fcmReplies = [[403, '{"error":{"code":403,"message":"SenderId mismatch","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"SENDER_ID_MISMATCH"}]}}']];
+PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-SENDER']);
+check('a Firebase project mix-up (SENDER_ID_MISMATCH) keeps the phones and marks the push failed', (bool) db_val('SELECT 1 FROM push_devices WHERE id = ?', [$pDev['id']])
+    && db_val("SELECT status FROM push_queue WHERE title LIKE '%GXF-SENDER%'") === 'failed');
+$fcmReplies = [];
+$goneTok = 'dGone6:APA91b' . str_repeat('Zz8', 40);
+$goneId = PushService::register($goneTok, 'customer', $pushCid, 1, '0.9');
+$fcmGone = [$goneTok];
+PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-PUSH2']);
+check('an uninstalled app (UNREGISTERED) is forgotten; the other phone still gets it', !db_val('SELECT 1 FROM push_devices WHERE id = ?', [$goneId])
+    && db_val('SELECT status FROM push_queue WHERE device_id = ? ORDER BY id DESC LIMIT 1', [$pDev['id']]) === 'sent');
+check('an email template without push text sends no push', PushService::toCustomer($pushCid, 'verify_email', ['link' => 'x']) === 0);
+// A shared phone changes hands: the previous person's notifications are not kept for the next one
+$shareTok = 'dShare6:APA91b' . str_repeat('Sh9', 40);
+$shareA = $mkRemember('sharea@test.local');
+$shareB = $mkRemember('shareb@test.local');
+$shareId = PushService::register($shareTok, 'customer', $shareA, 1);
+PushService::toCustomer($shareA, 'payment_received', ['order_no' => 'GXF-SHARE', 'amount' => 'R 9 999.00']);
+$shareId2 = PushService::register($shareTok, 'customer', $shareB, 1);
+check('a phone that changes hands keeps nothing of the previous customer\'s notifications', $shareId === $shareId2
+    && !db_val("SELECT 1 FROM push_queue WHERE device_id = ? AND title LIKE '%GXF-SHARE%'", [$shareId])
+    && (int) db_val('SELECT customer_id FROM push_devices WHERE id = ?', [$shareId]) === $shareB);
+$capTok = 'dCap6:APA91b' . str_repeat('Qq7', 40);
+$capCid = $mkRemember('pushcap@test.local');
+$capId = PushService::register($capTok, 'customer', $capCid, 1);
+for ($i = 0; $i < PushService::MAX_PER_DEVICE_HOUR; $i++) {
+    db_exec("INSERT INTO push_queue (device_id, title, body, status, sent_at) VALUES (?, 't', 'b', 'sent', NOW())", [$capId]);
+}
+check('at most 20 pushes per phone per hour', PushService::toCustomer($capCid, 'order_ready', ['order_no' => 'GXF-CAP']) === 0);
+db_exec("UPDATE push_queue SET status = 'sending', claimed_at = NOW() - INTERVAL 20 MINUTE WHERE device_id = ? ORDER BY id LIMIT 1", [$capId]);
+check('cron puts a push stuck in "sending" back in the queue', PushService::requeueStuck() === 1);
+
+// Order emails carry the push: a real POP rejection
+$popO = db_one("SELECT o.id, o.order_no, o.customer_id FROM orders o JOIN customers c ON c.id = o.customer_id WHERE c.status = 'active' ORDER BY o.id LIMIT 1");
+if ($popO) {
+    PushService::register('dPop6:APA91b' . str_repeat('Pp6', 40), 'customer', (int) $popO['customer_id'],
+        (int) db_val('SELECT session_version FROM customers WHERE id = ?', [$popO['customer_id']]));
+    NotificationService::email('pop_rejected', 'x@test.local', 'X', ['first_name' => 'X', 'order_no' => $popO['order_no'], 'reason' => 'r'], null, [], null, false, (int) $popO['customer_id']);
+    check('an order email also goes to the customer\'s phone (POP rejected opens the order)', (bool) db_val("SELECT 1 FROM push_queue q JOIN push_devices d ON d.id = q.device_id
+        WHERE d.customer_id = ? AND q.title = 'Proof of payment not accepted' AND q.url = ?", [$popO['customer_id'], '/account/order.php?no=' . rawurlencode($popO['order_no'])]));
+} else {
+    check('an order email also goes to the customer\'s phone', false, 'no order in the test data');
+}
+
+// Livestock alerts: a customer with a confirmed alert gets one push per announcement
+$lotP = db_one("SELECT id, slug, title FROM lots WHERE status IN ('available','coming_soon') ORDER BY id LIMIT 1");
+$alC = $mkRemember('pushalert@test.local');
+PushService::register('dAlert6:APA91b' . str_repeat('Aa5', 40), 'customer', $alC, 1);
+db_exec('INSERT INTO livestock_alerts (customer_id, email, is_active, confirmed_at, unsubscribe_token) VALUES (?, ?, 1, NOW(), ?)', [$alC, 'pushalert@test.local', random_token(32)]);
+LivestockService::notifySubscribers((int) $lotP['id']);
+$alQ = db_one('SELECT q.* FROM push_queue q JOIN push_devices d ON d.id = q.device_id WHERE d.customer_id = ? ORDER BY q.id DESC LIMIT 1', [$alC]);
+check('new livestock: a push on the "livestock" channel that opens the lot', $alQ && $alQ['channel'] === 'livestock' && $alQ['url'] === lot_url($lotP['slug'])
+    && str_contains($alQ['body'], $lotP['title']), json_encode($alQ));
+
+// Staff: per permission and division, only active staff on their current login
+db_exec("INSERT INTO roles (slug, name) VALUES ('pushtest', 'Push test')");
+$ptRole = (int) db_val("SELECT id FROM roles WHERE slug = 'pushtest'");
+db_exec("INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE slug = 'orders.view'", [$ptRole]);
+$stF = db_insert("INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES (?, 'pushfeeds@test.local', 'x', 'Feeds staff', 'feeds')", [$ptRole]);
+$stR = db_insert("INSERT INTO admin_users (role_id, email, password_hash, name, division_scope) VALUES ((SELECT id FROM roles WHERE slug = 'owner'), 'pushranch@test.local', 'x', 'Ranch owner', 'ranch')");
+$stX = db_insert("INSERT INTO admin_users (role_id, email, password_hash, name, division_scope, status) VALUES (?, 'pushoff@test.local', 'x', 'Disabled', 'all', 'disabled')", [$ptRole]);
+$stDev = [];
+foreach (['F' => $stF, 'R' => $stR, 'X' => $stX] as $k => $sid) {
+    $stDev[$k] = PushService::register('dStaff' . $k . ':APA91b' . str_repeat('Ss4', 40), 'admin', $sid, 1);
+}
+$staffGot = static fn(int $devId, string $title): bool => (bool) db_val("SELECT 1 FROM push_queue WHERE device_id = ? AND channel = 'staff' AND title = ?", [$devId, $title]);
+NotificationService::admin('new_order', 'New GrazeX Feeds order GXF-STAFF1', 'R 100', '/admin/order.php?id=1', division_id('feeds'));
+NotificationService::admin('new_order', 'New GrazeX Ranch order GXR-STAFF2', 'R 100', '/admin/order.php?id=2', division_id('ranch'));
+NotificationService::admin('refund_due', 'Refund due on GXF-STAFF3', 'R 5', '/admin/order.php?id=3', division_id('feeds'));
+NotificationService::admin('low_stock', 'Low stock: Test', 'x', '/admin/inventory.php', division_id('feeds'));
+check('staff pushes follow permission and division', $staffGot($stDev['F'], 'New GrazeX Feeds order GXF-STAFF1') && !$staffGot($stDev['R'], 'New GrazeX Feeds order GXF-STAFF1')
+    && $staffGot($stDev['R'], 'New GrazeX Ranch order GXR-STAFF2') && !$staffGot($stDev['F'], 'New GrazeX Ranch order GXR-STAFF2')
+    && !$staffGot($stDev['F'], 'Refund due on GXF-STAFF3'));
+check('… never to a disabled staff member, and not for low-stock notices', !db_val('SELECT 1 FROM push_queue WHERE device_id = ?', [$stDev['X']])
+    && !db_val("SELECT 1 FROM push_queue WHERE title = 'Low stock: Test'"));
+db_exec("UPDATE role_permissions rp JOIN permissions p ON p.id = rp.permission_id SET rp.permission_id = (SELECT id FROM permissions WHERE slug = 'messages.manage') WHERE rp.role_id = ? AND p.slug = 'orders.view'", [$ptRole]);
+$stMax = (int) db_val('SELECT COALESCE(MAX(id), 0) FROM push_queue');
+NotificationService::admin('enquiry', 'New message from Sannie Secret', 'sannie@example.com: please call me on 082 555 0000', '/admin/messages.php?id=9', division_id('feeds'));
+NotificationService::admin('new_order', 'New GrazeX Ranch order GXR-STAFF5', 'Piet Private, 3 items', '/admin/order.php?id=5', division_id('ranch'));
+$stQ = db_all('SELECT device_id, title, body FROM push_queue WHERE id > ? ORDER BY id', [$stMax]);
+check('staff pushes carry no names, emails or messages (only the alert title, generic for messages)', count($stQ) === 2
+    && (int) $stQ[0]['device_id'] === $stDev['F'] && $stQ[0]['title'] === 'New customer message'
+    && (int) $stQ[1]['device_id'] === $stDev['R'] && $stQ[1]['title'] === 'New GrazeX Ranch order GXR-STAFF5'
+    && $stQ[0]['body'] === 'Tap to open it in the GrazeX admin.' && $stQ[1]['body'] === 'Tap to open it in the GrazeX admin.', json_encode($stQ));
+db_exec("UPDATE role_permissions rp JOIN permissions p ON p.id = rp.permission_id SET rp.permission_id = (SELECT id FROM permissions WHERE slug = 'orders.view') WHERE rp.role_id = ? AND p.slug = 'messages.manage'", [$ptRole]);
+db_exec('UPDATE admin_users SET session_version = session_version + 1 WHERE id = ?', [$stF]);
+NotificationService::admin('new_order', 'New GrazeX Feeds order GXF-STAFF4', 'R 1', '/admin/order.php?id=4', division_id('feeds'));
+check('… and stop after that staff member\'s password changes (until the app logs in again)', !$staffGot($stDev['F'], 'New GrazeX Feeds order GXF-STAFF4'));
+
+$admHome = $adm6->page('/admin/');
+check('in the app the admin also asks to link the phone for staff notifications', str_contains($admHome, 'data-push="admin" data-push-linked=""'));
+$aTok = 'dAdmin6:APA91b' . str_repeat('Ad3', 40);
+[$st] = $adm6->api('POST', '/admin/api/push.php', ['action' => 'register', 'token' => $aTok, 'app_version' => '1.0']);
+$aDev = db_one('SELECT * FROM push_devices WHERE token_hash = ?', [hash('sha256', $aTok)]);
+check('a staff member links the phone through the admin API', $st === 200 && $aDev && (int) $aDev['admin_user_id'] === $adm6Id && (int) $aDev['admin_sv'] === 1);
+[$st, $res] = $adm6->api('POST', '/admin/api/push.php', ['action' => 'test']);
+check('"Send a test notification" reaches the staff member\'s own phone', $st === 200 && (int) ($res['data']['queued'] ?? 0) === 1
+    && db_val("SELECT channel FROM push_queue WHERE device_id = ? AND title = 'GrazeX test notification'", [$aDev['id']]) === 'staff', json_encode($res)); // (the test web server never sends)
+check('Admin → Settings shows the push status', str_contains($adm6->page('/admin/settings.php?tab=system'), 'App push notifications:'));
+[$st] = $adm6->api('POST', '/admin/api/auth.php', ['action' => 'logout']);
+check('an admin logout unlinks the phone from staff notifications', $st === 200 && !db_val('SELECT 1 FROM push_devices WHERE id = ?', [$aDev['id']]));
+
+[$st, $res] = $ph->api('POST', '/account/api/privacy.php', ['action' => 'export']);
+$exp6 = $res['data']['download'] ?? [];
+check('the data download lists the phones and remembered logins, without any token', $st === 200 && count($exp6['app_devices'] ?? []) === 1
+    && count($exp6['remembered_logins'] ?? []) === (int) db_val('SELECT COUNT(*) FROM customer_remember_tokens WHERE customer_id = ?', [$pushCid])
+    && count($exp6['remembered_logins'] ?? []) >= 1 && !empty($exp6['app_notifications']) && !str_contains(json_encode($res), $pTok)
+    && !str_contains(json_encode($res), (string) $ph->cookie('GXREMEMBER')), json_encode(array_keys($exp6)));
+db_exec('UPDATE customers SET session_version = session_version + 1 WHERE id = ?', [$pushCid]);
+check('after "log out everywhere" the phone gets nothing until the app logs in again', PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-PUSH3']) === 0);
+db_exec('UPDATE customers SET session_version = session_version - 1 WHERE id = ?', [$pushCid]);
+db_exec("INSERT INTO push_queue (device_id, title, body) VALUES (?, 'waiting', 'x')", [$pDev['id']]);
+[$st] = $ph->api('POST', '/account/api/auth.php', ['action' => 'logout']);
+check('logging out unlinks the phone and drops pushes still waiting for it', $st === 200 && !db_val('SELECT 1 FROM push_devices WHERE id = ?', [$pDev['id']])
+    && !db_val("SELECT 1 FROM push_queue WHERE title = 'waiting'"));
+// A phone used by a customer and a staff member: the customer's logout drops only the customer's pushes
+$shTok = 'dBoth6:APA91b' . str_repeat('Bo3', 40);
+$bothC = $mkRemember('pushboth@test.local');
+$bothId = PushService::register($shTok, 'customer', $bothC, 1);
+PushService::register($shTok, 'admin', $adm6Id, 1);
+db_exec("INSERT INTO push_queue (device_id, channel, title, body, status) VALUES (?, 'orders', 'cust-row', 'x', 'sent'), (?, 'staff', 'staff-row', 'x', 'sent')", [$bothId, $bothId]);
+PushService::detach($bothId, 'customer');
+check('… on a phone also used by staff, only the customer\'s notifications go; the staff link stays', (bool) db_val('SELECT 1 FROM push_devices WHERE id = ? AND admin_user_id = ? AND customer_id IS NULL', [$bothId, $adm6Id])
+    && !db_val("SELECT 1 FROM push_queue WHERE title = 'cust-row'") && (bool) db_val("SELECT 1 FROM push_queue WHERE title = 'staff-row'"));
+// A password change in the app keeps this phone linked (with the new login version)
+$pwPCid = $mkRemember('pushpw@test.local');
+$pwP = $loginAs('pushpw@test.local', true, [$appUa]);
+$pwP->page('/account/');
+$pwP->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => 'dPw6:APA91b' . str_repeat('Pw2', 40)]);
+$pwP->page('/account/profile.php');
+[$st] = $pwP->api('POST', '/account/api/profile.php', ['action' => 'password', 'current_password' => $rmPw, 'password' => $rmPw . 'y', 'password_confirm' => $rmPw . 'y']);
+check('after changing the password in the app, this phone keeps getting notifications', $st === 200
+    && (int) db_val('SELECT customer_sv FROM push_devices WHERE customer_id = ?', [$pwPCid]) === (int) db_val('SELECT session_version FROM customers WHERE id = ?', [$pwPCid])
+    && PushService::toCustomer($pwPCid, 'order_ready', ['order_no' => 'GXF-PW']) === 1 && str_contains($pwP->page('/account/'), 'data-push-linked="customer"'));
+
+// Anonymise: remembered logins and phones go
+$anC = $mkRemember('pushanon@test.local');
+$an = $loginAs('pushanon@test.local', true, [$appUa]);
+[$st0] = $an->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => 'dAnon6:APA91b' . str_repeat('An2', 40)]);
+check('(the customer to anonymise has a remembered login and a linked phone)', $st0 === 200 && (bool) db_val('SELECT 1 FROM push_devices WHERE customer_id = ?', [$anC])
+    && (bool) db_val('SELECT 1 FROM customer_remember_tokens WHERE customer_id = ?', [$anC]));
+$adm6->page('/admin/login.php');
+$adm6->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'pushowner@test.local', 'password' => $adm6Pw]);
+[$st, $res] = $adm6->api('POST', '/admin/api/customers.php', ['action' => 'anonymise', 'id' => $anC]);
+check('anonymising removes remembered logins and unlinks the phones', $st === 200 && !db_val('SELECT 1 FROM customer_remember_tokens WHERE customer_id = ?', [$anC])
+    && !db_val('SELECT 1 FROM push_devices WHERE customer_id = ?', [$anC]) && !$stillIn($an), json_encode($res));
+
+// Cron housekeeping
+db_exec('UPDATE push_devices SET last_seen_at = NOW() - INTERVAL 61 DAY WHERE id = ?', [$capId]);
+db_exec('UPDATE customer_remember_tokens SET expires_at = NOW() - INTERVAL 1 DAY WHERE customer_id = ?', [$rmCid]);
+$cronOut = CronService::cleanup();
+check('cron removes expired remembered logins and reports push housekeeping', !db_val('SELECT 1 FROM customer_remember_tokens WHERE customer_id = ? AND expires_at < NOW()', [$rmCid])
+    && str_contains($cronOut, 'remembered logins') && str_contains($cronOut, 'push queue'), $cronOut);
+check('… and forgets phones whose app was not opened for 60 days', !db_val('SELECT 1 FROM push_devices WHERE id = ?', [$capId]));
+
+section('Phase 6: downloads in the app, pages in a dialog, App Links');
+$dlDoc = db_one("SELECT d.id, c.email FROM documents d JOIN customers c ON c.id = d.customer_id
+                 WHERE d.doc_type = 'receipt' AND d.is_void = 0 AND c.status = 'active' AND c.email LIKE '%@test.local' ORDER BY d.id LIMIT 1");
+$dl = new TestHttp($base);
+$dl->extra = ['X-Test-Remote-Addr: 10.46.2.1'];
+$dl->page('/account/login.php');
+db_exec('UPDATE customers SET password_hash = ? WHERE email = ?', [customer_password_hash($rmPw), $dlDoc['email']]);
+$dl->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => $dlDoc['email'], 'password' => $rmPw]);
+$pc0 = (int) db_val('SELECT print_count FROM documents WHERE id = ?', [$dlDoc['id']]);
+[$st, $hd] = $dl->headers('/account/api/document.php?id=' . $dlDoc['id'] . '&dl=1');
+[$st2, $hd2] = $dl->headers('/account/api/document.php?id=' . $dlDoc['id']);
+check('?dl=1 sends the PDF as a download; without it, it opens in the browser', $st === 200 && str_starts_with($hd['content-disposition'] ?? '', 'attachment')
+    && ($hd['content-type'] ?? '') === 'application/pdf' && $st2 === 200 && str_starts_with($hd2['content-disposition'] ?? '', 'inline'), json_encode($hd));
+check('… and opening the same document twice within 2 minutes counts as one print', (int) db_val('SELECT print_count FROM documents WHERE id = ?', [$dlDoc['id']]) === $pc0 + 1);
+check('document links are marked for the app to save them', str_contains($dl->page('/account/documents.php'), 'data-download'));
+
+$pgH = new TestHttp($base);
+[$st, $res] = $pgH->api('GET', '/pages/api/page.php?slug=terms');
+check('the pages API returns a published page for the dialog', $st === 200 && ($res['data']['title'] ?? '') !== '' && str_contains($res['data']['html'] ?? '', '<p')
+    && ($res['data']['url'] ?? '') === '/pages/terms', json_encode($res));
+db_exec("UPDATE pages SET is_published = 0 WHERE slug = 'returns'");
+[$st] = $pgH->api('GET', '/pages/api/page.php?slug=returns');
+[$st2] = $pgH->api('GET', '/pages/api/page.php?slug=no-such-page');
+[$st3] = $pgH->api('POST', '/pages/api/page.php?slug=terms', []);
+db_exec("UPDATE pages SET is_published = 1 WHERE slug = 'returns'");
+check('… but not an unpublished or unknown page, and only by GET', $st === 404 && $st2 === 404 && $st3 === 405);
+check('registration opens the terms and privacy policy in a dialog', str_contains((new TestHttp($base))->page('/account/register.php'), 'data-page-dialog="terms"'));
+
+[$st, $hd] = $pgH->headers('/.well-known/assetlinks.json');
+[$st2, $hd2] = $pgH->headers('/.well-known/assetlinks.json', ['Host: www.127.0.0.1']);
+[$st3] = $pgH->headers('/', ['Host: www.127.0.0.1']);
+check('/.well-known/assetlinks.json is JSON, on both host names, never redirected', $st === 200 && str_starts_with($hd['content-type'] ?? '', 'application/json')
+    && $st2 === 200 && $st3 === 301, $st . ' ' . $st2 . ' ' . $st3);
+$GLOBALS['GX_ENV']['android'] = ['package' => 'za.co.grazex.app', 'sha256' => str_repeat('ab', 32) . ', ' . implode(':', str_split(str_repeat('0F', 32), 2)) . ', nonsense'];
+$links = android_asset_links();
+check('fingerprints with or without colons are accepted, junk ignored', ($links[0]['target']['package_name'] ?? '') === 'za.co.grazex.app'
+    && ($links[0]['target']['sha256_cert_fingerprints'] ?? []) === [implode(':', str_split(str_repeat('AB', 32), 2)), implode(':', str_split(str_repeat('0F', 32), 2))]
+    && $links[0]['relation'] === ['delegate_permission/common.handle_all_urls'], json_encode($links));
+$GLOBALS['GX_ENV']['android'] = ['package' => 'not a package', 'sha256' => ''];
+check('… and with no fingerprint set the file is empty', android_asset_links() === []);
+unset($GLOBALS['GX_ENV']['android']);
+
+// Push test set-up removed (a real service-account file, if there was one, is put back)
+PushService::useTransport(null);
+@unlink($fbFile);
+@unlink($fbTokenFile);
+if ($fbBackup !== null) {
+    file_put_contents($fbFile, $fbBackup);
+    chmod($fbFile, 0600);
+}
+PushService::useCredentials(null);
 
 section('Migrations');
 // Every migration must run on an up-to-date database without errors and without changing anything (safe to paste twice)
