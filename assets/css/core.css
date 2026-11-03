@@ -138,6 +138,8 @@ table { border-collapse: collapse; width: 100%; }
 .page-bg[data-scene="feeds"] img { object-position: 40% 58%; }
 .page-bg[data-scene="ranch"] img { object-position: 35% 50%; filter: brightness(.8) saturate(1.1); }
 .page-bg[data-scene="pages"] img { filter: brightness(.85); }
+/* An uploaded photo is shown as it is (its focus point is set inline by head.php) */
+.page-bg[data-photo] img { filter: none; }
 .page-bg[data-scene="account"] img { object-position: 40% 70%; }
 /* division colour grade + readability (lighter where the hero sits, deep where content lists) */
 .page-bg::before { content: ""; position: absolute; inset: 0; z-index: 1; mix-blend-mode: soft-light;

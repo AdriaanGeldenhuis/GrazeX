@@ -81,10 +81,10 @@ if ($gxInApp && PushService::configured()) {
 <a class="skip-link" href="#main"><?= e(t('nav.skip')) ?></a>
 <?php require GX_ROOT . '/includes/layout/icons.php'; ?>
 <?php if ($gxBg): ?>
-<div class="page-bg" data-scene="<?= e($gxBg['scene']) ?>" aria-hidden="true">
+<div class="page-bg" data-scene="<?= e($gxBg['scene']) ?>"<?= $gxBg['photo'] ? ' data-photo' : '' ?> aria-hidden="true">
   <picture>
     <?php if ($gxBg['portrait']): ?><source media="(max-aspect-ratio: 4/5)" srcset="<?= e($gxBg['portrait']) ?>" sizes="100vw"><?php endif; ?>
-    <img src="<?= e($gxBg['src']) ?>" srcset="<?= e($gxBg['srcset']) ?>" sizes="100vw" alt="" decoding="async"<?= $gxBg['scene'] === 'home' ? ' fetchpriority="high"' : '' ?>>
+    <img src="<?= e($gxBg['src']) ?>" srcset="<?= e($gxBg['srcset']) ?>" sizes="100vw" alt="" decoding="async"<?= $gxBg['position'] ? ' style="object-position:' . e($gxBg['position']) . '"' : '' ?><?= $gxBg['scene'] === 'home' ? ' fetchpriority="high"' : '' ?>>
   </picture>
 </div>
 <?php endif; ?>
