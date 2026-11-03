@@ -50,6 +50,14 @@ class UrlPolicyTest {
     }
 
     @Test
+    fun linksWithCharactersBrowsersLeaveUnescaped() {
+        assertEquals(UrlPolicy.InApp, live.decide("https://www.grazex.co.za/feeds/shop.php?sort=price|asc"))
+        assertEquals(UrlPolicy.InApp, live.decide("https://www.grazex.co.za/feeds/shop.php?q=10%"))
+        assertEquals(UrlPolicy.InApp, live.decide("https://acs.bank.co.za/3ds?d={a}", paying = true))
+        assertEquals("https://www.grazex.co.za/feeds/shop.php?sort=price%7Casc", live.deepLink("/feeds/shop.php?sort=price|asc"))
+    }
+
+    @Test
     fun otherAppsOpenOutside() {
         for (u in listOf("tel:+27821234567", "mailto:orders@grazex.co.za", "https://wa.me/27821234567", "geo:0,0?q=farm", "whatsapp://send?text=hi")) {
             assertTrue(u, live.decide(u) is UrlPolicy.External)

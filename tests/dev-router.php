@@ -23,7 +23,7 @@ if (($testDb = getenv('GX_TEST_DB')) !== false && $testDb !== '') {
 $uri = rawurldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
 
 // Blocked folders / files (same as .htaccess)
-if (preg_match('#^/(config|includes|templates|storage|database|cron|vendor|tests)(/|$)#i', $uri)
+if (preg_match('#^/(config|includes|templates|storage|database|cron|vendor|tests|appfiles)(/|$)#i', $uri)
     || preg_match('#(^|/)\.(?!well-known/)#', $uri)
     || preg_match('#^/uploads/.*\.(php\d?|phtml|phar|pl|py|cgi|sh)$#i', $uri)
     || preg_match('#(^|/)(composer\.(json|lock))$#i', $uri)

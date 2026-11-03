@@ -79,6 +79,15 @@ android {
     }
 }
 
+// A release without the signing key can't go to Play: stop with a clear message instead of an unsigned file.
+// (-Pgrazex.allowUnsigned=true for a test build of the release variant.)
+gradle.taskGraph.whenReady {
+    val releasing = allTasks.any { it.project == project && it.name in setOf("bundleRelease", "assembleRelease") }
+    if (releasing && android.signingConfigs.findByName("release") == null && findProperty("grazex.allowUnsigned") != "true") {
+        throw GradleException("Release builds need appfiles/android/keystore.properties — see appfiles/README.md, step 2.")
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)

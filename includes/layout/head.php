@@ -23,10 +23,15 @@ $gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : '
 $gxInApp = gx_in_app();
 $gxPushWho = $gxPushLinked = [];
 if ($gxInApp && PushService::configured()) {
-    foreach (['customer' => current_customer(), 'admin' => current_admin()] as $gxWho => $gxUser) {
+    // Staff only on admin pages (asking current_admin() elsewhere would keep the admin idle timeout from running)
+    $gxUsers = ['customer' => current_customer()];
+    if ($page['division'] === 'admin' && !empty($_SESSION['admin_id'])) {
+        $gxUsers['admin'] = current_admin();
+    }
+    foreach ($gxUsers as $gxWho => $gxUser) {
         if ($gxUser) {
             $gxPushWho[] = $gxWho;
-            if (!empty($_SESSION['push_device_' . $gxWho])) {
+            if (PushService::checkLink($gxWho)) {
                 $gxPushLinked[] = $gxWho;
             }
         }

@@ -8,7 +8,7 @@
                   {type:'file:save', id, name, mime, data} save a file (base64) to the phone's Downloads
                   {type:'back:result', handled}           answer to the app's back button
      app → page   {type:'push:token', id, token, appVersion} or {type:'push:token', id, error}
-                  {type:'file:saved', id, name} or {type:'file:error', id, message}
+                  {type:'file:saved', id, name, where} or {type:'file:error', id, message}
                   {type:'back'}                           close the open dialog / drawer / menu, if any
    Without the bridge (an old WebView) the site simply behaves like the website.
    ===================================================================== */
@@ -42,10 +42,12 @@
   };
 
   // ---------- Back button and pull-to-refresh ----------
-  const overlayOpen = () => !!document.querySelector('dialog[open], .drawer.is-open, #menu-sheet.is-open, .adm.menu-open');
+  const overlayOpen = () => !!document.querySelector('dialog[open], .drawer.is-open, #menu-sheet.is-open, .adm.menu-open, [data-adm-bell-panel]:not([hidden])');
   function closeOverlay() {
     const dialogs = document.querySelectorAll('dialog[open]');
     if (dialogs.length) { dialogs[dialogs.length - 1].close(); return true; }
+    const bell = document.querySelector('[data-adm-bell-panel]:not([hidden])');
+    if (bell) { bell.hidden = true; return true; }
     if (document.querySelector('.drawer.is-open')) { GX.drawer.close(); return true; }
     if (document.querySelector('#menu-sheet.is-open')) { GX.closeMenu?.(); return true; }
     if (document.querySelector('.adm.menu-open')) {
@@ -67,7 +69,7 @@
   };
   reportState();
   new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(reportState); } })
-    .observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'open'] });
+    .observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'open', 'hidden'] });
   window.addEventListener('pageshow', () => { lastState = ''; reportState(); });
 
   // ---------- Push notifications: link this phone to whoever is logged in ----------
@@ -106,10 +108,11 @@
     const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition || '');
     try { return m ? decodeURIComponent(m[1]) : ''; } catch (_) { return m[1]; }
   };
+  /** Save through the app; resolves to the message to show ("Saved to Downloads: invoice.pdf"). */
   async function saveBlob(blob, name) {
     const reply = await request({ type: 'file:save', name, mime: blob.type || 'application/octet-stream', data: await toBase64(blob) }, 60000);
     if (reply.type !== 'file:saved') throw new Error(reply.message || 'Could not save the file.');
-    return reply.name || name;
+    return 'Saved to ' + (reply.where || 'Downloads') + ': ' + (reply.name || name);
   }
   window.GXApp = { saveBlob };
 
@@ -127,8 +130,7 @@
       if (!res.ok || type === 'text/html' || type === 'text/plain') { location.href = a.href; return; }
       const blob = await res.blob();
       if (blob.size > 20 * 1024 * 1024) { location.href = url.href; return; } // too big for the bridge: the app downloads it
-      const saved = await saveBlob(new Blob([blob], { type: type || 'application/octet-stream' }), fileName(res.headers.get('Content-Disposition')) || 'GrazeX-document');
-      GX.toast('Saved to Downloads: ' + saved);
+      GX.toast(await saveBlob(new Blob([blob], { type: type || 'application/octet-stream' }), fileName(res.headers.get('Content-Disposition')) || 'GrazeX-document'));
     } catch (err) {
       GX.toast(err.message && err.message !== 'Failed to fetch' ? err.message : 'Could not download the file. Please try again.', 'error');
     } finally {

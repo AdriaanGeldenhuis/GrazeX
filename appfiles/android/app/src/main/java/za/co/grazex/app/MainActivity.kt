@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Base64
 import android.view.View
@@ -64,6 +65,11 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS = "grazex"
         private const val PREF_ASKED_NOTIFICATIONS = "asked_notifications"
         private const val MAX_FILE_BYTES = 25 * 1024 * 1024
+        private const val STATE_RESTART_URL = "restart_url"
+        private const val STATE_PAYING = "paying"
+
+        /** When the page renderer last died (process-wide), so a page that keeps crashing it doesn't loop. */
+        private var lastRendererCrash = 0L
     }
 
     lateinit var policy: UrlPolicy
@@ -79,6 +85,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fullscreen: FrameLayout
     private var bridge: NativeBridge? = null
     private var rendererGone = false
+    private var restartUrl: String? = null
     private var mainFrameError = false
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -153,8 +160,11 @@ class MainActivity : AppCompatActivity() {
         setUpWebView()
         onBackPressedDispatcher.addCallback(this, backCallback)
 
-        val restored = savedInstanceState != null && webView.restoreState(savedInstanceState) != null
-        if (!restored) webView.loadUrl(urlFromIntent(intent) ?: policy.home)
+        paying = savedInstanceState?.getBoolean(STATE_PAYING) ?: false
+        // After the page renderer died the WebView state is gone: start again on the page it was showing
+        val restart = savedInstanceState?.getString(STATE_RESTART_URL)
+        val restored = savedInstanceState != null && restart == null && webView.restoreState(savedInstanceState) != null
+        if (!restored) webView.loadUrl(restart?.let { policy.deepLink(it) } ?: urlFromIntent(intent) ?: policy.home)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -212,7 +222,8 @@ class MainActivity : AppCompatActivity() {
         mainFrameError = false
         pageOverlay = false
         pageAllowsRefresh = true
-        if (policy.isSite(url)) paying = false
+        // Also after Back or a restored page (no shouldOverrideUrlLoading then)
+        if (policy.isPayment(url)) paying = true else if (policy.isSite(url)) paying = false
         updateBack()
     }
 
@@ -280,17 +291,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun onRendererGone() {
-        // The page's process crashed or was killed to free memory: start again on the same page
+        // The page's process crashed, or Android stopped it to free memory (often while the camera or a bank app
+        // is open): rebuild this screen on the same page — in place, so it also works while the app is in the
+        // background. A page that crashes it again within 10 seconds is not reopened (no loop): home instead.
         rendererGone = true
-        val last = webView.url
+        val now = SystemClock.elapsedRealtime()
+        restartUrl = if (lastRendererCrash != 0L && now - lastRendererCrash < 10_000) policy.home else (webView.url ?: policy.home)
+        lastRendererCrash = now
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
-        startActivity(
-            Intent(this, MainActivity::class.java)
-                .putExtra(EXTRA_URL, last ?: policy.home)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-        )
-        finish()
+        recreate()
     }
 
     // ------------------------------------------------------------------
@@ -391,6 +401,11 @@ class MainActivity : AppCompatActivity() {
     fun saveFile(id: String, name: String, mime: String, base64: String) {
         val safeMime = FileNames.mime(mime)
         val safeName = FileNames.safe(name, safeMime)
+        if (!FileNames.allowed(safeMime)) {
+            // PDFs, photos, JSON and CSV only — never an app or a web page that would be opened straight away
+            bridge?.send(JSONObject().put("type", "file:error").put("id", id).put("message", getString(R.string.cannot_save_type)))
+            return
+        }
         io.execute {
             val result = runCatching {
                 val bytes = Base64.decode(base64, Base64.DEFAULT)
@@ -400,7 +415,7 @@ class MainActivity : AppCompatActivity() {
             main.post {
                 if (isFinishing || isDestroyed) return@post
                 result.onSuccess { saved ->
-                    bridge?.send(JSONObject().put("type", "file:saved").put("id", id).put("name", saved.name))
+                    bridge?.send(JSONObject().put("type", "file:saved").put("id", id).put("name", saved.name).put("where", saved.where))
                     FileSaver.open(this, saved)
                 }.onFailure { e ->
                     bridge?.send(
@@ -536,7 +551,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        if (!rendererGone) webView.saveState(outState)
+        outState.putBoolean(STATE_PAYING, paying)
+        if (rendererGone) outState.putString(STATE_RESTART_URL, restartUrl ?: policy.home) else webView.saveState(outState)
     }
 
     override fun onDestroy() {

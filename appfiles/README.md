@@ -8,7 +8,7 @@
   - Personeel kry kennisgewings vir nuwe bestellings, POP's, terugbetalings, navrae en skrapversoeke, volgens hul permissies en afdeling.
   - 'n Tik op 'n kennisgewing maak die regte bladsy oop.
 - **Bly aangemeld:** "Keep me logged in" is in die app by verstek aan. Jy bly 60 dae aangemeld, ook nadat die app toegemaak is.
-- **Aflaaie:** fakture, kwitansies, POP's en die privaatheid-aflaai word in **Downloads/GrazeX** gestoor en dadelik oopgemaak.
+- **Aflaaie:** fakture, kwitansies, POP's en die privaatheid-aflaai word in **Downloads/GrazeX** gestoor (Android 10+) en dadelik oopgemaak. Op Android 8–9 bly die lêer in die app se eie lêers (dit word ook dadelik oopgemaak).
 - **Oplaai:** 'n POP kan uit lêers of die galery gekies word, of met die kamera afgeneem word.
 - **Skakels:**
   - Skakels na grazex.co.za (in e-posse, WhatsApp, ens.) maak die app oop (App Links). `grazex://app/<pad>` werk ook.
@@ -90,6 +90,7 @@ Die debug-bou laat gewone `http` net na `10.0.2.2` / `localhost` toe. Die releas
    ./gradlew bundleRelease
    ```
    Die resultaat is `app/build/outputs/bundle/release/app-release.aab`. Laai dit op na Play Console.
+   Sonder `keystore.properties` stop die release-bou met 'n duidelike boodskap, eerder as om 'n ongetekende lêer te maak. Net vir 'n toetsbou: `-Pgrazex.allowUnsigned=true`.
 
 **Rugsteun** `grazex-upload.jks` en die wagwoorde op twee plekke buite die rekenaar, byvoorbeeld 'n wagwoordbestuurder plus 'n USB in die kluis. Met Play App Signing kan Google 'n verlore upload-sleutel vervang, maar dit neem dae.
 
@@ -144,9 +145,13 @@ Sonder Firebase werk alles behalwe kennisgewings. Admin → Settings → System 
   - Kennisgewings gaan dadelik ná die bladsy uit. Cron en bladsylaaie probeer weer as Google besig is.
   - Hoogstens 20 per foon per uur.
 - **Wie ontvang:**
-  - 'n Foon kry net kennisgewings vir die aanmelding wat dit gekoppel het.
-  - Uitteken, 'n nuwe wagwoord, "log uit oral", 'n geblokkeerde kliënt of 'n gedeaktiveerde admin stop dit.
-  - 'n Foon wat die app verwyder het, word outomaties vergeet.
+  - 'n Foon kry net kennisgewings vir die aanmelding wat dit gekoppel het. By kliënte geld dit net as "Keep me logged in" aangemerk is (in die app by verstek aan). 'n Kort aanmelding op 'n geleende foon kry dus niks nie.
+  - Uitteken, 'n nuwe wagwoord op 'n ander toestel, "log uit oral", 'n geblokkeerde kliënt of 'n gedeaktiveerde admin stop dit. Kennisgewings wat nog in die tou wag, word dan ook nie gestuur nie.
+  - 'n Foon wat die app verwyder het, of waarop die app 60 dae lank nie oopgemaak is nie, word outomaties vergeet.
+- **Privaatheid:**
+  - Op 'n gesluite skerm wys die foon net "GrazeX"; die besonderhede verskyn eers ná ontsluiting.
+  - Personeel-kennisgewings dra net die titel (bestelnommer, bedrag) en geen name, e-posadresse of boodskappe nie. Die skakel maak die besonderhede agter die admin-aanmelding oop.
+  - As 'n foon van eienaar verander, word die vorige persoon se kennisgewings uitgevee.
 - **Kanale:** die foon se instellings het drie kanale: *Orders and payments*, *New livestock* en *Staff*. Mense kan elkeen afskakel.
 
 ---
@@ -162,7 +167,11 @@ Sonder Firebase werk alles behalwe kennisgewings. Admin → Settings → System 
   - Alles word versleutel gestuur.
   - Niks word met derdes gedeel nie; Firebase en Yoco is diensverskaffers.
   - Gebruikers kan hul rekening laat skrap (Account → Privacy).
-- **Privaatheidsbeleid:** voeg 'n sin by oor push-kennisgewings (die toesteltoken word gestoor tot jy uitteken of die app verwyder) en oor "Keep me logged in" ('n koekie van 60 dae). Die beleid self is jou prokureur se werk.
+- **Rekening skrap (Play-vereiste vir apps met rekeninge):** gee ook 'n web-adres waar mense skrapping kan versoek, byvoorbeeld `https://www.grazex.co.za/account/profile.php` (aanmeld → *Delete my account*). Maak dit ook in die privaatheidsbeleid bekend, saam met die kontakblad vir wie nie meer kan aanmeld nie.
+- **Privaatheidsbeleid:** voeg 'n sin by oor push-kennisgewings en oor "Keep me logged in" ('n koekie van 60 dae).
+  - Die toesteltoken word gestoor tot jy uitteken, die app verwyder, of dit 60 dae nie gebruik nie.
+  - Kennisgewings gaan via Google Firebase, wat buite Suid-Afrika verwerk word (POPIA a72).
+  - Die beleid self is jou prokureur se werk.
 - **"Minimum functionality":** Google keur soms apps af wat net 'n webwerf is. Noem in die beskrywing en vir die beoordelaars die native funksies: push-kennisgewings, aflaaie na Downloads, kamera-oplaai vir POP's, App Links en aangemeld bly.
 - **Grafika:**
   - Die ikoon is `assets/img/brand/icon-512.png`.
@@ -178,8 +187,9 @@ Sonder Firebase werk alles behalwe kennisgewings. Admin → Settings → System 
 | Skakels maak die blaaier oop, nie die app nie | Stap 3: die vingerafdruk in `ANDROID_SHA256`, albei `curl`-toetse 200, en `--re-verify`. |
 | Geen kennisgewings nie | Is Admin → Settings → System "on"? Is die app gebou mét `google-services.json`? Is kennisgewings in die foon se instellings aan? Druk die toetsknoppie. |
 | "Push not sent" in `storage/logs/app-*.log` | `HTTP 401/403`: die service-account-lêer is verkeerd, of van 'n ander Firebase-projek. |
-| Aflaai wys "Saved", maar niks maak oop nie | Installeer 'n PDF-leser. Die lêer is in Downloads/GrazeX. |
-| Uitgeteken ná 'n paar dae | Was "Keep me logged in" aangemerk? 'n Nuwe wagwoord of "log out everywhere" teken ook die app uit. |
+| Aflaai wys "Saved", maar niks maak oop nie | Installeer 'n PDF-leser. Die lêer is in Downloads/GrazeX (Android 10+). |
+| Uitgeteken ná 'n paar dae | Was "Keep me logged in" aangemerk? 'n Nuwe wagwoord of "log out everywhere" teken ook die app uit. As dieselfde "onthou my"-koekie op twee toestelle gebruik word ('n kopie), eindig alle aanmeldings van die rekening uit veiligheid. |
+| "This kind of file can't be saved" | Die app stoor net PDF's, foto's (JPEG/PNG/WebP), JSON en CSV. |
 
 **Toetse:**
 - `UrlPolicyTest` dek watter skakels in die app bly, betaalblaaie en deep links.

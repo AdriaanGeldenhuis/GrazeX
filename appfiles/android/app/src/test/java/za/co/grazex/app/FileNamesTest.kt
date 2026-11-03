@@ -1,6 +1,7 @@
 package za.co.grazex.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -30,6 +31,16 @@ class FileNamesTest {
         val n = FileNames.safe("a".repeat(300) + ".pdf", "application/pdf")
         assertEquals(100, n.length)
         assertTrue(n.endsWith(".pdf"))
+    }
+
+    @Test
+    fun onlyDocumentsMayBeSaved() {
+        for (m in listOf("application/pdf", "image/jpeg", "image/png", "image/webp", "application/json", "text/csv")) {
+            assertTrue(m, FileNames.allowed(m))
+        }
+        for (m in listOf("application/vnd.android.package-archive", "text/html", "application/octet-stream", "image/svg+xml")) {
+            assertFalse(m, FileNames.allowed(m))
+        }
     }
 
     @Test

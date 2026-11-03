@@ -68,10 +68,16 @@ function login_customer(array $customer, ?bool $remember = null): void
 {
     $remember ??= remember_current_customer_id() === (int) $customer['id'];
     remember_forget_current(); // an older token on this device (another customer, or an older login) goes
+    $phone = (int) ($_SESSION['push_device_customer'] ?? 0);
     session_rotate();
     $_SESSION['customer_id'] = (int) $customer['id'];
     $_SESSION['customer_sv'] = (int) $customer['session_version'];
-    unset($_SESSION['push_device_customer']); // the app links this login to the phone again
+    // The same customer again on this phone (password change, "log out everywhere else"): it stays linked for push.
+    // Anyone else: the app links the phone to the new login on the next page.
+    unset($_SESSION['push_device_customer'], $_SESSION['push_device_customer_day']);
+    if ($phone > 0 && class_exists('PushService') && PushService::relink($phone, (int) $customer['id'], (int) $customer['session_version'])) {
+        $_SESSION['push_device_customer'] = $phone;
+    }
     db_exec('UPDATE customers SET last_login_at = NOW() WHERE id = ?', [(int) $customer['id']]);
     current_customer(true);
     if ($remember) {
@@ -85,12 +91,12 @@ function login_customer(array $customer, ?bool $remember = null): void
 
 function logout_customer(): void
 {
-    remember_forget_current();
+    remember_forget_current(customer_id());
     // This phone stops getting the customer's push notifications
     if (!empty($_SESSION['push_device_customer']) && class_exists('PushService')) {
         PushService::detach((int) $_SESSION['push_device_customer'], 'customer');
     }
-    unset($_SESSION['customer_id'], $_SESSION['customer_sv'], $_SESSION['push_device_customer']);
+    unset($_SESSION['customer_id'], $_SESSION['customer_sv'], $_SESSION['push_device_customer'], $_SESSION['push_device_customer_day']);
     session_rotate();
 }
 
@@ -166,12 +172,25 @@ function remember_current_customer_id(): ?int
     return remember_secret_matches($ck[1], $row['validator_hash']) || $prevOk ? (int) $row['customer_id'] : null;
 }
 
-/** Forget this device: its token row is deleted (only with the right secret) and the cookie removed. */
-function remember_forget_current(): void
+/**
+ * Forget this device: its token row is deleted and the cookie removed. The row goes with the right secret, or —
+ * at logout — when it belongs to the customer logging out ($ownerId): if someone else used a copy of the cookie,
+ * the secret here is already stale, and their copy must not live on after the owner logs out.
+ */
+function remember_forget_current(?int $ownerId = null): void
 {
     $ck = remember_cookie();
-    if ($ck && remember_current_customer_id() !== null) {
-        db_exec('DELETE FROM customer_remember_tokens WHERE selector = ?', [$ck[0]]);
+    if ($ck) {
+        $owner = db_val('SELECT customer_id FROM customer_remember_tokens WHERE selector = ?', [$ck[0]]);
+        $valid = remember_current_customer_id() !== null;
+        if ($owner !== null && ($valid || ($ownerId !== null && (int) $owner === $ownerId))) {
+            db_exec('DELETE FROM customer_remember_tokens WHERE selector = ?', [$ck[0]]);
+            if (!$valid) {
+                // The owner's copy is stale: another device used the cookie in the meantime. End that login too.
+                db_exec('UPDATE customers SET session_version = session_version + 1 WHERE id = ?', [(int) $owner]);
+                gx_log('warning', 'Logout with a remember cookie someone else had used — all logins of the account ended', ['customer' => (int) $owner]);
+            }
+        }
     }
     if (isset($_COOKIE[GX_REMEMBER_COOKIE])) {
         remember_set_cookie('', time() - 86400);
@@ -179,9 +198,28 @@ function remember_forget_current(): void
 }
 
 /**
+ * Someone who keeps using the site in one long session (an app left open for weeks) is never logged in again by
+ * the cookie, so its 60 days would run out while they use it: once a day the same token gets a fresh 60 days.
+ */
+function remember_refresh_daily(array $ck): void
+{
+    if (($_SESSION['_remember_day'] ?? '') === date('Y-m-d')) {
+        return;
+    }
+    $_SESSION['_remember_day'] = date('Y-m-d');
+    $row = db_one('SELECT id, customer_id, validator_hash FROM customer_remember_tokens WHERE selector = ?', [$ck[0]]);
+    if ($row && (int) $row['customer_id'] === customer_id() && remember_secret_matches($ck[1], $row['validator_hash'])) {
+        $expires = time() + GX_REMEMBER_DAYS * 86400;
+        db_exec('UPDATE customer_remember_tokens SET expires_at = ?, last_used_at = NOW() WHERE id = ?', [date('Y-m-d H:i:s', $expires), $row['id']]);
+        remember_set_cookie($ck[0] . '.' . $ck[1], $expires);
+    }
+}
+
+/**
  * Called by the bootstrap on every request with a session: no logged-in customer but a remember cookie →
  * log them in again with a fresh secret. A value that was replaced more than GX_REMEMBER_GRACE seconds ago
- * means the cookie was copied (the real owner and a thief both used it): the token is destroyed.
+ * means the cookie was copied (the real owner and a thief both used it): the token is destroyed and every
+ * login of the account ends.
  */
 function remember_autologin(): void
 {
@@ -192,7 +230,11 @@ function remember_autologin(): void
         }
         return;
     }
-    if (headers_sent() || session_status() !== PHP_SESSION_ACTIVE || current_customer()) {
+    if (headers_sent() || session_status() !== PHP_SESSION_ACTIVE) {
+        return;
+    }
+    if (current_customer()) {
+        remember_refresh_daily($ck);
         return;
     }
     [$selector, $secret] = $ck;
@@ -210,7 +252,10 @@ function remember_autologin(): void
         if (!$valid) {
             db_exec('DELETE FROM customer_remember_tokens WHERE id = ?', [$row['id']]);
             if (!$current && !$recent) {
-                gx_log('warning', 'Remember-me token reused after it was replaced — token destroyed', ['customer' => (int) $row['customer_id']]);
+                // A replaced secret came back: two devices hold this cookie (one is a copy). Every login of the
+                // account ends — including a session the copy already opened — and the owner logs in again.
+                db_exec('UPDATE customers SET session_version = session_version + 1 WHERE id = ?', [$row['customer_id']]);
+                gx_log('warning', 'Remember-me cookie used after it was replaced — all logins of the account ended', ['customer' => (int) $row['customer_id']]);
             }
             return ['clear'];
         }
@@ -233,7 +278,7 @@ function remember_autologin(): void
     session_rotate();
     $_SESSION['customer_id'] = (int) $customer['id'];
     $_SESSION['customer_sv'] = (int) $customer['session_version'];
-    unset($_SESSION['push_device_customer']);
+    unset($_SESSION['push_device_customer'], $_SESSION['push_device_customer_day']);
     if ($result[2]) {
         remember_set_cookie($result[2][0], $result[2][1]);
     }

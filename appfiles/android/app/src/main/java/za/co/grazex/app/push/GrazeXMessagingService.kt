@@ -54,6 +54,16 @@ class GrazeXMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setContentIntent(pending)
             .setCategory(if (channel == Channels.LIVESTOCK) NotificationCompat.CATEGORY_RECOMMENDATION else NotificationCompat.CATEGORY_STATUS)
+            // On a locked screen only "GrazeX" shows (order numbers and amounts appear once the phone is unlocked)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(this, channel)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setColor(ContextCompat.getColor(this, R.color.gx_orange))
+                    .setContentTitle(getString(R.string.app_name))
+                    .setContentText(getString(R.string.notification_locked))
+                    .build(),
+            )
             .build()
         try {
             // The same tag replaces the earlier notification about that order (no pile-up)

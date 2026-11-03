@@ -37,11 +37,31 @@ class UrlPolicy(baseUrl: String) {
     /** Origins the page bridge (GXNative) is offered to: the site only, never payment or video frames. */
     val bridgeOrigins: Set<String> = hosts.map { origin(it) }.toSet()
 
-    private fun parse(url: String?): URI? = try {
-        if (url.isNullOrBlank() || url.any { it.isWhitespace() || it.code < 0x20 }) null else URI(url)
-    } catch (_: Exception) {
-        null
+    private fun parse(url: String?): URI? {
+        if (url.isNullOrBlank() || url.any { it.isWhitespace() || it.code < 0x20 }) return null
+        return try {
+            URI(url)
+        } catch (_: Exception) {
+            // Browsers leave | { } ^ ` and a lone % as they are in a query; java.net.URI refuses them
+            try {
+                URI(lenient(url))
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
+
+    private fun lenient(url: String): String = buildString {
+        url.forEachIndexed { i, c ->
+            when {
+                c == '%' && !(i + 2 < url.length && url[i + 1].isHex() && url[i + 2].isHex()) -> append("%25")
+                c in "|{}^`" -> append('%').append(c.code.toString(16).uppercase().padStart(2, '0'))
+                else -> append(c)
+            }
+        }
+    }
+
+    private fun Char.isHex() = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
     private fun isSiteUri(u: URI): Boolean {
         val s = u.scheme?.lowercase() ?: return false

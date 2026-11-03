@@ -19,6 +19,12 @@ if (!PushService::validToken($token)) {
 
 switch ((string) input('action')) {
     case 'register':
+        // Only a login this phone keeps ("Keep me logged in", on by default in the app). A session-only login on a
+        // borrowed phone must not keep putting order news on its lock screen after it ends.
+        if (remember_current_customer_id() !== (int) $customer['id']) {
+            $_SESSION['push_device_customer'] = 0; // asked, not linked: the page does not ask again this session
+            json_ok(['push' => false], 'Tick "Keep me logged in" when you log in to get notifications on this phone.');
+        }
         $platform = (string) input('platform', 'android');
         $id = PushService::register($token, 'customer', (int) $customer['id'], (int) $customer['session_version'],
             trim((string) input('app_version', '')) ?: null, in_array($platform, ['android', 'ios', 'web'], true) ? $platform : 'android');
@@ -27,7 +33,7 @@ switch ((string) input('action')) {
 
     case 'unregister':
         PushService::detachToken($token, 'customer', (int) $customer['id']);
-        unset($_SESSION['push_device_customer']);
+        unset($_SESSION['push_device_customer'], $_SESSION['push_device_customer_day']);
         json_ok([], 'Notifications are off for this phone.');
 
     default:

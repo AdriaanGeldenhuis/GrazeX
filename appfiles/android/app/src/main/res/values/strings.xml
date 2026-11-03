@@ -8,11 +8,13 @@
     <string name="no_app_for_link">No app on this phone can open that link.</string>
     <string name="downloading">Downloading %1$s…</string>
     <string name="cannot_download">This file can\'t be downloaded here.</string>
-    <string name="saved_to_downloads">Saved to Downloads: %1$s</string>
+    <string name="saved_to">Saved to %1$s: %2$s</string>
     <string name="channel_orders">Orders and payments</string>
     <string name="channel_orders_desc">Payment received, order ready, out for delivery, payment reminders</string>
     <string name="channel_livestock">New livestock</string>
     <string name="channel_livestock_desc">Livestock alerts you signed up for</string>
     <string name="channel_staff">Staff: orders and payments</string>
     <string name="channel_staff_desc">New orders, proofs of payment and refunds (staff only)</string>
+    <string name="notification_locked">New notification — unlock to read it</string>
+    <string name="cannot_save_type">This kind of file can\'t be saved.</string>
 </resources>

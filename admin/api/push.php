@@ -42,7 +42,7 @@ switch ($action) {
 
     case 'unregister':
         PushService::detachToken($token, 'admin', $aid);
-        unset($_SESSION['push_device_admin']);
+        unset($_SESSION['push_device_admin'], $_SESSION['push_device_admin_day']);
         json_ok([], 'Staff notifications are off for this phone.');
 
     default:

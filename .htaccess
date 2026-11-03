@@ -27,7 +27,7 @@ ErrorDocument 404 /404.php
   RewriteRule ^pages/([a-z0-9-]+)/?$ pages/page.php?slug=$1 [L,QSA]
 
   # Never serve internal folders
-  RewriteRule ^(config|includes|templates|storage|database|cron|vendor|tests)(/|$) - [F,L,NC]
+  RewriteRule ^(config|includes|templates|storage|database|cron|vendor|tests|appfiles)(/|$) - [F,L,NC]
 
   # Never serve dotfiles (except .well-known for SSL validation)
   RewriteRule (^|/)\.(?!well-known/) - [F,L]

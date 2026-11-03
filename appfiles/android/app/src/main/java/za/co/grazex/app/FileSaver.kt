@@ -15,11 +15,13 @@ import java.io.File
 import java.io.IOException
 
 /**
- * Saves a document from the site (invoice, receipt, proof of payment, the privacy data download) where people find it:
- * Downloads/GrazeX on Android 10+, the app's own Downloads folder on Android 8–9 (no storage permission needed).
+ * Saves a document from the site (invoice, receipt, proof of payment, the privacy data download) and opens it.
+ * Android 10+: the phone's Downloads/GrazeX folder. Android 8–9: the app's own files (no storage permission needed;
+ * it is opened straight away, and removed with the app).
  */
 object FileSaver {
-    data class Saved(val uri: Uri, val name: String, val mime: String)
+    /** [where] is said to the person: "Saved to <where>: <name>". */
+    data class Saved(val uri: Uri, val name: String, val mime: String, val where: String)
 
     fun save(context: Context, name: String, mime: String, bytes: ByteArray): Saved {
         if (Build.VERSION.SDK_INT >= 29) {
@@ -42,7 +44,7 @@ object FileSaver {
             val shown = resolver.query(uri, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)?.use { c ->
                 if (c.moveToFirst()) c.getString(0) else null
             } ?: name
-            return Saved(uri, shown, mime)
+            return Saved(uri, shown, mime, "Downloads/GrazeX")
         }
         val root = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: File(context.filesDir, "Download")
         val dir = File(root, "GrazeX").apply { mkdirs() }
@@ -54,7 +56,7 @@ object FileSaver {
             n++
         }
         file.writeBytes(bytes)
-        return Saved(FileProvider.getUriForFile(context, context.packageName + ".files", file), file.name, mime)
+        return Saved(FileProvider.getUriForFile(context, context.packageName + ".files", file), file.name, mime, "the GrazeX app")
     }
 
     /** Open it in the phone's PDF viewer / gallery; without one, just say where it is. */
@@ -63,7 +65,7 @@ object FileSaver {
         try {
             activity.startActivity(view)
         } catch (_: ActivityNotFoundException) {
-            Toast.makeText(activity, activity.getString(R.string.saved_to_downloads, saved.name), Toast.LENGTH_LONG).show()
+            Toast.makeText(activity, activity.getString(R.string.saved_to, saved.where, saved.name), Toast.LENGTH_LONG).show()
         }
     }
 }

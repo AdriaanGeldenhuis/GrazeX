@@ -66,7 +66,7 @@ function login_admin(array $admin): void
     $_SESSION['admin_sv'] = (int) $admin['session_version'];
     $_SESSION['admin_seen'] = time();
     $_SESSION['admin_since'] = time();
-    unset($_SESSION['admin_2fa_pending'], $_SESSION['admin_2fa_at'], $_SESSION['push_device_admin']);
+    unset($_SESSION['admin_2fa_pending'], $_SESSION['admin_2fa_at'], $_SESSION['push_device_admin'], $_SESSION['push_device_admin_day']);
     db_exec('UPDATE admin_users SET last_login_at = NOW(), last_login_ip = ? WHERE id = ?', [client_ip(), (int) $admin['id']]);
     current_admin(true);
     audit('admin.login', 'admin_user', (int) $admin['id']);
@@ -78,7 +78,7 @@ function logout_admin(): void
     if (!empty($_SESSION['push_device_admin']) && class_exists('PushService')) {
         PushService::detach((int) $_SESSION['push_device_admin'], 'admin');
     }
-    unset($_SESSION['push_device_admin'], $_SESSION['admin_id'], $_SESSION['admin_sv'], $_SESSION['admin_seen'], $_SESSION['admin_since'], $_SESSION['admin_2fa_pending'],
+    unset($_SESSION['push_device_admin'], $_SESSION['push_device_admin_day'], $_SESSION['admin_id'], $_SESSION['admin_sv'], $_SESSION['admin_seen'], $_SESSION['admin_since'], $_SESSION['admin_2fa_pending'],
         $_SESSION['admin_2fa_at'], $_SESSION['totp_setup'], $_SESSION['totp_recovery_show']);
     session_rotate();
 }

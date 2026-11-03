@@ -13,6 +13,14 @@ declare(strict_types=1);
 define('GX_IS_API', true);
 require __DIR__ . '/../../includes/bootstrap.php';
 
+// Logging out needs no CSRF token. After a long idle the page's token is stale while the "keep me logged in" cookie
+// has just logged the person back in — "Log out" must still log out. (A forged logout could only log someone out,
+// and cross-site requests carry no session or remember cookie: both are SameSite=Lax.)
+if (request_method() === 'POST' && (string) input('action', '') === 'logout') {
+    logout_customer();
+    json_ok(['redirect' => '/'], 'You are logged out.');
+}
+
 api_post();
 $action = (string) input('action', '');
 
@@ -60,10 +68,6 @@ switch ($action) {
         rate_limit_clear('login_account', $d['email']);
         login_customer($c, (bool) $d['remember']);
         json_ok(['redirect' => safe_next((string) input('next', ''), '/account/')], 'Welcome back, ' . $c['first_name'] . '!');
-
-    case 'logout':
-        logout_customer();
-        json_ok(['redirect' => '/'], 'You are logged out.');
 
     case 'forgot':
         rate_limit_or_fail('forgot', rate_limit_ip(), 5, 3600);

@@ -7,6 +7,9 @@ object FileNames {
         "application/json" to "json", "text/csv" to "csv",
     )
 
+    /** The only kinds of file the page may save on the phone (and that are then opened): the site's documents. */
+    fun allowed(mime: String): Boolean = mime in extensions
+
     /** A MIME type we trust from the site, else a generic one. */
     fun mime(mime: String?): String {
         val m = mime?.substringBefore(';')?.trim()?.lowercase().orEmpty()

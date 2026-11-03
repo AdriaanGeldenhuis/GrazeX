@@ -50,7 +50,7 @@
     const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     // In the GrazeX app the file goes to the phone's Downloads folder (a WebView ignores <a download>)
     if (window.GXApp?.saveBlob) {
-      window.GXApp.saveBlob(blob, name).then((saved) => GX.toast('Saved to Downloads: ' + saved), (err) => GX.toast(err.message, 'error'));
+      window.GXApp.saveBlob(blob, name).then((msg) => GX.toast(msg), (err) => GX.toast(err.message, 'error'));
       return;
     }
     const a = document.createElement('a');

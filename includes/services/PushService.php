@@ -117,12 +117,19 @@ final class PushService
         $appVersion = $appVersion !== null && preg_match('/^[0-9A-Za-z.\-+]{1,20}$/', $appVersion) ? $appVersion : null;
         $hash = hash('sha256', $token);
         [$idCol, $svCol] = $who === 'customer' ? ['customer_id', 'customer_sv'] : ['admin_user_id', 'admin_sv'];
-        return db_tx(static function () use ($token, $hash, $idCol, $svCol, $userId, $sessionVersion, $appVersion, $platform): int {
-            $id = db_val('SELECT id FROM push_devices WHERE token_hash = ? FOR UPDATE', [$hash]);
-            if ($id) {
+        $staffRows = $who === 'customer' ? "channel <> 'staff'" : "channel = 'staff'";
+        return db_tx(static function () use ($token, $hash, $idCol, $svCol, $userId, $sessionVersion, $appVersion, $platform, $staffRows): int {
+            $row = db_one("SELECT id, {$idCol} AS owner FROM push_devices WHERE token_hash = ? FOR UPDATE", [$hash]);
+            if ($row) {
+                $id = (int) $row['id'];
+                if ((int) $row['owner'] !== $userId) {
+                    // The phone changes hands (a shared farm phone): nothing of the previous person's may still
+                    // arrive on it or show up in the new person's data download
+                    db_exec("DELETE FROM push_queue WHERE device_id = ? AND {$staffRows}", [$id]);
+                }
                 db_exec("UPDATE push_devices SET {$idCol} = ?, {$svCol} = ?, platform = ?, app_version = ?, last_seen_at = NOW() WHERE id = ?",
                     [$userId, $sessionVersion, $platform, $appVersion, $id]);
-                return (int) $id;
+                return $id;
             }
             return db_insert("INSERT INTO push_devices ({$idCol}, {$svCol}, platform, app_version, token_hash, token, last_seen_at)
                               VALUES (?, ?, ?, ?, ?, ?, NOW())", [$userId, $sessionVersion, $platform, $appVersion, $hash, $token]);
@@ -135,17 +142,54 @@ final class PushService
         return strlen($token) >= 20 && strlen($token) <= 4096 && preg_match('/^[A-Za-z0-9_:\-.]+$/', $token) === 1;
     }
 
-    /** Stop sending to this phone for the customer or the staff member (logout). Pushes still waiting are dropped. */
+    /** Stop sending to this phone for the customer or the staff member (logout). Their pushes for it (waiting or sent) go. */
     public static function detach(int $deviceId, string $who): void
     {
         if ($who === 'customer') {
-            db_exec("DELETE FROM push_queue WHERE device_id = ? AND status = 'queued' AND channel <> 'staff'", [$deviceId]);
+            db_exec("DELETE FROM push_queue WHERE device_id = ? AND channel <> 'staff'", [$deviceId]);
             db_exec('UPDATE push_devices SET customer_id = NULL, customer_sv = NULL WHERE id = ?', [$deviceId]);
         } elseif ($who === 'admin') {
-            db_exec("DELETE FROM push_queue WHERE device_id = ? AND status = 'queued' AND channel = 'staff'", [$deviceId]);
+            db_exec("DELETE FROM push_queue WHERE device_id = ? AND channel = 'staff'", [$deviceId]);
             db_exec('UPDATE push_devices SET admin_user_id = NULL, admin_sv = NULL WHERE id = ?', [$deviceId]);
         }
         db_exec('DELETE FROM push_devices WHERE id = ? AND customer_id IS NULL AND admin_user_id IS NULL', [$deviceId]);
+    }
+
+    /**
+     * Is this session's phone link still in place? (The phone may have been forgotten: app uninstalled, not used for
+     * 60 days, a password change.) Also marks the phone as in use — at most once a day per session. A link that is
+     * gone is dropped from the session, so the page links the phone again. 0 = deliberately not linked.
+     */
+    public static function checkLink(string $who): bool
+    {
+        $key = 'push_device_' . $who;
+        if (!isset($_SESSION[$key])) {
+            return false;
+        }
+        $id = (int) $_SESSION[$key];
+        if ($id === 0 || ($_SESSION[$key . '_day'] ?? '') === date('Y-m-d')) {
+            return true;
+        }
+        [$idCol, $svCol, $table] = $who === 'customer' ? ['customer_id', 'customer_sv', 'customers'] : ['admin_user_id', 'admin_sv', 'admin_users'];
+        $ok = (bool) db_val("SELECT 1 FROM push_devices d JOIN {$table} u ON u.id = d.{$idCol}
+                             WHERE d.id = ? AND d.{$svCol} = u.session_version AND u.status = 'active'", [$id]);
+        if (!$ok) {
+            unset($_SESSION[$key], $_SESSION[$key . '_day']);
+            return false;
+        }
+        db_exec('UPDATE push_devices SET last_seen_at = NOW() WHERE id = ?', [$id]);
+        $_SESSION[$key . '_day'] = date('Y-m-d');
+        return true;
+    }
+
+    /** The same customer logged in again on this phone (password change, "log out everywhere else"): keep it linked. */
+    public static function relink(int $deviceId, int $customerId, int $sessionVersion): bool
+    {
+        if (!db_val('SELECT 1 FROM push_devices WHERE id = ? AND customer_id = ?', [$deviceId, $customerId])) {
+            return false;
+        }
+        db_exec('UPDATE push_devices SET customer_sv = ?, last_seen_at = NOW() WHERE id = ?', [$sessionVersion, $deviceId]);
+        return true;
     }
 
     /** The same, by token — only if that token is linked to this user. */
@@ -164,7 +208,6 @@ final class PushService
     public static function forgetCustomer(int $customerId): void
     {
         foreach (db_col('SELECT id FROM push_devices WHERE customer_id = ?', [$customerId]) as $id) {
-            db_exec("DELETE FROM push_queue WHERE device_id = ? AND channel <> 'staff'", [$id]);
             self::detach((int) $id, 'customer');
         }
     }
@@ -192,7 +235,11 @@ final class PushService
         return self::enqueueAll($devices, $channel, $title, $body, $url, $tag);
     }
 
-    /** Push an admin alert to the staff who may act on it (permission and division), on their own phones. */
+    /**
+     * Push an admin alert to the staff who may act on it (permission and division), on their own phones.
+     * Only the alert's title travels (order numbers, amounts): names, emails and messages stay behind the admin
+     * login — the push passes through Google and shows on a lock screen. The link opens the details.
+     */
     public static function toStaff(string $type, string $title, ?string $body, ?string $link, ?int $divisionId): int
     {
         $perm = self::STAFF_TYPES[$type] ?? null;
@@ -216,7 +263,11 @@ final class PushService
         $devices = db_col('SELECT d.id FROM push_devices d JOIN admin_users a ON a.id = d.admin_user_id
                            WHERE d.admin_user_id IN (' . db_placeholders($ids) . ') AND d.admin_sv = a.session_version', $ids);
         $tag = $type . '-' . substr(hash('sha256', (string) ($link ?? $title)), 0, 12);
-        return self::enqueueAll($devices, 'staff', $title, (string) ($body ?? ''), $link, $tag);
+        $pushTitle = match ($type) {
+            'enquiry' => 'New customer message', // the admin title carries the sender's name
+            default => $title,
+        };
+        return self::enqueueAll($devices, 'staff', $pushTitle, 'Tap to open it in the GrazeX admin.', $link, $tag);
     }
 
     /** A push to one staff member's own phones (the "Send test notification" button). */
@@ -272,11 +323,22 @@ final class PushService
         if ($creds === null || (self::$transport === null && (defined('GX_TESTING') || defined('GX_TEST_DB_NAME')))) {
             return 0;
         }
-        $rows = db_all("SELECT q.*, d.token FROM push_queue q JOIN push_devices d ON d.id = q.device_id
+        // Who the phone belongs to NOW: a push queued before a logout, "log out everywhere", a block or a disabled
+        // staff account must not go out any more
+        $rows = db_all("SELECT q.*, d.token,
+                               CASE WHEN q.channel = 'staff'
+                                    THEN (a.status = 'active' AND d.admin_sv = a.session_version)
+                                    ELSE (c.status = 'active' AND d.customer_sv = c.session_version) END AS still_theirs
+                        FROM push_queue q JOIN push_devices d ON d.id = q.device_id
+                        LEFT JOIN customers c ON c.id = d.customer_id LEFT JOIN admin_users a ON a.id = d.admin_user_id
                         WHERE q.status = 'queued' AND q.send_after <= NOW() ORDER BY q.id LIMIT " . max(1, $limit));
         $sent = 0;
         $retriedAuth = false;
         foreach ($rows as $row) {
+            if ((int) $row['still_theirs'] !== 1) {
+                db_exec("UPDATE push_queue SET status = 'failed', last_error = 'The login on this phone ended before it was sent' WHERE id = ? AND status = 'queued'", [$row['id']]);
+                continue;
+            }
             if (db_exec("UPDATE push_queue SET status = 'sending', attempts = attempts + 1, claimed_at = NOW() WHERE id = ? AND status = 'queued'", [$row['id']]) !== 1) {
                 continue;
             }
@@ -296,7 +358,7 @@ final class PushService
             }
             $error = mb_substr('HTTP ' . $status . ': ' . self::errorMessage($resp), 0, 255);
             if ($outcome === 'gone') {
-                // The app was uninstalled or the token belongs to another Firebase project: forget the phone
+                // The app was uninstalled or the token is no longer valid: forget the phone
                 db_exec('DELETE FROM push_devices WHERE id = ?', [$row['device_id']]);
                 continue;
             }
@@ -307,15 +369,22 @@ final class PushService
             } else {
                 db_exec("UPDATE push_queue SET status = 'failed', last_error = ? WHERE id = ?", [$error, $row['id']]);
             }
-            gx_log('warning', 'Push not sent', ['id' => $row['id'], 'error' => $error]);
-            if ($status === 401 || $token === null) {
-                break; // credentials problem: the rest waits for the next run
+            gx_log($outcome === 'config' ? 'error' : 'warning', $outcome === 'config'
+                ? 'Push refused: the Firebase service-account file is for another project than the app (google-services.json)'
+                : 'Push not sent', ['id' => $row['id'], 'error' => $error]);
+            if ($outcome !== 'failed') {
+                // Google busy or unreachable, or a credentials problem: stop here (a page or cron run must never wait
+                // on one timeout after another); the rest is tried on the next run
+                break;
             }
         }
         return $sent;
     }
 
-    /** 'sent', 'gone' (forget the device), 'retry' (Google busy / network) or 'failed' (this message will never work). */
+    /**
+     * 'sent'; 'gone' (forget the device); 'retry' (Google busy / network / access token); 'config' (the server's
+     * Firebase project is not the app's — a set-up mistake, so no phone is forgotten); 'failed' (this message never works).
+     */
     private static function outcome(int $status, string $resp): string
     {
         if ($status >= 200 && $status < 300) {
@@ -329,8 +398,10 @@ final class PushService
             }
         }
         $message = (string) ($err['message'] ?? '');
-        if ($status === 404 || in_array('UNREGISTERED', $codes, true) || in_array('SENDER_ID_MISMATCH', $codes, true)
-            || ($status === 400 && stripos($message, 'registration token') !== false)) {
+        if (in_array('SENDER_ID_MISMATCH', $codes, true)) {
+            return 'config';
+        }
+        if ($status === 404 || in_array('UNREGISTERED', $codes, true) || ($status === 400 && stripos($message, 'registration token') !== false)) {
             return 'gone';
         }
         if ($status === 0 || $status === 401 || $status === 429 || $status >= 500) {
@@ -433,12 +504,15 @@ final class PushService
                         last_error = 'Interrupted while sending' WHERE status = 'sending' AND COALESCE(claimed_at, created_at) < NOW() - INTERVAL {$mins} MINUTE");
     }
 
-    /** Old queue rows and phones not seen for half a year. */
+    /**
+     * Old queue rows, and phones whose app was not opened for as long as "keep me logged in" lasts (the app links the
+     * phone again each time it starts, so an app still in use is never forgotten).
+     */
     public static function cleanup(): string
     {
         $q = db_exec("DELETE FROM push_queue WHERE created_at < NOW() - INTERVAL 30 DAY AND status IN ('sent','failed')")
            + db_exec("DELETE FROM push_queue WHERE status = 'queued' AND created_at < NOW() - INTERVAL 2 DAY"); // too late to be useful
-        $d = db_exec('DELETE FROM push_devices WHERE COALESCE(last_seen_at, created_at) < NOW() - INTERVAL 180 DAY');
+        $d = db_exec('DELETE FROM push_devices WHERE COALESCE(last_seen_at, created_at) < NOW() - INTERVAL ? DAY', [GX_REMEMBER_DAYS]);
         return "queue {$q}, devices {$d}";
     }
 
