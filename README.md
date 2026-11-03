@@ -102,11 +102,10 @@ assetlinks.php        /.well-known/assetlinks.json vir die app se App Links (AND
 ## Voorkoms: agtergronde en kleure
 
 - **Elke blad het 'n agtergrondtoneel** (`assets/img/bg/`): tuisblad, Feeds, Ranch, My account, en die inligtingsblaaie. Die blad se inhoud dryf as "glas" daaroor.
-- **Eie foto's:** Admin → *Site content*. Kies 'n breë landskapfoto (minstens 1600 px):
-  - *Home page (gateway)*-oortjie: tuisblad, My account, en info/contact-blaaie
-  - *Feeds shop*-oortjie: Feeds
-  - *Ranch*-oortjie: Ranch
-  - Die blad maak die foto vanself donkerder sodat teks leesbaar bly. *Remove* sit die oorspronklike toneel terug.
+- **Eie foto's:** Admin → *Site content* → oortjie **Page backgrounds**. Een foto per deel: Home page, GrazeX Feeds, GrazeX Ranch, My account, Info & contact pages. Kies 'n breë landskapfoto (minstens 1920 × 1080) en klik *Save backgrounds*.
+  - Die blad maak die foto vanself 'n bietjie donkerder sodat teks leesbaar bly. *Remove* sit die oorspronklike toneel terug.
+  - Op 'n foon wys net die middel van die foto. Stel die foto se fokuspunt (◎) in Admin → *Media* om te kies watter deel wys.
+  - Let wel: *Home page — Ranch/Feeds card photo* (op die *Home page*-oortjie) is net die twee kaarte in die middel van die tuisblad, nie die agtergrond nie.
 - **Kleure:** Feeds is oranje, Ranch is groen (die skakelaar bo in die header en die knoppies volg dit).
 - **Logo:** die GrazeX-logo bo-aan gaan altyd na die tuisblad.
 
