@@ -18,6 +18,7 @@ $page = [
     'description' => content('feeds', 'hero_text'),
     'division' => 'feeds',
     'nav_current' => 'home',
+    'body_class' => 'page-store-home',
     'css' => ['/assets/css/store.css', '/feeds/css/feeds.css'],
     'js' => ['/assets/js/cart.js', '/feeds/js/feeds.js'],
     'og_image' => '/assets/img/brand/og-feeds.jpg',
@@ -30,7 +31,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container store-hero-grid">
       <div>
         <span class="eyebrow hero-rise"><span class="dot"></span><?= e(content('feeds', 'hero_kicker', 'GrazeX Feeds')) ?></span>
-        <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-accent-grad italic"><?= e(content('feeds', 'hero_title', 'Feed that earns.')) ?></span></h1>
+        <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-fire italic"><?= e(content('feeds', 'hero_title', 'Feed that earns.')) ?></span></h1>
         <p class="lead hero-rise" style="--d:.12s"><?= e(content('feeds', 'hero_text')) ?></p>
         <div class="search-box hero-rise mt-3" style="--d:.18s" data-suggest>
           <svg class="icon"><use href="#i-search"/></svg>
@@ -48,6 +49,7 @@ require GX_ROOT . '/includes/layout/header.php';
            srcset="/assets/img/brand/feeds-logo-480.webp 480w, /assets/img/brand/feeds-logo-960.webp 960w, /assets/img/brand/feeds-logo-1600.webp 1600w"
            sizes="(min-width: 1024px) 40vw, 90vw" width="960" height="480" alt="GrazeX Feeds" fetchpriority="high">
     </div>
+    <div class="scroll-cue" aria-hidden="true">Scroll</div>
     <div class="watermark" aria-hidden="true">FEEDS</div>
   </section>
 

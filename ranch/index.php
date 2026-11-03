@@ -21,6 +21,7 @@ $page = [
     'description' => content('ranch', 'hero_text'),
     'division' => 'ranch',
     'nav_current' => 'home',
+    'body_class' => 'page-store-home',
     'css' => ['/assets/css/store.css', '/ranch/css/ranch.css'],
     'js' => ['/assets/js/cart.js', '/ranch/js/ranch.js'],
     'og_image' => '/assets/img/brand/og-ranch.jpg',
@@ -33,7 +34,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="container store-hero-grid">
       <div>
         <span class="eyebrow hero-rise"><span class="dot"></span><?= e(content('ranch', 'hero_kicker', 'GrazeX Ranch')) ?></span>
-        <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-chrome italic"><?= e(content('ranch', 'hero_title', 'Raise. Rotate. Finish.')) ?></span></h1>
+        <h1 class="display-1 hero-rise" style="--d:.06s"><span class="text-grass italic"><?= e(content('ranch', 'hero_title', 'Raise. Rotate. Finish.')) ?></span></h1>
         <p class="lead hero-rise" style="--d:.12s"><?= e(content('ranch', 'hero_text')) ?></p>
         <div class="hero-actions hero-rise" style="--d:.18s">
           <a class="btn btn-green btn-lg" href="/ranch/livestock.php" data-magnetic>See available livestock <svg class="icon arrow"><use href="#i-arrow"/></svg></a>
@@ -49,6 +50,7 @@ require GX_ROOT . '/includes/layout/header.php';
            srcset="/assets/img/brand/ranch-logo-480.webp 480w, /assets/img/brand/ranch-logo-960.webp 960w, /assets/img/brand/ranch-logo-1600.webp 1600w"
            sizes="(min-width: 1024px) 40vw, 90vw" width="960" height="480" alt="GrazeX Ranch" fetchpriority="high">
     </div>
+    <div class="scroll-cue" aria-hidden="true">Scroll</div>
     <div class="watermark" aria-hidden="true">RANCH</div>
   </section>
 

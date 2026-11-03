@@ -359,6 +359,37 @@
     window.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
 
+    // Background scene: slow parallax, and it dims as you scroll so long pages stay readable.
+    // Scroll progress bar. Styles are set on the few elements involved only (no page-wide restyle per frame).
+    const bgPic = GX.$('.page-bg picture');
+    const bar = GX.$('.scroll-progress');
+    let frame = 0;
+    const paint = () => {
+      frame = 0;
+      const y = window.scrollY, vh = window.innerHeight || 1;
+      if (bar) bar.style.transform = `scaleX(${Math.min(1, y / Math.max(1, document.documentElement.scrollHeight - vh)).toFixed(4)})`;
+      if (bgPic) {
+        bgPic.style.opacity = (1 - Math.min(1, y / (vh * 1.2)) * 0.5).toFixed(3);
+        if (!reduceMotion) bgPic.style.transform = `translate3d(0, ${(-Math.min(y, vh) * 0.05).toFixed(1)}px, 0)`;
+      }
+    };
+    const schedulePaint = () => { if (!frame) frame = requestAnimationFrame(paint); };
+    window.addEventListener('scroll', schedulePaint, { passive: true });
+    window.addEventListener('resize', schedulePaint, { passive: true });
+    paint();
+
+    // Glass cards light up where the pointer is (desktop)
+    if (window.matchMedia('(hover: hover)').matches && !reduceMotion) {
+      const SPOT = '.card, .p-card, .l-card, .cat-tile, .feature-band, .portal, .quick a, .order-row, .soon-item, .stat, .step';
+      document.addEventListener('pointermove', (e) => {
+        const el = e.target instanceof Element ? e.target.closest(SPOT) : null;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        el.style.setProperty('--mx', `${Math.round(e.clientX - r.left)}px`);
+        el.style.setProperty('--my', `${Math.round(e.clientY - r.top)}px`);
+      }, { passive: true });
+    }
+
     // Mobile menu sheet
     const sheet = GX.$('#menu-sheet');
     let releaseMenu = null;
