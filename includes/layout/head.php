@@ -18,7 +18,8 @@ $gxOgImage    = $page['og_image'] ?: ($page['division'] === 'ranch' ? '/assets/i
 // One address per page: detail pages pass their pretty URL (…/product.php?slug=x would otherwise all share one canonical)
 $gxCanonical  = app_url($page['canonical'] ?? (strtok($_SERVER['REQUEST_URI'] ?? '/', '?') ?: '/'));
 $gxHasAnnounce = setting_bool('announcement_enabled') && setting('announcement_text') && $page['division'] !== 'admin';
-$gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : ''));
+$gxBg         = page_background($page);
+$gxBodyClass  = trim($page['body_class'] . ($gxHasAnnounce ? ' has-announce' : '') . ($gxBg ? ' has-bg' : ''));
 // Inside the GrazeX Android app: the bridge script links this phone to the logins on it for push notifications
 $gxInApp = gx_in_app();
 $gxPushWho = $gxPushLinked = [];
@@ -79,8 +80,17 @@ if ($gxInApp && PushService::configured()) {
 <body data-division="<?= e($page['division']) ?>" class="<?= e($gxBodyClass) ?>"<?php if ($gxPushWho): ?> data-push="<?= e(implode(' ', $gxPushWho)) ?>" data-push-linked="<?= e(implode(' ', $gxPushLinked)) ?>"<?php endif; ?>>
 <a class="skip-link" href="#main"><?= e(t('nav.skip')) ?></a>
 <?php require GX_ROOT . '/includes/layout/icons.php'; ?>
+<?php if ($gxBg): ?>
+<div class="page-bg" data-scene="<?= e($gxBg['scene']) ?>" aria-hidden="true">
+  <picture>
+    <?php if ($gxBg['portrait']): ?><source media="(max-aspect-ratio: 4/5)" srcset="<?= e($gxBg['portrait']) ?>" sizes="100vw"><?php endif; ?>
+    <img src="<?= e($gxBg['src']) ?>" srcset="<?= e($gxBg['srcset']) ?>" sizes="100vw" alt="" decoding="async"<?= $gxBg['scene'] === 'home' ? ' fetchpriority="high"' : '' ?>>
+  </picture>
+</div>
+<?php endif; ?>
 <div class="noise" aria-hidden="true"></div>
 <div class="cursor-glow" aria-hidden="true"></div>
+<div class="scroll-progress" aria-hidden="true"></div>
 <?php if ($gxHasAnnounce): ?>
 <div class="announce" role="note">
   <?php $gxAl = setting('announcement_link'); ?>

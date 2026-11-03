@@ -9,8 +9,16 @@ $scopes = ['gateway' => ['Home page (gateway)', '/'], 'feeds' => ['Feeds shop', 
 $scope = array_key_exists(query_str('s'), $scopes) ? query_str('s') : 'gateway';
 $blocks = db_all('SELECT * FROM content_blocks WHERE scope = ? ORDER BY sort_order, id', [$scope]);
 $extraImages = [
-    'gateway' => ['ranch_card_image' => 'Ranch card photo', 'feeds_card_image' => 'Feeds card photo'],
-    'feeds' => [], 'ranch' => [],
+    'gateway' => ['ranch_card_image' => 'Ranch card photo', 'feeds_card_image' => 'Feeds card photo',
+                  'page_bg' => 'Home page background photo', 'account_bg' => 'My account background photo', 'pages_bg' => 'Info & contact pages background photo'],
+    'feeds' => ['page_bg' => 'Feeds background photo'],
+    'ranch' => ['page_bg' => 'Ranch background photo'],
+];
+$imageHints = [
+    'ranch_card_image' => 'Optional — replaces the scene on the card', 'feeds_card_image' => 'Optional — replaces the scene on the card',
+    'page_bg' => 'Optional — a wide landscape photo (at least 1600 px) behind every page here; the page darkens it so text stays readable',
+    'account_bg' => 'Optional — a wide landscape photo behind the customer account pages',
+    'pages_bg' => 'Optional — a wide landscape photo behind About, Terms, Contact and the other info pages',
 ];
 $have = array_column($blocks, 'block_key');
 
@@ -34,12 +42,13 @@ admin_start('Site content', 'content', ['perm' => 'content.manage']);
           echo match ($b['type']) {
               'textarea' => af_textarea($n, $b['label'], $b['value'], ['span' => true, 'rows' => 3]),
               'markdown' => af_markdown($n, $b['label'], $b['value'], ['span' => true]),
-              'image' => af_image('images[' . $b['block_key'] . ']', $b['label'], $b['media_id'] ? (int) $b['media_id'] : null),
+              'image' => af_image('images[' . $b['block_key'] . ']', $extraImages[$scope][$b['block_key']] ?? $b['label'], $b['media_id'] ? (int) $b['media_id'] : null,
+                  ['hint' => $imageHints[$b['block_key']] ?? '']),
               default => af_text($n, $b['label'], $b['value']),
           };
       endforeach; ?>
       <?php foreach ($extraImages[$scope] as $k => $label): if (in_array($k, $have, true)) continue; ?>
-        <?= af_image('images[' . $k . ']', $label, null, ['hint' => 'Optional — replaces the logo artwork on the card']) ?>
+        <?= af_image('images[' . $k . ']', $label, null, ['hint' => $imageHints[$k] ?? '']) ?>
       <?php endforeach; ?>
     </div>
   </section>

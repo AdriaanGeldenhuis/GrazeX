@@ -29,12 +29,12 @@ try {
 
 $marquee = content_lines('gateway', 'marquee') ?: ['GrazeX Ranch', 'GrazeX Feeds'];
 $wa = whatsapp_link(setting('whatsapp_number'), 'Hi GrazeX, ');
-$ranchImg = content_image('gateway', 'ranch_card_image', '/assets/img/brand/ranch-logo-960.webp', 960);
-$feedsImg = content_image('gateway', 'feeds_card_image', '/assets/img/brand/feeds-logo-960.webp', 960);
-// Phones download the small version, big screens the large one
-$brandSet = static fn(string $n): string => "/assets/img/brand/{$n}-logo-480.webp 480w, /assets/img/brand/{$n}-logo-960.webp 960w, /assets/img/brand/{$n}-logo-1600.webp 1600w";
-$ranchSet = content_image_srcset('gateway', 'ranch_card_image', $brandSet('ranch'));
-$feedsSet = content_image_srcset('gateway', 'feeds_card_image', $brandSet('feeds'));
+// Each portal shows its division's scene (or the photo chosen in Admin > Site content); phones get the small one
+$ranchImg = content_image('gateway', 'ranch_card_image', asset('/assets/img/bg/ranch-960.webp'), 960);
+$feedsImg = content_image('gateway', 'feeds_card_image', asset('/assets/img/bg/feeds-960.webp'), 960);
+$sceneSet = static fn(string $n): string => implode(', ', array_map(static fn(int $w): string => asset("/assets/img/bg/{$n}-{$w}.webp") . " {$w}w", [480, 960, 1600]));
+$ranchSet = content_image_srcset('gateway', 'ranch_card_image', $sceneSet('ranch'));
+$feedsSet = content_image_srcset('gateway', 'feeds_card_image', $sceneSet('feeds'));
 
 $page = [
     'title' => '',
@@ -69,7 +69,7 @@ require GX_ROOT . '/includes/layout/header.php';
       <p class="lead hero-rise" style="--d:.16s"><?= e(content('gateway', 'hero_text')) ?></p>
       <div class="hero-actions hero-rise" style="--d:.24s">
         <a class="btn btn-orange btn-lg" href="/feeds/" data-magnetic><?= e(t('gateway.shop_feeds')) ?> <svg class="icon arrow"><use href="#i-arrow"/></svg></a>
-        <a class="btn btn-chrome btn-lg" href="/ranch/" data-magnetic><?= e(t('gateway.enter_ranch')) ?></a>
+        <a class="btn btn-green btn-lg" href="/ranch/" data-magnetic><?= e(t('gateway.enter_ranch')) ?> <svg class="icon arrow"><use href="#i-arrow"/></svg></a>
       </div>
       <dl class="hero-stats hero-rise" style="--d:.32s">
         <div><dt class="sr-only">Livestock</dt><dd><span class="hs-num" data-count="<?= $stats['lots'] ?>"><?= (int) $stats['lots'] ?></span><span class="hs-label"><?= e(t('gateway.lots_available')) ?></span></dd></div>
@@ -81,6 +81,7 @@ require GX_ROOT . '/includes/layout/header.php';
     <div class="hero-art hero-rise" style="--d:.1s" aria-hidden="true">
       <div class="orb"></div>
       <div class="ring"></div>
+      <div class="ring ring-2"></div>
       <div class="logo-stage" data-tilt>
         <img class="logo-slide is-active" src="/assets/img/brand/ranch-logo-960.webp"
              srcset="/assets/img/brand/ranch-logo-480.webp 480w, /assets/img/brand/ranch-logo-960.webp 960w, /assets/img/brand/ranch-logo-1600.webp 1600w"
@@ -89,16 +90,28 @@ require GX_ROOT . '/includes/layout/header.php';
              srcset="/assets/img/brand/feeds-logo-480.webp 480w, /assets/img/brand/feeds-logo-960.webp 960w, /assets/img/brand/feeds-logo-1600.webp 1600w"
              sizes="(min-width: 1024px) 46vw, 92vw" width="960" height="480" alt="" loading="lazy">
       </div>
+      <span class="float-chip fc-ranch"><span class="dot"></span><b><?= (int) $stats['lots'] ?></b> <?= e(t('gateway.lots_available')) ?></span>
+      <span class="float-chip fc-feeds"><svg class="icon icon-sm"><use href="#i-tag"/></svg><b><?= (int) $stats['specials'] ?></b> <?= e(t('gateway.specials')) ?></span>
     </div>
     <div class="hero-watermark" aria-hidden="true">GRAZEX</div>
+    <div class="scroll-cue" aria-hidden="true">Scroll</div>
   </section>
 
   <!-- MARQUEE -->
-  <div class="marquee" aria-hidden="true">
-    <div class="marquee-track">
-      <?php for ($loop = 0; $loop < 2; $loop++): foreach ($marquee as $m): ?>
-        <span><?= e($m) ?><i>✦</i></span>
-      <?php endforeach; endfor; ?>
+  <div class="band" aria-hidden="true">
+    <div class="marquee marquee-back">
+      <div class="marquee-track">
+        <?php for ($loop = 0; $loop < 2; $loop++): foreach ($marquee as $m): ?>
+          <span><?= e($m) ?><i>✦</i></span>
+        <?php endforeach; endfor; ?>
+      </div>
+    </div>
+    <div class="marquee marquee-xl">
+      <div class="marquee-track">
+        <?php for ($loop = 0; $loop < 2; $loop++): foreach ($marquee as $mi => $m): ?>
+          <span class="<?= $mi % 2 ? 'mq-stroke' : '' ?>"><?= e($m) ?><i>✦</i></span>
+        <?php endforeach; endfor; ?>
+      </div>
     </div>
   </div>
 
@@ -115,10 +128,11 @@ require GX_ROOT . '/includes/layout/header.php';
 
       <div class="portals">
         <a class="portal portal-ranch reveal" href="/ranch/">
-          <img src="<?= e($ranchImg) ?>" srcset="<?= e($ranchSet) ?>" sizes="(min-width: 1024px) 50vw, 100vw" alt="" loading="lazy" width="1600" height="800">
+          <img src="<?= e($ranchImg) ?>" srcset="<?= e($ranchSet) ?>" sizes="(min-width: 1024px) 60vw, 100vw" alt="" loading="lazy" width="1600" height="900">
+          <img class="portal-logo" src="/assets/img/brand/ranch-logo-480.webp" srcset="/assets/img/brand/ranch-logo-480.webp 480w, /assets/img/brand/ranch-logo-960.webp 960w" sizes="(min-width: 1024px) 30vw, 70vw" alt="" loading="lazy" width="960" height="480">
           <div class="portal-copy">
             <div class="portal-num">01 / GrazeX Ranch</div>
-            <h3 class="display-3"><?= e(content('gateway', 'ranch_card_title', 'Raise. Rotate. Finish.')) ?></h3>
+            <h3 class="display-2 italic"><?= e(content('gateway', 'ranch_card_title', 'Raise. Rotate. Finish.')) ?></h3>
             <p><?= e(content('gateway', 'ranch_card_text')) ?></p>
             <div class="portal-foot">
               <span class="badge badge-success"><span class="dot"></span><?= (int) $stats['lots'] ?> <?= e(t('gateway.lots_available')) ?></span>
@@ -127,10 +141,11 @@ require GX_ROOT . '/includes/layout/header.php';
           </div>
         </a>
         <a class="portal portal-feeds reveal" style="--d:.1s" href="/feeds/">
-          <img src="<?= e($feedsImg) ?>" srcset="<?= e($feedsSet) ?>" sizes="(min-width: 1024px) 50vw, 100vw" alt="" loading="lazy" width="1600" height="800">
+          <img src="<?= e($feedsImg) ?>" srcset="<?= e($feedsSet) ?>" sizes="(min-width: 1024px) 60vw, 100vw" alt="" loading="lazy" width="1600" height="900">
+          <img class="portal-logo" src="/assets/img/brand/feeds-logo-480.webp" srcset="/assets/img/brand/feeds-logo-480.webp 480w, /assets/img/brand/feeds-logo-960.webp 960w" sizes="(min-width: 1024px) 30vw, 70vw" alt="" loading="lazy" width="960" height="480">
           <div class="portal-copy">
             <div class="portal-num">02 / GrazeX Feeds</div>
-            <h3 class="display-3"><?= e(content('gateway', 'feeds_card_title', 'Feed that earns.')) ?></h3>
+            <h3 class="display-2 italic"><?= e(content('gateway', 'feeds_card_title', 'Feed that earns.')) ?></h3>
             <p><?= e(content('gateway', 'feeds_card_text')) ?></p>
             <div class="portal-foot">
               <span class="badge badge-accent"><?= (int) $stats['products'] ?> <?= e(t('gateway.products')) ?></span>
@@ -152,6 +167,7 @@ require GX_ROOT . '/includes/layout/header.php';
         </div>
         <p class="lead"><?= e(content('gateway', 'model_text')) ?></p>
       </div>
+      <div class="process-line reveal" aria-hidden="true"></div>
       <ol class="process">
         <?php foreach (['Buy', 'Graze', 'Finish', 'Sell'] as $i => $step): ?>
           <li class="step reveal" style="--d:<?= $i * 0.08 ?>s">
@@ -183,6 +199,7 @@ require GX_ROOT . '/includes/layout/header.php';
   <section class="cta" id="contact" aria-labelledby="cta-title">
     <div class="container">
       <div class="cta-box reveal">
+        <img class="cta-bg" src="<?= e(asset('/assets/img/bg/account-960.webp')) ?>" srcset="<?= e($sceneSet('account')) ?>" sizes="(min-width: 1240px) 1180px, 100vw" alt="" loading="lazy" width="1600" height="900">
         <span class="kicker">GrazeX • Ranch &amp; Feeds</span>
         <h2 id="cta-title" class="display-2"><?= e(content('gateway', 'cta_title', 'A farm brand that works like a business.')) ?></h2>
         <p class="lead"><?= e(content('gateway', 'cta_text')) ?></p>

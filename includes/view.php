@@ -228,3 +228,51 @@ function division_has_faqs(string $division): bool
         return false;
     }
 }
+
+/**
+ * Full-screen background scene behind a page (the page content floats over it).
+ * Each area has its own scene in /assets/img/bg/; Admin > Site content can swap in a real photo.
+ * $page['bg'] picks a scene ('home', 'feeds', 'ranch', 'account', 'pages') or false for none.
+ * Returns null when the page has no background (admin, setup).
+ */
+function page_background(array $page): ?array
+{
+    $scene = $page['bg'] ?? match ($page['division'] ?? 'gateway') {
+        'gateway' => 'home',
+        'feeds' => 'feeds',
+        'ranch' => 'ranch',
+        'account' => 'account',
+        'pages' => 'pages',
+        default => null,
+    };
+    if (!is_string($scene) || !in_array($scene, ['home', 'feeds', 'ranch', 'account', 'pages'], true)) {
+        return null;
+    }
+    // Versioned URLs (?v=): static images are cached for a year, so a new scene must get a new address
+    $img = static fn(string $size): string => asset('/assets/img/bg/' . $scene . '-' . $size . '.webp');
+    $bg = [
+        'scene' => $scene,
+        'src' => $img('1600'),
+        'srcset' => $img('960') . ' 960w, ' . $img('1600') . ' 1600w, ' . $img('2560') . ' 2560w',
+        'portrait' => $img('p720') . ' 720w, ' . $img('p1080') . ' 1080w',
+    ];
+    // An uploaded photo (Admin > Site content) replaces the scene; phones get its centre via object-fit
+    [$scope, $key] = match ($scene) {
+        'feeds' => ['feeds', 'page_bg'],
+        'ranch' => ['ranch', 'page_bg'],
+        'account' => ['gateway', 'account_bg'],
+        'pages' => ['gateway', 'pages_bg'],
+        default => ['gateway', 'page_bg'],
+    };
+    try {
+        $mediaId = (int) (content_scope($scope)[$key]['media_id'] ?? 0);
+        if ($mediaId && ($src = media_url($mediaId, 1600))) {
+            $bg['src'] = $src;
+            $bg['srcset'] = media_srcset($mediaId, 'wide') ?: $src;
+            $bg['portrait'] = null;
+        }
+    } catch (Throwable $e) {
+        gx_log('warning', 'Background photo unavailable: ' . $e->getMessage());
+    }
+    return $bg;
+}
