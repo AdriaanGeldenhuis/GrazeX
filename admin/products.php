@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
+require_admin_division('feeds'); // feed products belong to GrazeX Feeds
 
 $q = mb_substr(query_str('q'), 0, 80);
 $cat = query_int('category');

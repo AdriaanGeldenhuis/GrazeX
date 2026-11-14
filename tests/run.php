@@ -1183,6 +1183,63 @@ db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 2, 
 db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = ?", [$staffPerm('customers.view')]);
 $auditsBefore = (int) db_val("SELECT COUNT(*) FROM audit_log WHERE action = 'report.export'");
 $staff->headers('/admin/reports.php?export=customers');
+// "Ranch only" covers everything that belongs to one division — not only orders, payments and documents
+$divForm = static function (string $code, string $bankNo): array {
+    $dv = db_one('SELECT * FROM divisions WHERE code = ?', [$code]);
+    return ['action' => 'division', 'code' => $code, 'legal_name' => $dv['legal_name'] ?: 'GrazeX', 'bank_account_no' => $bankNo, 'bank_name' => $dv['bank_name'],
+            'bank_account_name' => $dv['bank_account_name'], 'bank_branch_code' => $dv['bank_branch_code'], 'vat_registered' => (int) $dv['vat_registered'], 'vat_no' => $dv['vat_no'],
+            'order_prefix' => $dv['order_prefix'], 'invoice_prefix' => $dv['invoice_prefix'], 'credit_prefix' => $dv['credit_prefix'], 'receipt_prefix' => $dv['receipt_prefix']];
+};
+$bankOf = static fn(string $code): string => (string) db_val('SELECT bank_account_no FROM divisions WHERE code = ?', [$code]);
+$feedsBank = $bankOf('feeds');
+[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('feeds', '99990000111'));
+check('a Ranch-only admin cannot change the Feeds bank details', $st === 403 && $bankOf('feeds') === $feedsBank, $st . ' ' . $bankOf('feeds'));
+[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('ranch', $bankOf('ranch')));
+check('… but can save the Ranch business details', $st === 200, (string) $st);
+$roSettings = $ro->page('/admin/settings.php');
+check('… and the Feeds business tab is not offered', str_contains($roSettings, 'tab=ranch') && !str_contains($roSettings, 'tab=feeds'));
+[$st] = $ro->headers('/admin/settings.php?tab=feeds');
+check('… nor opened by its address', $st === 403, (string) $st);
+$scopeStock = stock(6);
+[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust', 'variant_id' => 6, 'change' => '+5 scope test']);
+check('a Ranch-only admin cannot adjust feed stock', $st === 403 && stock(6) === $scopeStock, $st . ' ' . stock(6));
+[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust_lot', 'lot_id' => 1, 'change' => 'not a number']);
+check('… but reaches livestock adjustments (a mistyped change is a plain validation error)', $st === 422, (string) $st);
+[$st] = $ro->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => 0]);
+[$stPage] = $ro->headers('/admin/products.php');
+[$stLots] = $ro->headers('/admin/lots.php');
+check('… cannot open or change feed products, but can open livestock', $st === 403 && $stPage === 403 && $stLots === 200, "$st $stPage $stLots");
+[$st] = $ro->headers('/admin/reports.php?export=stock');
+check('… cannot export the feed stock valuation', $st === 403, (string) $st);
+$roInv = $ro->page('/admin/inventory.php');
+check('… and Inventory opens on Livestock, without the feed stock value', str_contains($roInv, 'tab=lots') && !str_contains($roInv, 'tab=receive') && !str_contains($roInv, 'Stock value (cost)'));
+[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'categories', 'id' => 0, 'name' => 'Scope test category']);
+check('… cannot add a feed category', $st === 403 && !db_val("SELECT 1 FROM categories WHERE name = 'Scope test category'"), (string) $st);
+[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '1', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
+[$st2] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
+[$st3] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '2', 'question' => 'Scope test FAQ?', 'answer' => 'Yes.']);
+check('… may add an FAQ for Ranch only (not for Feeds, not for both)', $st === 403 && $st2 === 403 && $st3 === 200
+    && (int) db_val("SELECT COUNT(*) FROM faqs WHERE question = 'Scope test FAQ?'") === 1, "$st $st2 $st3");
+db_exec("DELETE FROM faqs WHERE question = 'Scope test FAQ?'");
+$msgFeeds = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (1, 'contact', 'Feeds Asker', 'feedsasker@test.local', 'A feeds question')");
+$msgRanch = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (2, 'contact', 'Ranch Asker', 'ranchasker@test.local', 'A ranch question')");
+$roMsgs = $ro->page('/admin/messages.php?id=' . $msgFeeds);
+check('… sees Ranch messages, not Feeds ones', str_contains($roMsgs, 'Ranch Asker') && !str_contains($roMsgs, 'Feeds Asker'));
+check('… and a message that is not on the page is not marked read by its address', db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new');
+[$st] = $ro->api('POST', '/admin/api/messages.php', ['action' => 'archive', 'id' => $msgFeeds]);
+check('… and cannot archive or answer a Feeds message', $st === 404 && db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new', (string) $st);
+db_exec('DELETE FROM enquiries WHERE id IN (?, ?)', [$msgFeeds, $msgRanch]);
+// The bell: an alert is for admins who may act on it (titles carry customer names and amounts)
+$privNote = db_insert("INSERT INTO admin_notifications (division_id, type, title) VALUES (NULL, 'privacy', 'Account deletion request — Jane Doe (jane@test.local)')");
+[, $bellStaff] = $staff->api('GET', '/admin/api/notifications.php');
+[, $bellOwner] = $adm->api('GET', '/admin/api/notifications.php');
+$titles = static fn(array $r): array => array_column($r['data']['items'] ?? [], 'title');
+check('the bell hides alerts the admin has no permission to act on', !in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellStaff), true)
+    && in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellOwner), true), json_encode([$titles($bellStaff), $titles($bellOwner)]));
+$staff->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
+check('… and "mark all read" leaves them unread for those who can', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$privNote]) === 0);
+db_exec('DELETE FROM admin_notifications WHERE id = ?', [$privNote]);
+
 check('a refused export is not logged as an export', (int) db_val("SELECT COUNT(*) FROM audit_log WHERE action = 'report.export'") === $auditsBefore);
 db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug = 'customers.view'");
 

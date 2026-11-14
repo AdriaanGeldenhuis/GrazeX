@@ -8,8 +8,12 @@ require GX_ROOT . '/includes/layout/admin-shell.php';
 require_admin('messages.manage');
 $status = in_array(query_str('status'), ['new', 'read', 'replied', 'archived'], true) ? query_str('status') : '';
 $open = query_int('id');
-$rows = db_all('SELECT e.*, l.lot_no, l.title AS lot_title FROM enquiries e LEFT JOIN lots l ON l.id = e.lot_id ' . ($status ? 'WHERE e.status = ?' : "WHERE e.status <> 'archived'") . ' ORDER BY e.id DESC LIMIT 200', $status ? [$status] : []);
-if ($open) {
+// Messages of this admin's divisions ("Feeds only" / "Ranch only"); general ones are for everyone
+[$mine, $mineParams] = admin_division_sql('e.division_id');
+$rows = db_all('SELECT e.*, l.lot_no, l.title AS lot_title FROM enquiries e LEFT JOIN lots l ON l.id = e.lot_id WHERE ' . $mine . ' AND '
+    . ($status ? 'e.status = ?' : "e.status <> 'archived'") . ' ORDER BY e.id DESC LIMIT 200', array_merge($mineParams, $status ? [$status] : []));
+// Opening a message marks it read — only one that is actually on this page (not any id typed in the address)
+if ($open && in_array($open, array_map('intval', array_column($rows, 'id')), true)) {
     db_exec("UPDATE enquiries SET status = 'read' WHERE id = ? AND status = 'new'", [$open]);
 }
 admin_start('Messages', 'messages', ['perm' => 'messages.manage']);

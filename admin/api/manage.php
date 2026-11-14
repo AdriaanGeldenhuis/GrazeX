@@ -17,9 +17,34 @@ if (!$ent) {
     json_error('Unknown list.', 404);
 }
 $admin = require_admin_api($ent['perm']);
+if (!empty($ent['division'])) {
+    require_admin_division($ent['division']); // e.g. feed categories are Feeds, breeds are Ranch
+}
 $table = $ent['table'];
 $id = (int) input('id', 0);
 $in = input_all();
+
+// Rows that carry a division (coupons, FAQs, closed days, collection points and their time slots): an admin limited
+// to one division only changes that division's rows — the row as it is now, and the division it is being saved to.
+$divisionCol = isset($ent['fields']['division_id']) ? 'division_id' : (isset($ent['fields']['collection_point_id']) ? 'collection_point_id' : null);
+if ($divisionCol !== null && count(admin_division_ids()) < count(GX_DIVISIONS)) {
+    $divisionOf = static function (mixed $v) use ($divisionCol): ?int {
+        if ($v === null || $v === '') {
+            return null;
+        }
+        $d = $divisionCol === 'division_id' ? $v : db_val('SELECT division_id FROM collection_points WHERE id = ?', [(int) $v]);
+        return $d === null ? null : (int) $d;
+    };
+    $check = ($in['action'] ?? '') === 'delete' ? [] : [$in[$divisionCol] ?? null];
+    if ($id) {
+        $check[] = db_val("SELECT `{$divisionCol}` FROM {$table} WHERE id = ?", [$id]);
+    }
+    foreach ($check as $v) {
+        if (!admin_can_edit_division_row($divisionOf($v))) {
+            json_error('That item is for a division you do not have access to (or for both divisions) — ask an owner to change it.', 403);
+        }
+    }
+}
 
 if (($in['action'] ?? '') === 'delete') {
     if (!empty($ent['no_delete'])) {

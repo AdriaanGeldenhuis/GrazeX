@@ -6,13 +6,17 @@ require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
 $tab = in_array(query_str('tab'), ['general', 'feeds', 'ranch', 'orders', 'system'], true) ? query_str('tab') : 'general';
+if ($tab === 'feeds' || $tab === 'ranch') {
+    require_admin_division($tab); // a division's business and bank details: only for admins who may see that division
+}
 $s = settings_all(true);
 $v = static fn(string $k) => $s[$k] ?? '';
 
 admin_start('Settings', 'settings', ['perm' => 'settings.manage']);
 ?>
 <div class="tabs mb-3" role="tablist">
-  <?php foreach (['general' => 'General', 'feeds' => 'GrazeX Feeds business', 'ranch' => 'GrazeX Ranch business', 'orders' => 'Orders & payments', 'system' => 'System'] as $k => $l): ?>
+  <?php foreach (['general' => 'General', 'feeds' => 'GrazeX Feeds business', 'ranch' => 'GrazeX Ranch business', 'orders' => 'Orders & payments', 'system' => 'System'] as $k => $l):
+      if (isset(GX_DIVISIONS[$k]) && !admin_has_division($k)) { continue; } ?>
     <a class="tab" role="tab" aria-selected="<?= $tab === $k ? 'true' : 'false' ?>" href="/admin/settings.php?tab=<?= e($k) ?>"><?= e($l) ?></a>
   <?php endforeach; ?>
 </div>

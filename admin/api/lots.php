@@ -10,6 +10,7 @@ require_once GX_ROOT . '/includes/admin_form.php';
 
 api_post();
 $admin = require_admin_api('lots.manage');
+require_admin_division('ranch'); // livestock lots belong to GrazeX Ranch
 $in = input_all();
 
 if (($in['action'] ?? '') === 'notify') {

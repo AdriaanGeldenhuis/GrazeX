@@ -8,7 +8,7 @@ require __DIR__ . '/../../includes/bootstrap.php';
 api_post();
 require_admin_api('messages.manage');
 $m = db_one('SELECT * FROM enquiries WHERE id = ?', [(int) input('id')]);
-if (!$m) {
+if (!$m || ($m['division_id'] !== null && !in_array((int) $m['division_id'], admin_division_ids(), true))) {
     json_error('Message not found.', 404);
 }
 if (input('action') === 'archive') {

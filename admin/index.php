@@ -26,8 +26,8 @@ $todo = [
     'pack' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('paid','awaiting_collection','processing') AND division_id IN ({$in})", $ids),
     'today' => (int) db_val("SELECT COUNT(*) FROM orders WHERE ((collection_date = CURDATE()) OR (delivery_date = CURDATE())) AND status NOT IN ('cancelled','expired','refunded','completed','collected') AND division_id IN ({$in})", $ids),
     'weigh' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('reserved','deposit_paid') AND division_id IN ({$in})", $ids),
-    'low' => (int) db_val('SELECT COUNT(*) FROM product_variants v JOIN products p ON p.id = v.product_id WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold'),
-    'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new'"),
+    'low' => !admin_has_division('feeds') ? 0 : (int) db_val('SELECT COUNT(*) FROM product_variants v JOIN products p ON p.id = v.product_id WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold'),
+    'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new' AND (division_id IS NULL OR division_id IN ({$in}))", $ids),
 ];
 // 14-day sales bars per division
 $days = [];
@@ -42,7 +42,7 @@ foreach (db_all("SELECT DATE(placed_at) d, division_id, SUM(total_cents) s FROM 
 }
 $maxDay = max(1, ...array_values(array_map(static fn($d) => $d['feeds'] + $d['ranch'], $days)));
 $recent = db_all("SELECT o.*, c.first_name, c.last_name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.division_id IN ({$in}) ORDER BY o.placed_at DESC LIMIT 8", $ids);
-$low = db_all('SELECT v.id, v.name, v.stock_qty, v.low_stock_threshold, p.name AS product_name, p.id AS product_id FROM product_variants v JOIN products p ON p.id = v.product_id
+$low = !admin_has_division('feeds') ? [] : db_all('SELECT v.id, v.name, v.stock_qty, v.low_stock_threshold, p.name AS product_name, p.id AS product_id FROM product_variants v JOIN products p ON p.id = v.product_id
                WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold ORDER BY v.stock_qty LIMIT 8');
 
 // Scheduled jobs (emails, reminders, clean-up) depend on the server cron; warn when it has stopped

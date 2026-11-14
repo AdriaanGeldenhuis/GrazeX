@@ -2,6 +2,7 @@
 /**
  * "Lists & setup" — simple tables managed by the generic editor (/admin/manage.php).
  * Each entity: title, table, perm, order, list (columns), fields (name => [type, label, rules, ...]).
+ * division ('feeds' | 'ranch'): the list belongs to that division — an admin limited to the other one cannot open it.
  * Field types: text, textarea, markdown, number, money, bool, select (options), fk (table/label), date, time,
  *              weekdays, image, lines (child table rows, one per line), slug (from), code (uppercase).
  */
@@ -12,7 +13,7 @@ defined('GX_ROOT') || exit;
 $divOpts = ['' => 'Both divisions', '1' => 'Feeds', '2' => 'Ranch'];
 
 return [
-    'categories' => ['title' => 'Feed categories', 'group' => 'Feeds', 'table' => 'categories', 'perm' => 'products.manage', 'order' => 'sort_order, name',
+    'categories' => ['title' => 'Feed categories', 'group' => 'Feeds', 'division' => 'feeds', 'table' => 'categories', 'perm' => 'products.manage', 'order' => 'sort_order, name',
         'list' => ['name', 'slug', 'sort_order', 'is_active'],
         'fields' => [
             'name' => ['text', 'Name', 'required|max:150'],
@@ -23,19 +24,19 @@ return [
             'sort_order' => ['number', 'Sort order', 'nullable|int'],
             'is_active' => ['bool', 'Visible', 'nullable'],
         ]],
-    'brands' => ['title' => 'Brands', 'group' => 'Feeds', 'table' => 'brands', 'perm' => 'products.manage', 'order' => 'name', 'list' => ['name', 'slug', 'is_active'],
+    'brands' => ['title' => 'Brands', 'group' => 'Feeds', 'division' => 'feeds', 'table' => 'brands', 'perm' => 'products.manage', 'order' => 'name', 'list' => ['name', 'slug', 'is_active'],
         'fields' => ['name' => ['text', 'Name', 'required|max:150'], 'slug' => ['slug', 'Web address', 'nullable|max:120', 'from' => 'name'],
                      'media_id' => ['image', 'Logo', 'nullable'], 'is_active' => ['bool', 'Active', 'nullable']]],
-    'species' => ['title' => 'Animals (for filters & calculator)', 'group' => 'Feeds', 'table' => 'species', 'perm' => 'products.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
+    'species' => ['title' => 'Animals (for filters & calculator)', 'group' => 'Feeds', 'division' => 'feeds', 'table' => 'species', 'perm' => 'products.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
         'fields' => ['name' => ['text', 'Name', 'required|max:100'], 'slug' => ['slug', 'Web address', 'nullable|max:60', 'from' => 'name'], 'sort_order' => ['number', 'Sort order', 'nullable|int']]],
-    'breeds' => ['title' => 'Breeds', 'group' => 'Ranch', 'table' => 'breeds', 'perm' => 'lots.manage', 'order' => 'sort_order, name', 'list' => ['name', 'kind', 'slug', 'is_active'],
+    'breeds' => ['title' => 'Breeds', 'group' => 'Ranch', 'division' => 'ranch', 'table' => 'breeds', 'perm' => 'lots.manage', 'order' => 'sort_order, name', 'list' => ['name', 'kind', 'slug', 'is_active'],
         'fields' => ['name' => ['text', 'Name', 'required|max:100'], 'kind' => ['text', 'Kind of animal (printed on the document of identification, e.g. Sheep, Goat, Cattle)', 'required|max:40', 'default' => 'Sheep'],
                      'slug' => ['slug', 'Web address', 'nullable|max:80', 'from' => 'name'],
                      'description' => ['markdown', 'About the breed (shown on lot pages)', 'nullable|max:5000'], 'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Active', 'nullable']]],
-    'livestock_categories' => ['title' => 'Livestock types', 'group' => 'Ranch', 'table' => 'livestock_categories', 'perm' => 'lots.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
+    'livestock_categories' => ['title' => 'Livestock types', 'group' => 'Ranch', 'division' => 'ranch', 'table' => 'livestock_categories', 'perm' => 'lots.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
         'fields' => ['name' => ['text', 'Name', 'required|max:100'], 'slug' => ['slug', 'Web address', 'nullable|max:80', 'from' => 'name'],
                      'description' => ['textarea', 'Description', 'nullable|max:1000'], 'sort_order' => ['number', 'Sort order', 'nullable|int']]],
-    'delivery_zones' => ['title' => 'Delivery zones', 'group' => 'Delivery & collection', 'table' => 'delivery_zones', 'perm' => 'delivery.manage', 'order' => 'sort_order, name',
+    'delivery_zones' => ['title' => 'Delivery zones', 'group' => 'Delivery & collection', 'division' => 'feeds', 'table' => 'delivery_zones', 'perm' => 'delivery.manage', 'order' => 'sort_order, name',
         'list' => ['name', 'fee_cents', 'free_over_cents', 'min_order_cents', 'delivery_days', 'is_active'],
         'fields' => [
             'name' => ['text', 'Zone name', 'required|max:100'],

@@ -10,6 +10,7 @@ require_once GX_ROOT . '/includes/admin_form.php';
 
 api_post();
 $admin = require_admin_api('products.manage');
+require_admin_division('feeds'); // feed products belong to GrazeX Feeds
 $in = input_all();
 
 if (($in['action'] ?? '') === 'delete') {

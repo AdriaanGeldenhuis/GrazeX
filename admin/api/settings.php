@@ -25,6 +25,8 @@ if (input('action') === 'division') {
     if (!isset(GX_DIVISIONS[$code])) {
         json_error('Unknown division.', 400);
     }
+    // Business and bank details of the other division are not a "Feeds only" / "Ranch only" admin's to change
+    require_admin_division($code);
     $d = validate_or_fail(input_all(), [
         'legal_name' => 'required|max:191', 'registration_no' => 'nullable|max:50', 'vat_no' => 'nullable|regex:/^4\d{9}$/', 'address' => 'nullable|max:500',
         'phone' => 'nullable|max:30', 'email' => 'nullable|email|max:191', 'tagline' => 'nullable|max:255',
