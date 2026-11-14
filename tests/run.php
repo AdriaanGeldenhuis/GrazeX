@@ -533,6 +533,9 @@ check('livestock cannot be completed before "collected" (Document of Identificat
 step('collected (setup)', static fn() => OrderService::transition((int) $r2['id'], 'collected'));
 step('completed (setup)', static fn() => order_row((int) $r2['id'])['status'] === 'completed' ?: OrderService::transition((int) $r2['id'], 'completed'));
 check('livestock completes after collection', order_row((int) $r2['id'])['status'] === 'completed');
+$thanks = static fn(string $no): int => (int) db_val('SELECT COUNT(*) FROM email_queue WHERE subject LIKE ?', ['%' . $no . ' completed%']);
+check('… and the buyer is thanked once (at collection, with the document of identification), not again at completion',
+    $thanks($r2['order_no']) === 1, $thanks($r2['order_no']) . ' emails');
 
 as_customer($c3);
 $rfBefore = stock(12);
@@ -540,6 +543,7 @@ CartService::add('feeds', 12, 2);
 $rf = OrderService::place('feeds', ['billing_name' => 'Refund Me', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
 OrderService::recordPayment((int) $rf['id'], (int) $rf['total_cents'], 'cash');
 OrderService::transition((int) $rf['id'], 'completed');
+check('a completed feeds order is thanked once', $thanks($rf['order_no']) === 1, $thanks($rf['order_no']) . ' emails');
 step('refund via status change', static fn() => OrderService::transition((int) $rf['id'], 'refunded', 'Bags were damp'));
 $rf2 = order_row((int) $rf['id']);
 check('refund: status refunded + payment_status refunded', $rf2['status'] === 'refunded' && $rf2['payment_status'] === 'refunded', $rf2['status'] . '/' . $rf2['payment_status']);
