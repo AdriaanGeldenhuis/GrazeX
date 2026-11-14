@@ -229,6 +229,11 @@ final class LivestockService
      */
     public static function requestConfirmation(array $row, string $siteBucket = 'alert_confirm_site', int $siteMax = 40): bool
     {
+        // An address that is already over its own daily limit must not use up the whole site's hourly allowance
+        // (one account asking again and again would stop everybody's confirmation emails)
+        if (rate_limit_blocked('alert_confirm', (string) $row['email'])) {
+            return false;
+        }
         // The site-wide cap first: a refused site hit uses up nobody's own daily allowance
         if (!rate_limit_hit($siteBucket, 'all', $siteMax, 3600)) {
             gx_log('warning', 'Livestock alert confirmations paused: hourly cap reached', ['bucket' => $siteBucket]);

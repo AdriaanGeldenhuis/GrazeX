@@ -1685,6 +1685,13 @@ for ($i = 0; $i < 3; $i++) {
     LivestockService::subscribe('capped@test.local', null, null, null, false);
 }
 check('… and the address still has its full daily allowance afterwards', (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'capped@test.local'") === 3);
+// An address that is over its own daily limit must not eat the site's hourly allowance (40 an hour for everyone)
+$greedy = db_one("SELECT * FROM livestock_alerts WHERE email = 'capped@test.local' ORDER BY id DESC LIMIT 1");
+for ($i = 0; $i < 10; $i++) {
+    LivestockService::requestConfirmation($greedy, 'alert_confirm_greedy', 40);
+}
+$greedyHits = (int) db_val('SELECT hits FROM rate_limits WHERE bucket = ?', [hash('sha256', 'alert_confirm_greedy|all')]);
+check('one address asking again and again cannot use up the site\'s hourly confirmations', $greedyHits === 1, $greedyHits . ' site hits for 10 requests');
 // A pending confirmation link is not replaced by repeated sign-ups once the daily email limit is reached
 for ($i = 0; $i < 3; $i++) {
     LivestockService::subscribe('pending@test.local', null, null, null, false);
@@ -2461,13 +2468,6 @@ db_exec("INSERT INTO push_queue (device_id, title, body) VALUES (?, 'waiting', '
 [$st] = $ph->api('POST', '/account/api/auth.php', ['action' => 'logout']);
 check('logging out unlinks the phone and drops pushes still waiting for it', $st === 200 && !db_val('SELECT 1 FROM push_devices WHERE id = ?', [$pDev['id']])
     && !db_val("SELECT 1 FROM push_queue WHERE title = 'waiting'"));
-// A phone used by a customer and a staff member: the customer's logout drops only the customer's pushes
-$shTok = 'dBoth6:APA91b' . str_repeat('Bo3', 40);
-$bothC = $mkRemember('pushboth@test.local');
-$bothId = PushService::register($shTok, 'customer', $bothC, 1);
-PushService::register($shTok, 'admin', $adm6Id, 1);
-db_exec("INSERT INTO push_queue (device_id, channel, title, body, status) VALUES (?, 'orders', 'cust-row', 'x', 'sent'), (?, 'staff', 'staff-row', 'x', 'sent')", [$bothId, $bothId]);
-PushService::detach($bothId, 'customer');
 // The page was left open until the session expired: "Log out" is then the first request of a new session (the
 // remember cookie logs in on that same request), which does not know the phone yet — the app sends its token
 $lateCid = $mkRemember('latelogout@test.local');
@@ -2486,6 +2486,13 @@ $late2 = $loginAs('latelogout@test.local', true);
 [$st] = $late2->api('POST', '/account/api/auth.php', ['action' => 'logout', 'push_token' => $otherTok]);
 check('… and a token that belongs to another customer is left alone', $st === 200 && (int) db_val('SELECT customer_id FROM push_devices WHERE id = ?', [$otherDev]) === $pushCid);
 db_exec('DELETE FROM push_devices WHERE id = ?', [$otherDev]);
+// A phone used by a customer and a staff member: the customer's logout drops only the customer's pushes
+$shTok = 'dBoth6:APA91b' . str_repeat('Bo3', 40);
+$bothC = $mkRemember('pushboth@test.local');
+$bothId = PushService::register($shTok, 'customer', $bothC, 1);
+PushService::register($shTok, 'admin', $adm6Id, 1);
+db_exec("INSERT INTO push_queue (device_id, channel, title, body, status) VALUES (?, 'orders', 'cust-row', 'x', 'sent'), (?, 'staff', 'staff-row', 'x', 'sent')", [$bothId, $bothId]);
+PushService::detach($bothId, 'customer');
 check('… on a phone also used by staff, only the customer\'s notifications go; the staff link stays', (bool) db_val('SELECT 1 FROM push_devices WHERE id = ? AND admin_user_id = ? AND customer_id IS NULL', [$bothId, $adm6Id])
     && !db_val("SELECT 1 FROM push_queue WHERE title = 'cust-row'") && (bool) db_val("SELECT 1 FROM push_queue WHERE title = 'staff-row'"));
 // A password change in the app keeps this phone linked (with the new login version)

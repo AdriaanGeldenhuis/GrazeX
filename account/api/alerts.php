@@ -15,6 +15,7 @@ $email = customer_verified_email($customer);
 
 switch ((string) input('action')) {
     case 'create':
+        rate_limit_or_fail('livestock_alert', 'c' . $customer['id'], 10, 3600); // same limit as the public sign-up form
         $d = validate_or_fail(input_all(), ['breed' => 'nullable|max:80', 'category' => 'nullable|max:80']);
         $b = $d['breed'] ? db_val('SELECT id FROM breeds WHERE slug = ?', [$d['breed']]) : null;
         $c = $d['category'] ? db_val('SELECT id FROM livestock_categories WHERE slug = ?', [$d['category']]) : null;
