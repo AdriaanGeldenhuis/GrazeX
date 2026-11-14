@@ -117,7 +117,8 @@ final class MailService
         $m->AltBody = $row['body_text'] ?: trim(html_entity_decode(strip_tags(str_replace(['<br>', '</p>', '</h2>', '</li>'], "\n", $row['body_html']))));
         foreach (json_decode((string) $row['attachments'], true) ?: [] as $att) {
             $path = GX_ROOT . '/' . ltrim((string) ($att['path'] ?? ''), '/');
-            if (is_file($path) && str_starts_with(realpath($path) ?: '', realpath(GX_ROOT . '/storage') ?: '//')) {
+            $storage = realpath(GX_ROOT . '/storage');
+            if ($storage && is_file($path) && str_starts_with(realpath($path) ?: '', $storage . DIRECTORY_SEPARATOR)) {
                 $m->addAttachment($path, (string) ($att['name'] ?? basename($path)));
             }
         }
