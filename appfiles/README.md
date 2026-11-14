@@ -149,7 +149,7 @@ Sonder Firebase werk alles behalwe kennisgewings. Admin → Settings → System 
   - Uitteken, 'n nuwe wagwoord op 'n ander toestel, "log uit oral", 'n geblokkeerde kliënt of 'n gedeaktiveerde admin stop dit. Kennisgewings wat nog in die tou wag, word dan ook nie gestuur nie.
   - 'n Foon wat die app verwyder het, of waarop die app 60 dae lank nie oopgemaak is nie, word outomaties vergeet.
 - **Privaatheid:**
-  - Op 'n gesluite skerm wys die foon net "GrazeX"; die besonderhede verskyn eers ná ontsluiting.
+  - Op 'n gesluite skerm wys die foon net "GrazeX" as die eienaar in Android se instellings gekies het om sensitiewe inhoud op die sluitskerm te versteek. Android se verstek wys die volle kennisgewing (bestelnommer, bedrag) ook op die sluitskerm.
   - Personeel-kennisgewings dra net die titel (bestelnommer, bedrag) en geen name, e-posadresse of boodskappe nie. Die skakel maak die besonderhede agter die admin-aanmelding oop.
   - As 'n foon van eienaar verander, word die vorige persoon se kennisgewings uitgevee.
 - **Kanale:** die foon se instellings het drie kanale: *Orders and payments*, *New livestock* en *Staff*. Mense kan elkeen afskakel.

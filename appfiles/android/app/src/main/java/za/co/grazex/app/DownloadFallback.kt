@@ -20,12 +20,15 @@ class DownloadFallback(private val activity: MainActivity) : DownloadListener {
     override fun onDownloadStart(url: String, userAgent: String, contentDisposition: String?, mimetype: String?, contentLength: Long) {
         val policy = activity.policy
         val uri = url.toUri()
-        val allowed = uri.scheme == "https" || (uri.scheme == "http" && policy.isSite(url) && policy.scheme == "http")
+        val mime = FileNames.mime(mimetype)
+        // Only the site's own documents, of the kinds the app may save (PDF, photos, JSON, CSV — the same list as the
+        // bridge). Any other page shown in the app (a bank's 3-D Secure page, an embedded map or video) must not be able
+        // to drop a file of its choosing into Downloads under the GrazeX name.
+        val allowed = policy.isSite(url) && (uri.scheme == "https" || policy.scheme == "http") && FileNames.allowed(mime)
         if (!allowed) {
             Toast.makeText(activity, R.string.cannot_download, Toast.LENGTH_SHORT).show()
             return
         }
-        val mime = FileNames.mime(mimetype)
         val name = FileNames.safe(URLUtil.guessFileName(url, contentDisposition, mime), mime)
         val request = DownloadManager.Request(uri)
             .setMimeType(mime)
