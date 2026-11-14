@@ -5,10 +5,13 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 
 $customer = require_customer();
+$mine = "d.customer_id = ? AND d.is_void = 0 AND d.doc_type IN ('tax_invoice','invoice','receipt','credit_note','doc_identification','order_confirmation')";
+$perPage = 50;
+$pageNo = query_page();
+$pages = max(1, (int) ceil((int) db_val("SELECT COUNT(*) FROM documents d WHERE {$mine}", [$customer['id']]) / $perPage));
 $docs = db_all("SELECT d.id, d.doc_type, d.doc_no, d.issued_at, d.total_cents, o.order_no, dv.name AS division_name
                 FROM documents d JOIN orders o ON o.id = d.order_id JOIN divisions dv ON dv.id = d.division_id
-                WHERE d.customer_id = ? AND d.is_void = 0 AND d.doc_type IN ('tax_invoice','invoice','receipt','credit_note','doc_identification','order_confirmation')
-                ORDER BY d.issued_at DESC, d.id DESC LIMIT 200", [$customer['id']]);
+                WHERE {$mine} ORDER BY d.issued_at DESC, d.id DESC LIMIT {$perPage} OFFSET " . (($pageNo - 1) * $perPage), [$customer['id']]);
 
 $page = ['title' => 'My documents', 'division' => 'account', 'css' => ['/account/css/account.css'], 'js' => ['/account/js/account.js'], 'noindex' => true];
 require GX_ROOT . '/includes/layout/head.php';
@@ -35,6 +38,7 @@ require GX_ROOT . '/includes/layout/header.php';
           <?php endforeach; ?>
           </tbody>
         </table></div>
+        <?= pagination($pageNo, $pages, '/account/documents.php') ?>
       <?php else: ?>
         <div class="empty-state"><div class="es-icon"><svg class="icon icon-lg"><use href="#i-file"/></svg></div><h3>No documents yet</h3><p>Invoices and receipts appear here after your first order.</p></div>
       <?php endif; ?>

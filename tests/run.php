@@ -2026,6 +2026,18 @@ check('a collection time that orders use cannot be deleted (it would vanish from
 [$st] = $adm->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'menu_items', 'id' => 0, 'location' => 'footer', 'label' => 'Elsewhere', 'url' => '//evil.example/x', 'is_active' => 1]);
 check('a footer link must be a page on this site or an https:// address', $st === 422 && !db_val("SELECT 1 FROM menu_items WHERE label = 'Elsewhere'"), (string) $st);
 
+$mdHtml = markdown("## Delivery\nWe deliver on Tuesdays.\n\nIntro line\n### Returns\nWithin 7 days.");
+check('a heading directly above its paragraph is a heading (no "##" printed on the page)', str_contains($mdHtml, '<h3>Delivery</h3>') && str_contains($mdHtml, '<h4>Returns</h4>')
+    && !str_contains($mdHtml, '#') && str_contains($mdHtml, '<p>We deliver on Tuesdays.</p>'), $mdHtml);
+$usersHtml = $adm->page('/admin/users.php');
+check('every field id on the admin users page is used once (each label points at its own field)', substr_count($usersHtml, 'id="f-name"') === 1
+    && substr_count($usersHtml, 'id="ue-name"') === 1 && substr_count($usersHtml, 'for="ue-role-id"') === 1 && substr_count($usersHtml, 'id="f-division-scope"') === 1);
+[$stDocs] = $cust->headers('/account/documents.php?page=2');
+[$stAudit] = $adm->headers('/admin/audit.php?page=2');
+check('the documents page and the audit log open on any page number', $stDocs === 200 && $stAudit === 200, "$stDocs $stAudit");
+$auditRows = (int) db_val('SELECT COUNT(*) FROM audit_log');
+check('the audit log offers its older pages', $auditRows <= 200 || str_contains($adm->page('/admin/audit.php'), '/admin/audit.php?page=2'), (string) $auditRows);
+
 // The mail server is down (nothing listens on this port): waiting emails keep their tries and the run stops at the first
 $mailWas = $GLOBALS['GX_ENV']['mail'];
 $GLOBALS['GX_ENV']['mail'] = ['host' => '127.0.0.1', 'port' => 2599, 'user' => 'orders@test.local', 'pass' => 'x', 'secure' => 'ssl', 'from_email' => 'orders@test.local', 'from_name' => 'GrazeX'] + $mailWas;
