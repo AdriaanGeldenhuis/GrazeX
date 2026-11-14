@@ -2318,15 +2318,23 @@ $adm6->api('POST', '/admin/api/customers.php', ['action' => 'unblock', 'id' => $
 section('Phase 6: push notifications');
 $fbFile = GX_ROOT . '/storage/private/firebase-service-account.json';
 $fbTokenFile = GX_ROOT . '/storage/private/fcm-access-token.json';
-$fbBackup = is_file($fbFile) ? (string) file_get_contents($fbFile) : null;
-// Put a real service-account file back even if the run stops half-way
-register_shutdown_function(static function () use ($fbFile, $fbTokenFile, $fbBackup): void {
+// A real service-account file is kept next to it while the tests use a fake one — on disk, so even a run that is
+// killed loses nothing: the next run finds the copy and puts it back
+$fbKeep = $fbFile . '.tests-backup';
+$fbBackup = is_file($fbKeep) ? (string) file_get_contents($fbKeep) : (is_file($fbFile) ? (string) file_get_contents($fbFile) : null);
+if ($fbBackup !== null && !is_file($fbKeep)) {
+    file_put_contents($fbKeep, $fbBackup);
+    chmod($fbKeep, 0600);
+}
+// Put the real file back even if the run stops half-way
+register_shutdown_function(static function () use ($fbFile, $fbTokenFile, $fbBackup, $fbKeep): void {
     @unlink($fbFile);
     @unlink($fbTokenFile);
     if ($fbBackup !== null) {
         file_put_contents($fbFile, $fbBackup);
         chmod($fbFile, 0600);
     }
+    @unlink($fbKeep);
 });
 @unlink($fbFile);
 @unlink($fbTokenFile);
