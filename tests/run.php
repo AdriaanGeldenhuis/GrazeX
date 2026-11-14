@@ -659,6 +659,66 @@ check('a per-kg lot without an average weight is refused', $st === 422 && isset(
     'weighs' => ['1001' => ['weighed_on' => date('Y-m-d'), 'head_count' => 5, 'avg_weight_kg' => '31.5']]]);
 check('… but a weighing in the same save supplies it', $st === 200 && (float) db_val("SELECT avg_weight_kg FROM lots WHERE lot_no = 'T-2'") === 31.5, json_encode($res));
 
+// A new lot keeps the status that was chosen (adding its animals used to turn "Sold" into "Available")
+[$st, $res] = $adm->api('POST', '/admin/api/lots.php', ['title' => 'Already sold', 'lot_no' => 'T-3', 'breed_id' => 1, 'category_id' => 1, 'sex' => 'mixed',
+    'qty_total' => 12, 'pricing_mode' => 'per_head', 'price' => '1500.00', 'deposit_pct' => 20, 'status' => 'sold_out']);
+$soldLot = db_one("SELECT status, qty_available FROM lots WHERE lot_no = 'T-3'");
+check('a new lot saved as "Sold" stays sold (never on the board as available)', $st === 200 && ($soldLot['status'] ?? '') === 'sold_out'
+    && !in_array('T-3', array_column(LivestockService::lots(['per_page' => 48])['items'], 'lot_no'), true), $st . ' ' . json_encode([$soldLot, $res]));
+
+// Coupons: an empty value is 0 (free delivery); a discount coupon needs one
+$coupon = static fn(string $code, string $type, string $value): array => ['action' => 'save', 'e' => 'coupons', 'id' => 0, 'code' => $code, 'division_id' => '1', 'type' => $type, 'value' => $value, 'is_active' => 1];
+[$st, $res] = $adm->api('POST', '/admin/api/manage.php', $coupon('FREESHIP', 'free_delivery', ''));
+check('a free-delivery coupon saves with the value left empty', $st === 200 && (int) db_val("SELECT COUNT(*) FROM coupons WHERE code = 'FREESHIP' AND value = 0") === 1, $st . ' ' . json_encode($res));
+[$st, $res] = $adm->api('POST', '/admin/api/manage.php', $coupon('NOTHING', 'percent', ''));
+check('… but a % off coupon without a value is refused', $st === 422 && !db_val("SELECT 1 FROM coupons WHERE code = 'NOTHING'"), $st . ' ' . json_encode($res));
+db_exec("DELETE FROM coupons WHERE code = 'FREESHIP'");
+
+// Settings: what the form shows is enforced on the server (the form is sent without browser validation)
+$settingNow = static fn(string $k): ?string => ($v = db_val('SELECT setting_value FROM settings WHERE setting_key = ?', [$k])) === null ? null : (string) $v;
+$mailWas = $settingNow('contact_email');
+[$st, $res] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['contact_email' => 'info@grazex.co.za / sales@grazex.co.za']]);
+check('a mistyped public email is refused (it is the Reply-To of every email)', $st === 422 && $settingNow('contact_email') === $mailWas, $st . ' ' . json_encode($res));
+[$st] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['email_hourly_cap' => '0']]);
+check('… as is an email limit of 0 an hour (nothing would be sent)', $st === 422 && (int) $settingNow('email_hourly_cap') > 0, (string) $st);
+$runWas = $settingNow('last_expiry_run');
+[$st] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['last_expiry_run' => '1', 'business_hours' => (string) $settingNow('business_hours')]]);
+check('the settings form cannot overwrite the site\'s own bookkeeping', $st === 200 && $settingNow('last_expiry_run') === $runWas, $st . ' ' . $settingNow('last_expiry_run'));
+
+// Recording a payment: at most what is still outstanding
+as_customer($c3);
+CartService::add('feeds', 6, 2);
+$rp = OrderService::place('feeds', ['billing_name' => 'Record Pay', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
+$rpHalf = intdiv((int) $rp['total_cents'], 2);
+$rand = static fn(int $cents): string => number_format($cents / 100, 2, '.', '');
+[$st] = $adm->api('POST', '/admin/api/payments.php', ['action' => 'record', 'order_id' => $rp['id'], 'amount' => $rand($rpHalf), 'method' => 'cash']);
+[$st2, $res2] = $adm->api('POST', '/admin/api/payments.php', ['action' => 'record', 'order_id' => $rp['id'], 'amount' => $rand((int) $rp['total_cents']), 'method' => 'cash']);
+check('recording the full total again on a part-paid order is refused', $st === 200 && $st2 === 422 && (int) order_row((int) $rp['id'])['amount_paid_cents'] === $rpHalf,
+    "$st $st2 " . json_encode($res2) . ' paid ' . order_row((int) $rp['id'])['amount_paid_cents']);
+[$st] = $adm->api('POST', '/admin/api/payments.php', ['action' => 'record', 'order_id' => $rp['id'], 'amount' => $rand((int) $rp['total_cents'] - $rpHalf), 'method' => 'cash']);
+check('… and the rest is accepted', $st === 200 && order_row((int) $rp['id'])['payment_status'] === 'paid', (string) $st);
+
+// A reply to an enquiry is only "sent" when an email really went into the queue
+db_exec("UPDATE email_templates SET is_active = 0 WHERE template_key = 'enquiry_reply'");
+$enq = db_insert("INSERT INTO enquiries (type, name, email, message) VALUES ('contact', 'Reply Test', 'reply@test.local', 'Hello?')");
+[$st] = $adm->api('POST', '/admin/api/messages.php', ['action' => 'reply', 'id' => $enq, 'reply' => 'Hi there']);
+check('a reply is not reported as sent while its email is switched off', $st === 409 && db_val('SELECT status FROM enquiries WHERE id = ?', [$enq]) === 'new', (string) $st);
+db_exec("UPDATE email_templates SET is_active = 1 WHERE template_key = 'enquiry_reply'");
+[$st] = $adm->api('POST', '/admin/api/messages.php', ['action' => 'reply', 'id' => $enq, 'reply' => 'Hi there']);
+check('… and goes out once it is on', $st === 200 && db_val('SELECT status FROM enquiries WHERE id = ?', [$enq]) === 'replied'
+    && (bool) db_val("SELECT 1 FROM email_queue WHERE to_email = 'reply@test.local'"), (string) $st);
+db_exec('DELETE FROM enquiries WHERE id = ?', [$enq]);
+
+// Livestock is invoiced on the weighed total — never earlier on the estimate (one invoice per order)
+as_customer($c4);
+CartService::add('ranch', (int) db_val("SELECT id FROM lots WHERE status IN ('available','reserved') AND qty_available > 0 AND deposit_pct > 0 ORDER BY qty_available DESC LIMIT 1"), 1);
+$rv = OrderService::place('ranch', ['billing_name' => 'Early Invoice', 'billing_address' => 'Farm 2', 'buyer_id_number' => '8001015009087',
+    'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(2), current_customer());
+OrderService::recordPayment((int) $rv['id'], (int) $rv['deposit_due_cents'], 'eft');
+[$st, $res] = $adm->api('POST', '/admin/api/orders.php', ['action' => 'document', 'type' => 'tax_invoice', 'id' => $rv['id']]);
+check('a livestock order cannot be invoiced before it is weighed', $st === 409
+    && !db_val("SELECT 1 FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$rv['id']]), $st . ' ' . json_encode($res));
+
 $staff = new TestHttp($base);
 $staff->page('/admin/login.php');
 $staff->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'staff@test.local', 'password' => $ownerPw]);
@@ -1123,6 +1183,63 @@ $ro->page('/admin/');
 $ro->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
 check('"mark all read" leaves other divisions\' notifications alone', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$feedsNote]) === 0);
 
+// "Ranch only" covers everything that belongs to one division — not only orders, payments and documents
+$divForm = static function (string $code, string $bankNo): array {
+    $dv = db_one('SELECT * FROM divisions WHERE code = ?', [$code]);
+    return ['action' => 'division', 'code' => $code, 'legal_name' => $dv['legal_name'] ?: 'GrazeX', 'bank_account_no' => $bankNo, 'bank_name' => $dv['bank_name'],
+            'bank_account_name' => $dv['bank_account_name'], 'bank_branch_code' => $dv['bank_branch_code'], 'vat_registered' => (int) $dv['vat_registered'], 'vat_no' => $dv['vat_no'],
+            'order_prefix' => $dv['order_prefix'], 'invoice_prefix' => $dv['invoice_prefix'], 'credit_prefix' => $dv['credit_prefix'], 'receipt_prefix' => $dv['receipt_prefix']];
+};
+$bankOf = static fn(string $code): string => (string) db_val('SELECT bank_account_no FROM divisions WHERE code = ?', [$code]);
+$feedsBank = $bankOf('feeds');
+[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('feeds', '99990000111'));
+check('a Ranch-only admin cannot change the Feeds bank details', $st === 403 && $bankOf('feeds') === $feedsBank, $st . ' ' . $bankOf('feeds'));
+[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('ranch', $bankOf('ranch')));
+check('… but can save the Ranch business details', $st === 200, (string) $st);
+$roSettings = $ro->page('/admin/settings.php');
+check('… and the Feeds business tab is not offered', str_contains($roSettings, 'tab=ranch') && !str_contains($roSettings, 'tab=feeds'));
+[$st] = $ro->headers('/admin/settings.php?tab=feeds');
+check('… nor opened by its address', $st === 403, (string) $st);
+$scopeStock = stock(6);
+[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust', 'variant_id' => 6, 'change' => '+5 scope test']);
+check('a Ranch-only admin cannot adjust feed stock', $st === 403 && stock(6) === $scopeStock, $st . ' ' . stock(6));
+[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust_lot', 'lot_id' => 1, 'change' => 'not a number']);
+check('… but reaches livestock adjustments (a mistyped change is a plain validation error)', $st === 422, (string) $st);
+[$st] = $ro->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => 0]);
+[$stPage] = $ro->headers('/admin/products.php');
+[$stLots] = $ro->headers('/admin/lots.php');
+check('… cannot open or change feed products, but can open livestock', $st === 403 && $stPage === 403 && $stLots === 200, "$st $stPage $stLots");
+[$st] = $ro->headers('/admin/reports.php?export=stock');
+check('… cannot export the feed stock valuation', $st === 403, (string) $st);
+$roInv = $ro->page('/admin/inventory.php');
+check('… and Inventory opens on Livestock, without the feed stock value', str_contains($roInv, 'tab=lots') && !str_contains($roInv, 'tab=receive') && !str_contains($roInv, 'Stock value (cost)'));
+[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'categories', 'id' => 0, 'name' => 'Scope test category']);
+check('… cannot add a feed category', $st === 403 && !db_val("SELECT 1 FROM categories WHERE name = 'Scope test category'"), (string) $st);
+[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '1', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
+[$st2] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
+[$st3] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '2', 'question' => 'Scope test FAQ?', 'answer' => 'Yes.']);
+check('… may add an FAQ for Ranch only (not for Feeds, not for both)', $st === 403 && $st2 === 403 && $st3 === 200
+    && (int) db_val("SELECT COUNT(*) FROM faqs WHERE question = 'Scope test FAQ?'") === 1, "$st $st2 $st3");
+db_exec("DELETE FROM faqs WHERE question = 'Scope test FAQ?'");
+$msgFeeds = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (1, 'contact', 'Feeds Asker', 'feedsasker@test.local', 'A feeds question')");
+$msgRanch = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (2, 'contact', 'Ranch Asker', 'ranchasker@test.local', 'A ranch question')");
+$roMsgs = $ro->page('/admin/messages.php?id=' . $msgFeeds);
+check('… sees Ranch messages, not Feeds ones', str_contains($roMsgs, 'Ranch Asker') && !str_contains($roMsgs, 'Feeds Asker'));
+check('… and a message that is not on the page is not marked read by its address', db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new');
+[$st] = $ro->api('POST', '/admin/api/messages.php', ['action' => 'archive', 'id' => $msgFeeds]);
+check('… and cannot archive or answer a Feeds message', $st === 404 && db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new', (string) $st);
+db_exec('DELETE FROM enquiries WHERE id IN (?, ?)', [$msgFeeds, $msgRanch]);
+// The bell: an alert is for admins who may act on it (titles carry customer names and amounts)
+$privNote = db_insert("INSERT INTO admin_notifications (division_id, type, title) VALUES (NULL, 'privacy', 'Account deletion request — Jane Doe (jane@test.local)')");
+[, $bellStaff] = $staff->api('GET', '/admin/api/notifications.php');
+[, $bellOwner] = $adm->api('GET', '/admin/api/notifications.php');
+$titles = static fn(array $r): array => array_column($r['data']['items'] ?? [], 'title');
+check('the bell hides alerts the admin has no permission to act on', !in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellStaff), true)
+    && in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellOwner), true), json_encode([$titles($bellStaff), $titles($bellOwner)]));
+$staff->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
+check('… and "mark all read" leaves them unread for those who can', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$privNote]) === 0);
+db_exec('DELETE FROM admin_notifications WHERE id = ?', [$privNote]);
+
 section('Security: input, uploads and links');
 $pub = new TestHttp($base);
 $pub->page('/pages/contact.php');
@@ -1183,63 +1300,6 @@ db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 2, 
 db_exec("DELETE FROM role_permissions WHERE role_id = 3 AND permission_id = ?", [$staffPerm('customers.view')]);
 $auditsBefore = (int) db_val("SELECT COUNT(*) FROM audit_log WHERE action = 'report.export'");
 $staff->headers('/admin/reports.php?export=customers');
-// "Ranch only" covers everything that belongs to one division — not only orders, payments and documents
-$divForm = static function (string $code, string $bankNo): array {
-    $dv = db_one('SELECT * FROM divisions WHERE code = ?', [$code]);
-    return ['action' => 'division', 'code' => $code, 'legal_name' => $dv['legal_name'] ?: 'GrazeX', 'bank_account_no' => $bankNo, 'bank_name' => $dv['bank_name'],
-            'bank_account_name' => $dv['bank_account_name'], 'bank_branch_code' => $dv['bank_branch_code'], 'vat_registered' => (int) $dv['vat_registered'], 'vat_no' => $dv['vat_no'],
-            'order_prefix' => $dv['order_prefix'], 'invoice_prefix' => $dv['invoice_prefix'], 'credit_prefix' => $dv['credit_prefix'], 'receipt_prefix' => $dv['receipt_prefix']];
-};
-$bankOf = static fn(string $code): string => (string) db_val('SELECT bank_account_no FROM divisions WHERE code = ?', [$code]);
-$feedsBank = $bankOf('feeds');
-[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('feeds', '99990000111'));
-check('a Ranch-only admin cannot change the Feeds bank details', $st === 403 && $bankOf('feeds') === $feedsBank, $st . ' ' . $bankOf('feeds'));
-[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('ranch', $bankOf('ranch')));
-check('… but can save the Ranch business details', $st === 200, (string) $st);
-$roSettings = $ro->page('/admin/settings.php');
-check('… and the Feeds business tab is not offered', str_contains($roSettings, 'tab=ranch') && !str_contains($roSettings, 'tab=feeds'));
-[$st] = $ro->headers('/admin/settings.php?tab=feeds');
-check('… nor opened by its address', $st === 403, (string) $st);
-$scopeStock = stock(6);
-[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust', 'variant_id' => 6, 'change' => '+5 scope test']);
-check('a Ranch-only admin cannot adjust feed stock', $st === 403 && stock(6) === $scopeStock, $st . ' ' . stock(6));
-[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust_lot', 'lot_id' => 1, 'change' => 'not a number']);
-check('… but reaches livestock adjustments (a mistyped change is a plain validation error)', $st === 422, (string) $st);
-[$st] = $ro->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => 0]);
-[$stPage] = $ro->headers('/admin/products.php');
-[$stLots] = $ro->headers('/admin/lots.php');
-check('… cannot open or change feed products, but can open livestock', $st === 403 && $stPage === 403 && $stLots === 200, "$st $stPage $stLots");
-[$st] = $ro->headers('/admin/reports.php?export=stock');
-check('… cannot export the feed stock valuation', $st === 403, (string) $st);
-$roInv = $ro->page('/admin/inventory.php');
-check('… and Inventory opens on Livestock, without the feed stock value', str_contains($roInv, 'tab=lots') && !str_contains($roInv, 'tab=receive') && !str_contains($roInv, 'Stock value (cost)'));
-[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'categories', 'id' => 0, 'name' => 'Scope test category']);
-check('… cannot add a feed category', $st === 403 && !db_val("SELECT 1 FROM categories WHERE name = 'Scope test category'"), (string) $st);
-[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '1', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
-[$st2] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
-[$st3] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '2', 'question' => 'Scope test FAQ?', 'answer' => 'Yes.']);
-check('… may add an FAQ for Ranch only (not for Feeds, not for both)', $st === 403 && $st2 === 403 && $st3 === 200
-    && (int) db_val("SELECT COUNT(*) FROM faqs WHERE question = 'Scope test FAQ?'") === 1, "$st $st2 $st3");
-db_exec("DELETE FROM faqs WHERE question = 'Scope test FAQ?'");
-$msgFeeds = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (1, 'contact', 'Feeds Asker', 'feedsasker@test.local', 'A feeds question')");
-$msgRanch = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (2, 'contact', 'Ranch Asker', 'ranchasker@test.local', 'A ranch question')");
-$roMsgs = $ro->page('/admin/messages.php?id=' . $msgFeeds);
-check('… sees Ranch messages, not Feeds ones', str_contains($roMsgs, 'Ranch Asker') && !str_contains($roMsgs, 'Feeds Asker'));
-check('… and a message that is not on the page is not marked read by its address', db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new');
-[$st] = $ro->api('POST', '/admin/api/messages.php', ['action' => 'archive', 'id' => $msgFeeds]);
-check('… and cannot archive or answer a Feeds message', $st === 404 && db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new', (string) $st);
-db_exec('DELETE FROM enquiries WHERE id IN (?, ?)', [$msgFeeds, $msgRanch]);
-// The bell: an alert is for admins who may act on it (titles carry customer names and amounts)
-$privNote = db_insert("INSERT INTO admin_notifications (division_id, type, title) VALUES (NULL, 'privacy', 'Account deletion request — Jane Doe (jane@test.local)')");
-[, $bellStaff] = $staff->api('GET', '/admin/api/notifications.php');
-[, $bellOwner] = $adm->api('GET', '/admin/api/notifications.php');
-$titles = static fn(array $r): array => array_column($r['data']['items'] ?? [], 'title');
-check('the bell hides alerts the admin has no permission to act on', !in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellStaff), true)
-    && in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellOwner), true), json_encode([$titles($bellStaff), $titles($bellOwner)]));
-$staff->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
-check('… and "mark all read" leaves them unread for those who can', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$privNote]) === 0);
-db_exec('DELETE FROM admin_notifications WHERE id = ?', [$privNote]);
-
 check('a refused export is not logged as an export', (int) db_val("SELECT COUNT(*) FROM audit_log WHERE action = 'report.export'") === $auditsBefore);
 db_exec("INSERT IGNORE INTO role_permissions (role_id, permission_id) SELECT 3, id FROM permissions WHERE slug = 'customers.view'");
 

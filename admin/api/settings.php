@@ -75,13 +75,27 @@ $known = array_flip(array_keys($before));
 $types = array_column(db_all('SELECT setting_key, value_type FROM settings'), 'value_type', 'setting_key');
 $save = [];
 // Check everything first: one bad value saves nothing (no half-saved settings)
+// The limits the form shows (it is submitted without browser validation, so they are enforced here)
+$limits = ['eft_hold_hours' => [1, null], 'eft_reminder_hours' => [1, null], 'yoco_hold_minutes' => [15, null], 'ranch_deposit_hold_hours' => [1, null],
+           'max_collection_days_ahead' => [1, null], 'email_hourly_cap' => [10, 450], 'retention_audit_days' => [90, null], 'retention_enquiries_days' => [30, null]];
 foreach ((array) input('s', []) as $key => $value) {
-    if (!isset($known[$key])) {
+    // Never the site's own bookkeeping (last runs, the setup stamp, the Yoco webhook secret) — only real settings
+    if (!isset($known[$key]) || preg_match('/^(last_|setup_|yoco_\w+_webhook_)/', (string) $key)) {
         continue;
     }
     $value = mb_substr(trim((string) $value), 0, 5000);
     if (($types[$key] ?? '') === 'int' && $value !== '' && !preg_match('/^\d{1,9}$/', $value)) {
         json_error(t('error.validation'), 422, ["s[{$key}]" => 'Enter a whole number.']);
+    }
+    if (isset($limits[$key]) && $value !== '') {
+        [$min, $max] = $limits[$key];
+        if ((int) $value < $min || ($max !== null && (int) $value > $max)) {
+            json_error(t('error.validation'), 422, ["s[{$key}]" => $max === null ? "Must be at least {$min}." : "Must be between {$min} and {$max}."]);
+        }
+    }
+    // One real address: a mistyped "Public email" is the Reply-To of every email the site sends
+    if (in_array($key, ['contact_email', 'low_stock_email'], true) && $value !== '' && !filter_var($value, FILTER_VALIDATE_EMAIL)) {
+        json_error(t('error.validation'), 422, ["s[{$key}]" => 'Enter one valid email address.']);
     }
     if ($key === 'announcement_link' && $value !== '' && !preg_match('#^(https://|/(?![/\\\\]))#i', $value)) {
         json_error(t('error.validation'), 422, ["s[{$key}]" => 'The link must start with https:// or be a page on this site (e.g. /feeds/specials.php).']);

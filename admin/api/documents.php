@@ -32,7 +32,9 @@ if (request_method() === 'POST') {
     json_ok([], 'Emailed to ' . $doc['billing_email'] . '.');
 }
 
-require_admin('documents.view');
+require_admin();
+// A proof of payment is opened from the Payments page, a SARS letter from the customer's page: each needs that page's
+// permission, not also "Documents"
 if (isset($_GET['pop'])) {
     require_admin('payments.verify');
     $p = db_one('SELECT * FROM payments WHERE id = ?', [query_int('pop')]);
@@ -51,6 +53,7 @@ if (isset($_GET['vat'])) {
     }
     stream_private_file($c['vat_farmer_doc_path'], 'VAT-registration-' . $c['id'] . '.' . pathinfo($c['vat_farmer_doc_path'], PATHINFO_EXTENSION), query_str('dl') === '1');
 }
+require_admin('documents.view');
 $doc = db_one('SELECT * FROM documents WHERE id = ?', [query_int('id')]);
 if (!$doc || !in_array((int) $doc['division_id'], admin_division_ids(), true)) {
     http_response_code(404);

@@ -106,7 +106,9 @@ final class MailService
         $m->Timeout = 20;
         $m->CharSet = 'UTF-8';
         $m->setFrom((string) env('mail.from_email'), (string) env('mail.from_name', 'GrazeX'));
-        $m->addReplyTo((string) (setting('contact_email') ?: env('mail.from_email')), (string) env('mail.from_name', 'GrazeX'));
+        // Reply-To is the public email from Settings; one that is not a valid address must never stop the email
+        $replyTo = (string) (setting('contact_email') ?: env('mail.from_email'));
+        $m->addReplyTo(PHPMailer::validateAddress($replyTo) ? $replyTo : (string) env('mail.from_email'), (string) env('mail.from_name', 'GrazeX'));
         $m->addAddress($row['to_email'], (string) ($row['to_name'] ?? ''));
         $m->Subject = $row['subject'];
         foreach (self::extraHeaders($row) as $name => $value) {

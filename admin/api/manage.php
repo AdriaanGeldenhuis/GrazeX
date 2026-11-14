@@ -113,8 +113,11 @@ try {
         if ($type === 'number' && $v === null && in_array($name, ['sort_order', 'lead_days'], true)) {
             $v = 0;
         }
-        if (in_array($name, ['min_spend_cents'], true) && $v === null) {
-            $v = 0;
+        if (in_array($name, ['min_spend_cents', 'value'], true) && $v === null) {
+            $v = 0; // NOT NULL columns: an empty box means 0 (a free-delivery coupon has no value)
+        }
+        if ($key === 'coupons' && $name === 'value' && (int) $v <= 0 && in_array($d['type'] ?? '', ['percent', 'fixed'], true)) {
+            throw new DomainException(($d['type'] === 'percent' ? 'Enter the percentage off' : 'Enter the amount off in cents') . ' — a coupon worth nothing would be accepted at checkout and give no discount.');
         }
         if ($name === 'min_order_cents' && $v === null) {
             $v = 0;

@@ -80,9 +80,9 @@ $id = db_tx(static function () use ($d, $in, $id, $slug, $cost, $admin, &$before
                  status, is_featured, meta_title, meta_description, qty_available, published_at)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0, IF(? IN (\'available\',\'coming_soon\'), NOW(), NULL))', array_merge($vals, [$d['status']]));
         StockService::adjustLot($id, (int) $d['qty_total'], 'initial', ['note' => 'New lot', 'admin_id' => (int) $admin['id']]);
-        if (in_array($d['status'], ['available', 'reserved'], true)) {
-            db_exec('UPDATE lots SET status = ? WHERE id = ?', [$d['status'], $id]);
-        }
+        // Adding the animals makes a "Sold" lot "Available" (StockService keeps sold-out in step with the count):
+        // a new lot keeps the status that was chosen
+        db_exec('UPDATE lots SET status = ? WHERE id = ?', [$d['status'], $id]);
     }
 
     // Health records

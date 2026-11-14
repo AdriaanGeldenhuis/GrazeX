@@ -44,7 +44,11 @@ try {
                 json_error('Payment not found or already handled.', 404);
             }
             $reason = mb_substr(trim((string) input('reason', '')) ?: 'We could not find this payment in our account.', 0, 250);
-            db_exec("UPDATE payments SET status = 'rejected', rejection_reason = ?, verified_by = ?, verified_at = NOW() WHERE id = ?", [$reason, $aid, $p['id']]);
+            // Only while it is still waiting: another admin may have approved it a moment ago
+            if (db_exec("UPDATE payments SET status = 'rejected', rejection_reason = ?, verified_by = ?, verified_at = NOW()
+                         WHERE id = ? AND status = 'awaiting_verification'", [$reason, $aid, $p['id']]) !== 1) {
+                json_error('Payment not found or already handled.', 404);
+            }
             // The email asks for a new proof: keep the stock long enough for that
             db_exec("UPDATE orders SET hold_expires_at = GREATEST(COALESCE(hold_expires_at, NOW()), NOW() + INTERVAL ? HOUR)
                      WHERE id = ? AND status IN ('pending_payment','reserved') AND payment_status = 'unpaid'", [setting_int('pop_reupload_hours', 24), $p['order_id']]);
@@ -61,8 +65,11 @@ try {
                 json_error('Order not found.', 404);
             }
             $d = validate_or_fail(input_all(), ['amount' => 'required|money', 'method' => 'required|in:cash,card,eft', 'reference' => 'nullable|max:100']);
-            if ($d['amount'] <= 0 || $d['amount'] > max(OrderService::amountDue($o), (int) $o['total_cents'])) {
-                json_error('That amount does not look right for this order.', 422, ['amount' => 'Check the amount.']);
+            // At most what is still outstanding (a deposit order may be paid in full at once) — not the order total again
+            $outstanding = max(OrderService::amountDue($o), (int) $o['total_cents'] - (int) $o['amount_paid_cents']);
+            if ($d['amount'] <= 0 || $d['amount'] > $outstanding) {
+                json_error('That amount does not look right for this order.', 422,
+                    ['amount' => $outstanding > 0 ? 'Check the amount — ' . money($outstanding) . ' is outstanding.' : 'Nothing is outstanding on this order.']);
             }
             OrderService::recordPayment((int) $o['id'], $d['amount'], $d['method'], null, ['admin_id' => $aid, 'reference' => $d['reference'] ?: $o['order_no']]);
             audit('payment.recorded', 'order', (int) $o['id'], ['amount' => $d['amount'], 'method' => $d['method']]);
