@@ -1572,7 +1572,16 @@ check('unverified account: data export does not include guest alerts/enquiries f
     $st === 200 && ($res['data']['download']['livestock_alerts'] ?? null) === [] && ($res['data']['download']['enquiries'] ?? null) === [], $st . ' ' . json_encode($res));
 check('unverified account: alerts page does not list them', !str_contains($vh->page('/account/alerts.php'), 'Pause'));
 $vtok = customer_token_create($vid, 'verify_email', 60);
-$vh->page('/account/verify.php?token=' . $vtok);
+// Opening the link (as a mail scanner does) must not confirm anything: only the button on that page does
+$vPage = $vh->page('/account/verify.php?token=' . $vtok);
+check('opening the confirmation link does not confirm the email by itself (mail scanners open links)',
+    db_val('SELECT email_verified_at FROM customers WHERE id = ?', [$vid]) === null && str_contains($vPage, 'data-action="verify_email"')
+    && (int) db_val("SELECT COUNT(*) FROM livestock_alerts WHERE email = 'victim@test.local' AND customer_id IS NOT NULL") === 0);
+[$st, $res] = $vh->api('POST', '/account/api/auth.php', ['action' => 'verify_email', 'token' => $vtok]);
+check('… the button on that page does', $st === 200 && ($res['data']['redirect'] ?? '') === '/account/'
+    && db_val('SELECT email_verified_at FROM customers WHERE id = ?', [$vid]) !== null, $st . ' ' . json_encode($res));
+[$st] = $vh->api('POST', '/account/api/auth.php', ['action' => 'verify_email', 'token' => $vtok]);
+check('… once (a used link is refused)', $st === 410, (string) $st);
 check('verifying the email links the guest alert and enquiry to the account',
     (int) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'victim@test.local'") === $vid && (int) db_val("SELECT customer_id FROM enquiries WHERE email = 'victim@test.local'") === $vid);
 [$st, $res] = $vh->api('POST', '/account/api/privacy.php', ['action' => 'export']);

@@ -7,6 +7,7 @@
  *   POST {action: forgot, email}
  *   POST {action: reset, token, password, password_confirm}
  *   POST {action: resend_verify}
+ *   POST {action: verify_email, token}   — the button on /account/verify.php (the emailed link itself changes nothing)
  */
 declare(strict_types=1);
 
@@ -111,6 +112,23 @@ switch ($action) {
             $link = app_url('/account/verify.php?token=' . $token);
             NotificationService::email('verify_email', $c['email'], $c['first_name'], ['first_name' => $c['first_name'], 'link' => $link], null, [], ['label' => 'Confirm my email', 'url' => $link]);
         }
+    case 'verify_email':
+        rate_limit_or_fail('verify_email', rate_limit_ip(), 30, 3600);
+        $cid = customer_token_consume((string) input('token', ''), 'verify_email');
+        if (!$cid) {
+            json_error('That confirmation link has expired or was already used. Log in and request a new one from your profile.', 410);
+        }
+        db_exec('UPDATE customers SET email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = ?', [$cid]);
+        $email = (string) db_val('SELECT email FROM customers WHERE id = ?', [$cid]);
+        // Alerts made in the account while the email was unproven are now confirmed by this link
+        db_exec('UPDATE livestock_alerts SET confirmed_at = NOW(), confirm_token = NULL WHERE customer_id = ? AND email = ? AND confirmed_at IS NULL', [$cid, $email]);
+        // Now that the address is proven, things sent from it without logging in join the account
+        db_exec('UPDATE livestock_alerts SET customer_id = ? WHERE customer_id IS NULL AND email = ?', [$cid, $email]);
+        db_exec('UPDATE enquiries SET customer_id = ? WHERE customer_id IS NULL AND email = ?', [$cid, $email]);
+        current_customer(true);
+        flash('success', 'Thanks — your email address is confirmed.');
+        json_ok(['redirect' => current_customer() ? '/account/' : '/account/login.php']);
+
         json_ok([], 'Check your inbox for the confirmation link.');
 
     default:
