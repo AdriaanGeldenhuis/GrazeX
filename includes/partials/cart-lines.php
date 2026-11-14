@@ -28,7 +28,7 @@ $compact ??= false;
               <?php if ($line['pricing_mode'] === 'per_kg'): ?>
                 <?= e(money($line['price_cents'])) ?>/kg · est. <?= e(kg($line['est_weight_kg'])) ?> total
               <?php else: ?>
-                <?= e(money($line['unit'], false)) ?> per head
+                <?= e(money($line['unit'], $line['unit'] % 100 !== 0)) ?> per head
               <?php endif; ?>
               <?php if ($line['deposit'] > 0): ?> · deposit <?= e(money($line['deposit'])) ?><?php endif; ?>
             </div>

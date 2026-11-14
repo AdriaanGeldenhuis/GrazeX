@@ -223,7 +223,7 @@ function province_options(?string $selected = null): string
 function division_has_faqs(string $division): bool
 {
     try {
-        return (bool) db_val('SELECT 1 FROM faqs WHERE is_active = 1 AND division_id = ? LIMIT 1', [division_id($division)]);
+        return (bool) db_val('SELECT 1 FROM faqs WHERE is_active = 1 AND (division_id = ? OR division_id IS NULL) LIMIT 1', [division_id($division)]);
     } catch (Throwable $e) {
         return false;
     }

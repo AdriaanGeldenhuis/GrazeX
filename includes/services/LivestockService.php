@@ -121,7 +121,8 @@ final class LivestockService
             $est = $lot['avg_weight_kg'] ? (int) round((float) $lot['avg_weight_kg'] * (int) $lot['price_cents']) : null;
             return ['main' => money((int) $lot['price_cents']), 'unit' => '/kg live', 'note' => $est ? '≈ ' . money($est, false) . ' per head' : null];
         }
-        return ['main' => money((int) $lot['price_cents'], false), 'unit' => '/head', 'note' => null];
+        // Whole rands without ".00"; a price with cents keeps them (R 1 250.50 is not shown as R 1 251)
+        return ['main' => money((int) $lot['price_cents'], (int) $lot['price_cents'] % 100 !== 0), 'unit' => '/head', 'note' => null];
     }
 
     public static function sexLabel(string $sex): string

@@ -10,11 +10,11 @@ require __DIR__ . '/includes/bootstrap.php';
 // Live numbers (fail soft so the landing never breaks)
 $stats = ['lots' => 0, 'products' => 0, 'specials' => 0];
 try {
-    $stats['lots'] = (int) db_val("SELECT COUNT(*) FROM lots WHERE status = 'available' AND qty_available > 0");
+    $stats['lots'] = (int) db_val("SELECT COUNT(*) FROM lots WHERE status IN ('available','reserved') AND qty_available > 0");
     $stats['products'] = (int) db_val('SELECT COUNT(DISTINCT p.id) FROM products p JOIN product_variants v ON v.product_id = p.id
                                        WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty > 0');
     $stats['specials'] = (int) db_val('SELECT COUNT(DISTINCT v.product_id) FROM product_variants v JOIN products p ON p.id = v.product_id
-                                       WHERE p.is_active = 1 AND v.is_active = 1 AND v.special_price_cents IS NOT NULL
+                                       WHERE p.is_active = 1 AND v.is_active = 1 AND v.special_price_cents IS NOT NULL AND v.special_price_cents < v.price_cents
                                        AND (v.special_from IS NULL OR v.special_from <= NOW()) AND (v.special_to IS NULL OR v.special_to >= NOW())');
 } catch (Throwable $e) {
     gx_log('warning', 'Gateway stats failed: ' . $e->getMessage());

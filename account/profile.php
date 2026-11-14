@@ -28,7 +28,7 @@ require GX_ROOT . '/includes/layout/header.php';
           </div>
           <div class="grid-2">
             <div class="field"><label for="phone">Cellphone</label><input class="input" id="phone" name="phone" type="tel" value="<?= e($full['phone']) ?>" required></div>
-            <div class="field"><label>Email</label><input class="input" value="<?= e($full['email']) ?>" disabled><span class="hint"><?= $full['email_verified_at'] ? '✓ Confirmed' : 'Not confirmed yet' ?></span></div>
+            <div class="field"><label for="email">Email</label><input class="input" id="email" type="email" value="<?= e($full['email']) ?>" disabled><span class="hint"><?= $full['email_verified_at'] ? '✓ Confirmed' : 'Not confirmed yet' ?></span></div>
           </div>
           <div class="grid-2">
             <div class="field"><label for="farm_name">Farm name</label><input class="input" id="farm_name" name="farm_name" value="<?= e($full['farm_name']) ?>"></div>

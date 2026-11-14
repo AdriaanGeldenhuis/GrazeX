@@ -13,8 +13,8 @@ $breeds = LivestockService::breeds();
 $cats = LivestockService::categories();
 $stats = db_one("SELECT COUNT(*) AS lots, COALESCE(SUM(qty_available),0) AS head, ROUND(AVG(avg_weight_kg),1) AS avg_w
                  FROM lots WHERE status IN ('available','reserved') AND qty_available > 0");
-$faqs = db_all('SELECT question, answer FROM faqs WHERE is_active = 1 AND division_id = ? ORDER BY sort_order, id', [$divId]);
-$testimonials = db_all('SELECT name, location, quote, rating FROM testimonials WHERE is_active = 1 AND division_id = ? ORDER BY sort_order LIMIT 3', [$divId]);
+$faqs = db_all('SELECT question, answer FROM faqs WHERE is_active = 1 AND (division_id = ? OR division_id IS NULL) ORDER BY sort_order, id', [$divId]);
+$testimonials = db_all('SELECT name, location, quote, rating FROM testimonials WHERE is_active = 1 AND (division_id = ? OR division_id IS NULL) ORDER BY sort_order LIMIT 3', [$divId]);
 
 $page = [
     'title' => 'Ranch',

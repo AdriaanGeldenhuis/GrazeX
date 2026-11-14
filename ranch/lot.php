@@ -45,7 +45,7 @@ if (count($l['weighs']) >= 2) {
     $adg = $gain / $daysSpan * 1000;
     ob_start(); ?>
     <figure class="weigh-chart">
-      <svg viewBox="0 0 <?= $w ?> <?= $h ?>" role="img" aria-label="Average weight rose from <?= e(kg($vals[0])) ?> to <?= e(kg($vals[$n - 1])) ?>">
+      <svg viewBox="0 0 <?= $w ?> <?= $h ?>" role="img" aria-label="Average weight went from <?= e(kg($vals[0])) ?> to <?= e(kg($vals[$n - 1])) ?>">
         <defs><linearGradient id="wg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#86d51a" stop-opacity=".35"/><stop offset="1" stop-color="#86d51a" stop-opacity="0"/></linearGradient></defs>
         <polygon points="<?= $area ?>" fill="url(#wg)"/>
         <polyline points="<?= $line ?>" fill="none" stroke="#86d51a" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
@@ -56,7 +56,7 @@ if (count($l['weighs']) >= 2) {
         <?php endforeach; ?>
       </svg>
       <figcaption class="row-between small"><span class="muted">Average live weight (kg)</span>
-        <span class="badge badge-success">+<?= e(number_format($gain, 1)) ?> kg · ±<?= (int) round($adg) ?> g/day</span></figcaption>
+        <span class="badge <?= $gain >= 0 ? 'badge-success' : 'badge-warning' ?>"><?= $gain >= 0 ? '+' : '−' ?><?= e(number_format(abs($gain), 1)) ?> kg · ±<?= (int) round(abs($adg)) ?> g/day</span></figcaption>
     </figure>
     <?php $chart = (string) ob_get_clean();
 }
@@ -200,7 +200,7 @@ require GX_ROOT . '/includes/layout/header.php';
           <?php foreach ($l['health'] as $hr): ?>
             <tr><td class="nowrap"><?= e(fmt_date($hr['record_date'])) ?></td><td><span class="badge"><?= e(ucfirst($hr['type'])) ?></span></td>
               <td><?= e($hr['product_used'] ?? '—') ?></td><td class="muted"><?= e($hr['notes'] ?? '') ?></td>
-              <td class="nowrap"><?= $hr['withdrawal_until'] ? e(fmt_date($hr['withdrawal_until'])) . (strtotime($hr['withdrawal_until']) < time() ? ' <span class="badge badge-success">Cleared</span>' : ' <span class="badge badge-warning">Active</span>') : '—' ?></td></tr>
+              <td class="nowrap"><?= $hr['withdrawal_until'] ? e(fmt_date($hr['withdrawal_until'])) . ($hr['withdrawal_until'] < date('Y-m-d') ? ' <span class="badge badge-success">Cleared</span>' : ' <span class="badge badge-warning">Active</span>') : '—' ?></td></tr>
           <?php endforeach; ?>
           </tbody></table></div>
       <?php else: ?><p class="muted">No health records captured yet.</p><?php endif; ?>
