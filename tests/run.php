@@ -2026,6 +2026,27 @@ check('a collection time that orders use cannot be deleted (it would vanish from
 [$st] = $adm->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'menu_items', 'id' => 0, 'location' => 'footer', 'label' => 'Elsewhere', 'url' => '//evil.example/x', 'is_active' => 1]);
 check('a footer link must be a page on this site or an https:// address', $st === 422 && !db_val("SELECT 1 FROM menu_items WHERE label = 'Elsewhere'"), (string) $st);
 
+// The mail server is down (nothing listens on this port): waiting emails keep their tries and the run stops at the first
+$mailWas = $GLOBALS['GX_ENV']['mail'];
+$GLOBALS['GX_ENV']['mail'] = ['host' => '127.0.0.1', 'port' => 2599, 'user' => 'orders@test.local', 'pass' => 'x', 'secure' => 'ssl', 'from_email' => 'orders@test.local', 'from_name' => 'GrazeX'] + $mailWas;
+db_exec("UPDATE email_queue SET status = 'sent', sent_at = NOW() WHERE status = 'queued'"); // only the two below are waiting
+$down1 = MailService::queue('down1@test.local', 'Down One', 'Waiting 1', '<p>x</p>');
+$down2 = MailService::queue('down2@test.local', 'Down Two', 'Waiting 2', '<p>x</p>');
+$sentNow = MailService::processQueue(5);
+$d1 = db_one('SELECT status, attempts, last_error FROM email_queue WHERE id = ?', [$down1]);
+$d2 = db_one('SELECT status, attempts, last_error FROM email_queue WHERE id = ?', [$down2]);
+check('with the mail server down an email keeps waiting and loses none of its five tries', $sentNow === 0 && $d1['status'] === 'queued' && (int) $d1['attempts'] === 0
+    && $d1['last_error'] !== null, json_encode($d1));
+check('… and the run stops at the first one (no long timeout per waiting email)', $d2['status'] === 'queued' && (int) $d2['attempts'] === 0 && $d2['last_error'] === null, json_encode($d2));
+db_exec('UPDATE email_queue SET send_after = NOW() - INTERVAL 1 MINUTE WHERE id = ?', [$down1]);
+MailService::sendNow($down1);
+check('… also when an email is sent straight away', (int) db_val('SELECT attempts FROM email_queue WHERE id = ?', [$down1]) === 0);
+db_exec('UPDATE email_queue SET created_at = NOW() - INTERVAL 1 HOUR WHERE id = ?', [$down1]);
+check('… and the dashboard tells the admin that emails are not going out', MailService::stuckReason() !== null && str_contains($adm->page('/admin/'), 'data-mail-warning'), (string) MailService::stuckReason());
+db_exec('DELETE FROM email_queue WHERE id IN (?, ?)', [$down1, $down2]);
+check('… the warning goes when nothing is waiting any more', MailService::stuckReason() === null && !str_contains($adm->page('/admin/'), 'data-mail-warning'));
+$GLOBALS['GX_ENV']['mail'] = $mailWas;
+
 // A card order under R2.00 cannot be paid at Yoco: it is refused at checkout instead of being placed and left to expire
 as_customer($c3);
 CartService::clear('feeds');

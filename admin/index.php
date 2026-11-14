@@ -48,6 +48,8 @@ $low = !admin_has_division('feeds') ? [] : db_all('SELECT v.id, v.name, v.stock_
 // Scheduled jobs (emails, reminders, clean-up) depend on the server cron; warn when it has stopped
 $lastCron = setting('last_cron_run');
 $cronLate = !$lastCron || strtotime($lastCron) < time() - 3 * 3600;
+// Emails waiting because the mail server cannot be reached or refuses the login (they go out once it answers again)
+$mailStuck = MailService::stuckReason();
 
 $admin = admin_start('Dashboard', 'dashboard', ['perm' => 'dashboard.view']);
 ?>
@@ -65,6 +67,13 @@ $admin = admin_start('Dashboard', 'dashboard', ['perm' => 'dashboard.view']);
   <div class="alert alert-warning" role="alert" data-cron-warning><svg class="icon"><use href="#i-clock"/></svg><div>
     <strong>Scheduled jobs are not running.</strong> <?= $lastCron ? 'The last run was ' . e(fmt_datetime($lastCron)) . '.' : 'They have never run on this server.' ?>
     Queued emails, payment reminders and clean-up wait until it runs. In Xneelo's Cronjob Manager, run <code>cron/run.php</code> every 2 hours (see the README).
+  </div></div>
+<?php endif; ?>
+
+<?php if ($mailStuck !== null): ?>
+  <div class="alert alert-warning" role="alert" data-mail-warning><svg class="icon"><use href="#i-mail"/></svg><div>
+    <strong>Emails are not going out.</strong> The mail server said: “<?= e(str_limit($mailStuck, 160)) ?>”.
+    Order emails and invoices are waiting and will be sent as soon as it works again — check the mailbox password and the <code>MAIL_*</code> settings on the server.
   </div></div>
 <?php endif; ?>
 
