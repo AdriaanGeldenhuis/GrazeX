@@ -19,6 +19,8 @@ if (!preg_match('/^[A-Za-z0-9_]+_test$/', $testDb)) {
     exit(1);
 }
 $GLOBALS['GX_ENV']['db']['name'] = $testDb;
+// Never a real mail server: with the example settings every test email would log in to the live SMTP host
+$GLOBALS['GX_ENV']['mail']['host'] = '';
 
 // ---------------------------------------------------------------------
 // Worker mode (used by the concurrency test): place an order for the last unit
@@ -754,6 +756,8 @@ yoco_pending($cc, 'ch_open');
 check('customer cannot cancel while a card payment is in progress', $st === 409);
 $html = $cust->page('/account/order.php?no=' . rawurlencode($cc['order_no']));
 check('… and the order page explains instead of showing a Cancel button', !str_contains($html, 'Cancel this order') && str_contains($html, 'card payment for this order is in progress'));
+check('… and offers EFT as well ("Pay another way" leads to this page): bank details and the proof-of-payment form',
+    str_contains($html, 'id="pop-form"') && str_contains($html, '62000000001') && str_contains($html, '/payments/pay.php?t='));
 db_exec("UPDATE payments SET created_at = NOW() - INTERVAL 2 HOUR WHERE provider_checkout_id = 'ch_open'");
 [$st] = $cust->api('POST', '/account/api/orders.php', ['action' => 'cancel', 'order_no' => $cc['order_no']]);
 check('… but can once that checkout has lapsed', $st === 200);
@@ -1978,6 +1982,68 @@ $hf = $pv->page('/pages/contact.php');
 check('footer shows old-style menu links in the pretty form', str_contains($hf, 'href="/pages/about"') && !str_contains($hf, 'slug=about'));
 db_exec("UPDATE menu_items SET url = '/pages/about' WHERE url = '/pages/page.php?slug=about'");
 
+section('Review fixes: storefront, forms and lists');
+$bothFaq = db_insert("INSERT INTO faqs (division_id, question, answer, is_active) VALUES (NULL, 'Do both shops share this answer?', 'Yes.', 1)");
+check('an FAQ saved for both divisions shows on Feeds and on Ranch', str_contains($pub->page('/feeds/'), 'Do both shops share this answer?')
+    && str_contains($pub->page('/ranch/'), 'Do both shops share this answer?'));
+db_exec('DELETE FROM faqs WHERE id = ?', [$bothFaq]);
+$lp = db_one("SELECT id, slug FROM lots WHERE slug = 'already-sold-t-3'"); // the lot saved as "Sold" earlier (an earlier test renumbers it)
+db_exec('INSERT INTO weigh_sessions (lot_id, weighed_on, head_count, avg_weight_kg, total_weight_kg) VALUES (?, ?, 12, 42.0, 504), (?, ?, 12, 40.5, 486)',
+    [$lp['id'], date('Y-m-d', strtotime('-14 days')), $lp['id'], date('Y-m-d')]);
+db_exec("INSERT INTO lot_health_records (lot_id, record_date, type, product_used, withdrawal_until) VALUES (?, ?, 'dosing', 'Test dose', ?)",
+    [$lp['id'], date('Y-m-d', strtotime('-7 days')), date('Y-m-d')]);
+$lotHtml = $pub->page(lot_url($lp['slug']));
+check('a withdrawal period that ends today is still active today', str_contains($lotHtml, 'badge-warning">Active') && !str_contains($lotHtml, 'badge-success">Cleared'));
+check('a lot that lost weight is not shown as a gain', str_contains($lotHtml, '−1.5 kg') && !str_contains($lotHtml, '+-') && !str_contains($lotHtml, 'rose from'));
+check('a per-head price with cents keeps its cents', LivestockService::priceLabel(['pricing_mode' => 'per_head', 'price_cents' => 125050, 'avg_weight_kg' => null])['main'] === 'R 1 250.50'
+    && LivestockService::priceLabel(['pricing_mode' => 'per_head', 'price_cents' => 150000, 'avg_weight_kg' => null])['main'] === 'R 1 500');
+
+// JSON numbers where text is expected: taken as text (they used to end in an error page)
+[$st, $res] = $pub->api('POST', '/pages/api/contact.php', ['name' => 12345, 'email' => 'numbers@test.local', 'message' => 'hello there']);
+check('a number where text is expected is taken as text, not an error page', $st === 200 && (string) db_val("SELECT name FROM enquiries WHERE email = 'numbers@test.local'") === '12345',
+    $st . ' ' . json_encode($res));
+db_exec("DELETE FROM enquiries WHERE email = 'numbers@test.local'");
+$np = new TestHttp($base);
+$np->page('/account/login.php');
+[$st] = $np->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'nobody-numeric@test.local', 'password' => 12345678901]);
+check('… a numeric password is a wrong password (422)', $st === 422, (string) $st);
+$np->page('/admin/login.php');
+[$st] = $np->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'nobody-numeric@test.local', 'password' => 12345678901]);
+check('… on the admin login too', in_array($st, [401, 422], true), (string) $st);
+[$utfClean, $utfErr] = validate(['name' => true], ['name' => 'required|max:100']);
+check('… and true/false where text is expected is refused', isset($utfErr['name']));
+
+$_SERVER['HTTP_USER_AGENT'] = "Mozilla/5.0 \xff\xfe Broken";
+check('a browser name with stray bytes is stored as valid text', mb_check_encoding(user_agent(), 'UTF-8') && str_contains(user_agent(), 'Mozilla/5.0'));
+unset($_SERVER['HTTP_USER_AGENT']);
+$longSlug = slugify(str_repeat('Long product name ', 20), 150);
+check('a web address made from a long name fits its column', strlen($longSlug) <= 150 && !str_ends_with($longSlug, '-') && slugify('Short name', 150) === 'short-name', $longSlug);
+
+$usedSlot = (int) db_val('SELECT collection_slot_id FROM orders WHERE collection_slot_id IS NOT NULL ORDER BY id DESC LIMIT 1');
+[$st, $res] = $adm->api('POST', '/admin/api/manage.php', ['action' => 'delete', 'e' => 'collection_slots', 'id' => $usedSlot]);
+check('a collection time that orders use cannot be deleted (it would vanish from those orders)', $st === 409
+    && (bool) db_val('SELECT 1 FROM collection_slots WHERE id = ?', [$usedSlot]) && (bool) db_val('SELECT 1 FROM orders WHERE collection_slot_id = ?', [$usedSlot]), $st . ' ' . json_encode($res));
+[$st] = $adm->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'menu_items', 'id' => 0, 'location' => 'footer', 'label' => 'Elsewhere', 'url' => '//evil.example/x', 'is_active' => 1]);
+check('a footer link must be a page on this site or an https:// address', $st === 422 && !db_val("SELECT 1 FROM menu_items WHERE label = 'Elsewhere'"), (string) $st);
+
+// A card order under R2.00 cannot be paid at Yoco: it is refused at checkout instead of being placed and left to expire
+as_customer($c3);
+CartService::clear('feeds');
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 6, 'qty' => 1]);
+[, $tinyQ] = $co->api('POST', '/feeds/api/checkout.php', ['action' => 'quote', 'fulfilment' => 'collection', 'payment_method' => 'yoco']);
+$tinyCoupon = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active) VALUES ('ALMOSTFREE', 'fixed', ?, 1, 1)", [(int) ($tinyQ['data']['total'] ?? 0) - 100]);
+db_exec('UPDATE carts SET coupon_id = ? WHERE customer_id = ? AND division_id = 1', [$tinyCoupon, $c3['id']]);
+$tinySlot = slot(1);
+$tinyOrders = (int) db_val('SELECT COUNT(*) FROM orders WHERE customer_id = ?', [$c3['id']]);
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', ['action' => 'place', 'billing_name' => 'Tiny Card', 'billing_phone' => '0821234567', 'fulfilment' => 'collection',
+    'payment_method' => 'yoco', 'accept_terms' => 1, 'collection_date' => $tinySlot['collection_date'], 'collection_slot_id' => $tinySlot['collection_slot_id']]);
+check('a card order of R1.00 is refused at checkout (card payments start at R2.00)', $st === 422 && isset($res['errors']['payment_method'])
+    && (int) db_val('SELECT COUNT(*) FROM orders WHERE customer_id = ?', [$c3['id']]) === $tinyOrders, $st . ' ' . json_encode($res));
+db_exec('UPDATE carts SET coupon_id = NULL WHERE customer_id = ? AND division_id = 1', [$c3['id']]);
+db_exec('DELETE FROM coupons WHERE id = ?', [$tinyCoupon]);
+as_customer($c3);
+CartService::clear('feeds');
+
 section('Phase 5: accessibility, speed and small UX (server side)');
 $fh5 = $pv->page('/feeds/');
 check('closed cart drawer is inert and a real modal when open', (bool) preg_match('#<aside class="drawer" id="cart-drawer"[^>]*aria-modal="true"[^>]*inert>#', $fh5));
@@ -2114,6 +2180,9 @@ $stillIn = static function (TestHttp $h): bool {
     return $st === 200;
 };
 $rmCid = $mkRemember('remember@test.local');
+$mkRemember('badua@test.local');
+$badUa = $loginAs('badua@test.local', true, ["User-Agent: Broken\xff\xfeBrowser/1.0"]);
+check('"keep me logged in" works for a browser whose name has stray bytes', $badUa->cookie('GXREMEMBER') !== null && $stillIn($badUa));
 $rm = $loginAs('remember@test.local', true);
 $rmSet = implode(' | ', array_filter($rm->lastHeaders['set-cookie'] ?? [], static fn($c) => str_starts_with($c, 'GXREMEMBER=')));
 check('"Keep me logged in" sets a 60-day HttpOnly, SameSite=Lax cookie', preg_match('/^GXREMEMBER=[a-f0-9]{24}\.[a-f0-9]{64};/', $rmSet) === 1
