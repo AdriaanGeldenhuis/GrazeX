@@ -7,9 +7,9 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 
 $result = CatalogService::products(['specials' => true, 'per_page' => 48, 'sort' => 'price_asc']);
-$tiered = db_all('SELECT DISTINCT p.slug FROM price_tiers pt JOIN product_variants v ON v.id = pt.variant_id JOIN products p ON p.id = v.product_id WHERE p.is_active = 1 AND v.is_active = 1');
-$bulk = CatalogService::products(['per_page' => 8, 'in_stock' => true]);
-$bulkItems = array_values(array_filter($bulk['items'], static fn($i) => $i['tier_from'] !== null));
+// Products with bulk prices: looked for among all in-stock products (not only the first 8), up to 8 shown
+$bulk = CatalogService::products(['per_page' => 48, 'in_stock' => true]);
+$bulkItems = array_slice(array_values(array_filter($bulk['items'], static fn($i) => $i['tier_from'] !== null)), 0, 8);
 
 $page = [
     'title' => 'Specials',

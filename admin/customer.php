@@ -11,7 +11,9 @@ if (!$c) {
     http_response_code(404);
     exit('Customer not found.');
 }
-$orders = db_all('SELECT * FROM orders WHERE customer_id = ? ORDER BY placed_at DESC', [$c['id']]);
+// Only orders of the divisions this admin may see ("Feeds only" / "Ranch only")
+$orders = db_all('SELECT * FROM orders WHERE customer_id = ? AND division_id IN (' . db_placeholders(admin_division_ids()) . ') ORDER BY placed_at DESC',
+    array_merge([$c['id']], admin_division_ids()));
 $addresses = db_all('SELECT * FROM customer_addresses WHERE customer_id = ?', [$c['id']]);
 $ltv = array_sum(array_map(static fn($o) => in_array($o['status'], ['cancelled', 'expired', 'refunded'], true) ? 0 : (int) $o['total_cents'], $orders));
 $api = '/admin/api/customers.php';
@@ -61,7 +63,7 @@ admin_start($c['first_name'] . ' ' . $c['last_name'], 'customers', ['perm' => 'c
       <section class="card card-pad adm-section">
         <h2 class="h4 mb-1">VAT-registered farmer</h2>
         <p>Status: <strong><?= e($c['vat_farmer_status']) ?></strong></p>
-        <?php if ($c['vat_farmer_doc_path']): ?><a class="btn btn-sm" href="/admin/api/documents.php?vat=<?= (int) $c['id'] ?>" target="_blank" rel="noopener" data-download>View SARS document</a><?php endif; ?>
+        <?php if ($c['vat_farmer_doc_path'] && admin_can('customers.manage')): ?><a class="btn btn-sm" href="/admin/api/documents.php?vat=<?= (int) $c['id'] ?>" target="_blank" rel="noopener" data-download>View SARS document</a><?php endif; ?>
         <?php if ($c['vat_farmer_status'] === 'pending' && admin_can('customers.manage')): ?>
           <div class="row mt-2">
             <button class="btn btn-sm btn-green" type="button" data-admin-act="<?= e($api) ?>" data-payload='<?= e(json_encode(['action' => 'vat_verify', 'id' => (int) $c['id']])) ?>'>Verify</button>

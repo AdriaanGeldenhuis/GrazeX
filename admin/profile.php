@@ -34,7 +34,7 @@ unset($_SESSION['totp_recovery_show']);
     <?php if ((int) $admin['totp_enabled']): ?>
       <div class="alert alert-success mb-2">✓ On</div>
       <form data-admin-form data-api="/admin/api/auth.php" data-action="2fa_disable" data-reload novalidate>
-        <?= af_text('password', 'Your password to switch it off', '', ['type' => 'password', 'required' => true]) ?>
+        <?= af_text('password', 'Your password to switch it off', '', ['type' => 'password', 'required' => true, 'id' => 'tfa-off-password', 'autocomplete' => 'current-password']) ?>
         <button class="btn btn-danger btn-sm" type="submit">Switch off</button>
       </form>
     <?php else: ?>

@@ -16,6 +16,7 @@
     GX.bindForm(form, {
       body: (f) => ({ action: f.dataset.auth, ...Object.fromEntries(new FormData(f).entries()) }),
       onSuccess() { GX.toast('Welcome! Continue with your order.'); setTimeout(() => location.reload(), 400); },
+      leaves: true,
     });
     form.dataset.api = '/account/api/auth.php';
   });
@@ -92,10 +93,7 @@
       setT('vat', GX.money(q.vat));
       setT('due_now', GX.money(q.due_now));
       setT('balance', GX.money(q.balance));
-      const now = division === 'ranch' ? q.deposit : (body.payment_method === 'cash_on_collection' ? q.total : q.total);
-      $('[data-total-now]').textContent = GX.money(now);
-      $('[data-submit-label]').textContent = division === 'ranch' ? (q.deposit ? 'Reserve & pay deposit' : 'Reserve')
-        : body.payment_method === 'yoco' ? 'Pay now' : 'Place order';
+      $('[data-total-now]').textContent = GX.money(division === 'ranch' ? q.deposit : q.total);
 
       // Payment methods allowed for this fulfilment
       $$('[data-method]', form).forEach((card) => {
@@ -107,6 +105,12 @@
         const firstOk = form.querySelector('[data-method]:not([hidden]) input');
         if (firstOk) firstOk.checked = true;
       }
+      // The button says what the method that is selected NOW will do (it may just have been switched above, e.g.
+      // "Pay on collection" is not offered for delivery), and the amounts are worked out again for that method
+      const method = form.querySelector('[name="payment_method"]:checked')?.value || '';
+      $('[data-submit-label]').textContent = division === 'ranch' ? (q.deposit ? 'Reserve & pay deposit' : 'Reserve')
+        : method === 'yoco' ? 'Pay now' : 'Place order';
+      if (method && method !== body.payment_method) quote();
       // No way to pay this order online: say so and keep the button off (instead of a silent validation error)
       const noMethods = q.methods.length === 0;
       const noBox = $('[data-no-methods]', form);

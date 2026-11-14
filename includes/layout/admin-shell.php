@@ -30,17 +30,45 @@ const GX_ADMIN_NAV = [
     ['audit', '/admin/audit.php', 'Audit log', 'clock', 'audit.view'],
 ];
 
+/**
+ * Is this nav link for the admin? Their permission, and for the two catalogues their division: feed products are
+ * Feeds, livestock is Ranch. "Lists & setup" shows when the admin may edit at least one of its lists.
+ */
+function admin_nav_allowed(string $key, string $perm): bool
+{
+    if ($key === 'setup') {
+        foreach (array_unique(array_column(require GX_ROOT . '/includes/admin_entities.php', 'perm')) as $listPerm) {
+            if (admin_can((string) $listPerm)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (!admin_can($perm)) {
+        return false;
+    }
+    return match ($key) {
+        'products' => admin_has_division('feeds'),
+        'lots' => admin_has_division('ranch'),
+        default => true,
+    };
+}
+
 /** Counters shown as badges on the nav (cheap queries). */
 function admin_badges(): array
 {
     static $b = null;
     if ($b === null) {
+        // Only what this admin may see: their divisions ("Feeds only" / "Ranch only") and, for the bell, their permissions
+        $ids = admin_division_ids();
+        $in = db_placeholders($ids);
+        [$bellHide, $bellParams] = admin_notification_filter();
         $b = [
-            'payments' => (int) db_val("SELECT COUNT(*) FROM payments WHERE status = 'awaiting_verification'"),
-            'orders' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('paid','awaiting_collection','deposit_paid','processing')"),
-            'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new'"),
-            'bell' => (int) db_val('SELECT COUNT(*) FROM admin_notifications WHERE is_read = 0 AND (division_id IS NULL OR division_id IN ('
-                . db_placeholders(admin_division_ids()) . '))', admin_division_ids()),
+            'payments' => (int) db_val("SELECT COUNT(*) FROM payments WHERE status = 'awaiting_verification' AND division_id IN ({$in})", $ids),
+            'orders' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('paid','awaiting_collection','deposit_paid','processing') AND division_id IN ({$in})", $ids),
+            'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new' AND (division_id IS NULL OR division_id IN ({$in}))", $ids),
+            'bell' => (int) db_val("SELECT COUNT(*) FROM admin_notifications WHERE is_read = 0 AND (division_id IS NULL OR division_id IN ({$in})){$bellHide}",
+                array_merge($ids, $bellParams)),
         ];
     }
     return $b;
@@ -63,7 +91,8 @@ function admin_start(string $title, string $active, array $opts = []): array
   <aside class="adm-side" id="adm-side" aria-label="Admin navigation">
     <a class="adm-brand" href="/admin/"><span class="brand"><span>Graze<b>X</b></span></span><span class="badge">Admin</span></a>
     <nav class="adm-nav">
-      <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]): if (!admin_can($perm) || ($key === 'users' && ($admin['role_slug'] !== 'owner' || $admin['division_scope'] !== 'all'))) continue; ?>
+      <?php foreach (GX_ADMIN_NAV as [$key, $href, $label, $icon, $perm]):
+          if (!admin_nav_allowed($key, $perm) || ($key === 'users' && ($admin['role_slug'] !== 'owner' || $admin['division_scope'] !== 'all'))) continue; ?>
         <a href="<?= e($href) ?>"<?= $active === $key ? ' aria-current="page"' : '' ?>>
           <svg class="icon icon-sm"><use href="#i-<?= e($icon) ?>"/></svg><span><?= e($label) ?></span>
           <?php if (!empty($badges[$key])): ?><span class="adm-count"><?= (int) $badges[$key] ?></span><?php endif; ?>
@@ -111,9 +140,9 @@ function admin_end(): void
 
   <nav class="adm-bottom" aria-label="Quick navigation">
     <a href="/admin/"><svg class="icon"><use href="#i-grid"/></svg>Home</a>
-    <a href="/admin/orders.php"><svg class="icon"><use href="#i-bag"/></svg>Orders<?php if ($badges['orders']): ?><span class="adm-count"><?= (int) $badges['orders'] ?></span><?php endif; ?></a>
-    <a href="/admin/payments.php"><svg class="icon"><use href="#i-card"/></svg>Payments<?php if ($badges['payments']): ?><span class="adm-count"><?= (int) $badges['payments'] ?></span><?php endif; ?></a>
-    <a href="/admin/inventory.php"><svg class="icon"><use href="#i-scale"/></svg>Stock</a>
+    <?php if (admin_can('orders.view')): ?><a href="/admin/orders.php"><svg class="icon"><use href="#i-bag"/></svg>Orders<?php if ($badges['orders']): ?><span class="adm-count"><?= (int) $badges['orders'] ?></span><?php endif; ?></a><?php endif; ?>
+    <?php if (admin_can('payments.verify')): ?><a href="/admin/payments.php"><svg class="icon"><use href="#i-card"/></svg>Payments<?php if ($badges['payments']): ?><span class="adm-count"><?= (int) $badges['payments'] ?></span><?php endif; ?></a><?php endif; ?>
+    <?php if (admin_can('inventory.manage')): ?><a href="/admin/inventory.php"><svg class="icon"><use href="#i-scale"/></svg>Stock</a><?php endif; ?>
     <button type="button" data-adm-menu aria-controls="adm-side" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg>More</button>
   </nav>
   <div class="adm-scrim" data-adm-menu></div>

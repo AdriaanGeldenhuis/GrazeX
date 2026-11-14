@@ -42,6 +42,9 @@ $steps = $isRanch
 if (!$isRanch && $o['payment_method'] === 'cash_on_collection') {
     $steps = ['awaiting_collection' => 'Order placed', 'processing' => 'Being packed', 'ready_for_collection' => 'Ready to collect', 'completed' => 'Collected & paid'];
 }
+if ($isRanch && (int) $o['deposit_due_cents'] === 0) {
+    unset($steps['deposit_paid']); // reserved without a deposit (paid at the farm): no deposit step to tick
+}
 $reached = array_column($history, 'to_status');
 $keys = array_keys($steps);
 $currentIdx = -1;
@@ -88,9 +91,23 @@ require GX_ROOT . '/includes/layout/header.php';
           <?php if ($isRanch && $o['status'] === 'reserved' && (int) $o['deposit_due_cents'] > 0): ?><p class="muted small">This is the deposit that secures your animals. The balance is payable at collection.</p><?php endif; ?>
           <?php if ($o['hold_expires_at'] && in_array($o['status'], ['pending_payment', 'reserved'], true)): ?><p class="muted small">Please pay before <strong><?= e(fmt_datetime($o['hold_expires_at'])) ?></strong> — after that the reserved stock is released.</p><?php endif; ?>
 
+          <?php
+          // A card order that is not paid yet can also be paid by EFT (declined card, changed mind): "Pay another way"
+          // on the payment pages leads here, and a proof of payment is accepted for any order with money due
+          $eftInstead = $o['payment_method'] === 'yoco' && in_array($o['status'], ['pending_payment', 'reserved'], true)
+              && setting_bool('payment_eft_enabled', true) && trim((string) $d['bank_account_no']) !== '';
+          $payByCard = YocoService::configured() && $due >= 200 && setting_bool('payment_yoco_enabled', true) && !$awaitingPop;
+          $cardButton = '<a class="btn ' . ($o['payment_method'] === 'yoco' ? 'btn-primary btn-lg' : '') . ' btn-block mt-2" href="/payments/pay.php?t=' . e($o['pay_token']) . '">'
+              . '<svg class="icon"><use href="#i-card"/></svg>Pay ' . e(money($due)) . ' by card now</a>';
+          ?>
           <?php if ($awaitingPop): ?>
             <div class="alert alert-info mt-1"><svg class="icon"><use href="#i-clock"/></svg><div>We received your proof of payment and are checking it. You'll get an email once it's confirmed.</div></div>
-          <?php elseif ($o['payment_method'] === 'eft' || ($o['payment_method'] !== 'yoco' && in_array($o['status'], ['finalised', 'deposit_paid'], true))): ?>
+          <?php elseif ($o['payment_method'] === 'eft' || $eftInstead || ($o['payment_method'] !== 'yoco' && in_array($o['status'], ['finalised', 'deposit_paid'], true))): ?>
+            <?php if ($eftInstead): ?>
+              <?= $payByCard ? $cardButton : '' ?>
+              <h3 class="h4 mt-3 mb-0"><?= $payByCard ? 'Or pay by EFT' : 'Pay by EFT' ?></h3>
+              <p class="muted small mb-0"><?= $payByCard ? 'Card not going through? ' : '' ?>Pay into this account and send us your proof of payment.</p>
+            <?php endif; ?>
             <?php if ($d['bank_account_no']): ?>
               <dl class="bank-box mt-1">
                 <div><dt>Bank</dt><dd><?= e($d['bank_name']) ?></dd></div>
@@ -114,8 +131,8 @@ require GX_ROOT . '/includes/layout/header.php';
               <button class="btn btn-primary btn-block mt-1" type="submit">Send proof of payment</button>
             </form>
           <?php endif; ?>
-          <?php if (YocoService::configured() && $due >= 200 && setting_bool('payment_yoco_enabled', true) && !$awaitingPop): ?>
-            <a class="btn <?= $o['payment_method'] === 'yoco' ? 'btn-primary btn-lg' : '' ?> btn-block mt-2" href="/payments/pay.php?t=<?= e($o['pay_token']) ?>"><svg class="icon"><use href="#i-card"/></svg>Pay <?= e(money($due)) ?> by card now</a>
+          <?php if ($payByCard && !$eftInstead): ?>
+            <?= $cardButton ?>
           <?php endif; ?>
           <?php if ($o['payment_method'] === 'cash_on_collection'): ?>
             <p class="muted mb-0 mt-1">Pay by cash or card when you collect<?= $o['collection_date'] ? ' on <strong>' . e(fmt_date($o['collection_date'])) . '</strong>' : '' ?>.</p>

@@ -65,6 +65,7 @@ if ($export !== '') {
             $rows = db_all('SELECT first_name, last_name, email, phone, farm_name, company_name, vat_no, marketing_opt_in, created_at FROM customers WHERE status = \'active\' ORDER BY id');
             $csv('customers', ['First name', 'Last name', 'Email', 'Phone', 'Farm', 'Company', 'VAT no', 'Marketing opt-in', 'Joined'], $rows);
         case 'stock':
+            require_admin_division('feeds'); // feed stock and cost prices
             $rows = db_all('SELECT p.name, v.name AS size, v.sku, v.stock_qty, v.cost_cents, v.price_cents FROM product_variants v JOIN products p ON p.id = v.product_id WHERE v.is_active = 1 ORDER BY p.name');
             $csv('stock', ['Product', 'Size', 'SKU', 'In stock', 'Cost', 'Price', 'Value at cost'], array_map(static fn($x) => [$x['name'], $x['size'], $x['sku'], $x['stock_qty'],
                 $r((int) $x['cost_cents']), $r((int) $x['price_cents']), $r(max(0, (int) $x['stock_qty']) * (int) $x['cost_cents'])], $rows));

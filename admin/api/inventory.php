@@ -15,6 +15,8 @@ api_post();
 $admin = require_admin_api('inventory.manage');
 $aid = (int) $admin['id'];
 $in = input_all();
+// Livestock numbers are Ranch; feed stock, receiving and stock takes are Feeds
+require_admin_division(($in['action'] ?? '') === 'adjust_lot' ? 'ranch' : 'feeds');
 
 /** Parse "+10 torn bags" → [10, 'torn bags'] */
 $parseChange = static function (string $s): array {

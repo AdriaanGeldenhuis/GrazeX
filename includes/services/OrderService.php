@@ -648,7 +648,8 @@ final class OrderService
                     NotificationService::email('order_completed', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']],
                         (int) $o['division_id'], DocumentService::attachment($doiId), $btn, pushTo: (int) $o['customer_id']);
                 }
-            } elseif ($to === 'completed' && $o['status'] === 'completed') {
+            } elseif ($to === 'completed' && (int) $o['division_id'] !== division_id('ranch')) {
+                // Livestock buyers were already thanked at collection (with the document of identification) — not twice
                 NotificationService::email('order_completed', $o['billing_email'], $o['billing_name'], ['first_name' => $first, 'order_no' => $o['order_no']], (int) $o['division_id'], [], $btn, pushTo: (int) $o['customer_id']);
             }
         } catch (Throwable $e) {

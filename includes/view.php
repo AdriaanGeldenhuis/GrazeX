@@ -66,6 +66,9 @@ function markdown(?string $md): string
     if ($md === '') {
         return '';
     }
+    // A heading is always its own block: "## Delivery" straight above (or below) a paragraph used to print the ## as text
+    $md = preg_replace('/^(#{1,4}[ \t]+[^\n]*)\n(?!\n)/m', "$1\n\n", $md) ?? $md;
+    $md = preg_replace('/([^\n])\n(#{1,4}[ \t])/', "$1\n\n$2", $md) ?? $md;
     $inline = static function (string $s): string {
         $s = e($s);
         $s = preg_replace('/\*\*(.+?)\*\*/s', '<strong>$1</strong>', $s) ?? $s;
@@ -223,7 +226,7 @@ function province_options(?string $selected = null): string
 function division_has_faqs(string $division): bool
 {
     try {
-        return (bool) db_val('SELECT 1 FROM faqs WHERE is_active = 1 AND division_id = ? LIMIT 1', [division_id($division)]);
+        return (bool) db_val('SELECT 1 FROM faqs WHERE is_active = 1 AND (division_id = ? OR division_id IS NULL) LIMIT 1', [division_id($division)]);
     } catch (Throwable $e) {
         return false;
     }

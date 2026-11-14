@@ -121,7 +121,8 @@ final class LivestockService
             $est = $lot['avg_weight_kg'] ? (int) round((float) $lot['avg_weight_kg'] * (int) $lot['price_cents']) : null;
             return ['main' => money((int) $lot['price_cents']), 'unit' => '/kg live', 'note' => $est ? '≈ ' . money($est, false) . ' per head' : null];
         }
-        return ['main' => money((int) $lot['price_cents'], false), 'unit' => '/head', 'note' => null];
+        // Whole rands without ".00"; a price with cents keeps them (R 1 250.50 is not shown as R 1 251)
+        return ['main' => money((int) $lot['price_cents'], (int) $lot['price_cents'] % 100 !== 0), 'unit' => '/head', 'note' => null];
     }
 
     public static function sexLabel(string $sex): string
@@ -229,6 +230,11 @@ final class LivestockService
      */
     public static function requestConfirmation(array $row, string $siteBucket = 'alert_confirm_site', int $siteMax = 40): bool
     {
+        // An address that is already over its own daily limit must not use up the whole site's hourly allowance
+        // (one account asking again and again would stop everybody's confirmation emails)
+        if (rate_limit_blocked('alert_confirm', (string) $row['email'])) {
+            return false;
+        }
         // The site-wide cap first: a refused site hit uses up nobody's own daily allowance
         if (!rate_limit_hit($siteBucket, 'all', $siteMax, 3600)) {
             gx_log('warning', 'Livestock alert confirmations paused: hourly cap reached', ['bucket' => $siteBucket]);

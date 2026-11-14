@@ -17,13 +17,44 @@ if (!$ent) {
     json_error('Unknown list.', 404);
 }
 $admin = require_admin_api($ent['perm']);
+if (!empty($ent['division'])) {
+    require_admin_division($ent['division']); // e.g. feed categories are Feeds, breeds are Ranch
+}
 $table = $ent['table'];
 $id = (int) input('id', 0);
 $in = input_all();
 
+// Rows that carry a division (coupons, FAQs, closed days, collection points and their time slots): an admin limited
+// to one division only changes that division's rows — the row as it is now, and the division it is being saved to.
+$divisionCol = isset($ent['fields']['division_id']) ? 'division_id' : (isset($ent['fields']['collection_point_id']) ? 'collection_point_id' : null);
+if ($divisionCol !== null && count(admin_division_ids()) < count(GX_DIVISIONS)) {
+    $divisionOf = static function (mixed $v) use ($divisionCol): ?int {
+        if ($v === null || $v === '') {
+            return null;
+        }
+        $d = $divisionCol === 'division_id' ? $v : db_val('SELECT division_id FROM collection_points WHERE id = ?', [(int) $v]);
+        return $d === null ? null : (int) $d;
+    };
+    $check = ($in['action'] ?? '') === 'delete' ? [] : [$in[$divisionCol] ?? null];
+    if ($id) {
+        $check[] = db_val("SELECT `{$divisionCol}` FROM {$table} WHERE id = ?", [$id]);
+    }
+    foreach ($check as $v) {
+        if (!admin_can_edit_division_row($divisionOf($v))) {
+            json_error('That item is for a division you do not have access to (or for both divisions) — ask an owner to change it.', 403);
+        }
+    }
+}
+
 if (($in['action'] ?? '') === 'delete') {
     if (!empty($ent['no_delete'])) {
         json_error('These items cannot be deleted.', 409);
+    }
+    // What orders point at is switched off, never deleted: the database would not refuse — it would quietly blank
+    // the collection time / place or the coupon on every order that uses it
+    $orderLink = ['collection_slots' => 'collection_slot_id', 'collection_points' => 'collection_point_id', 'coupons' => 'coupon_id'][$table] ?? null;
+    if ($orderLink !== null && db_val("SELECT 1 FROM orders WHERE {$orderLink} = ? LIMIT 1", [$id])) {
+        json_error('Orders use this item — deleting it would remove it from those orders. Switch it off instead (untick Active).', 409);
     }
     try {
         db_exec("DELETE FROM {$table} WHERE id = ?", [$id]);
@@ -63,7 +94,7 @@ try {
             'bool' => af_bool($in[$name] ?? 0),
             'weekdays' => implode(',', array_values(array_unique(array_filter(array_map('intval', (array) ($in[$name] ?? [])), static fn($n) => $n >= 1 && $n <= 7)))),
             'image' => ((int) ($in[$name] ?? 0)) ?: null,
-            'slug' => slugify((string) (($in[$name] ?? '') ?: ($in[$f['from']] ?? 'item'))),
+            'slug' => slugify((string) (($in[$name] ?? '') ?: ($in[$f['from']] ?? 'item')), preg_match('/max:(\d+)/', $f[2] ?? '', $mm) ? (int) $mm[1] : 120),
             'code' => strtoupper((string) ($d[$name] ?? '')),
             'date' => $d[$name] ?: null,
             'lines' => null,
@@ -88,8 +119,11 @@ try {
         if ($type === 'number' && $v === null && in_array($name, ['sort_order', 'lead_days'], true)) {
             $v = 0;
         }
-        if (in_array($name, ['min_spend_cents'], true) && $v === null) {
-            $v = 0;
+        if (in_array($name, ['min_spend_cents', 'value'], true) && $v === null) {
+            $v = 0; // NOT NULL columns: an empty box means 0 (a free-delivery coupon has no value)
+        }
+        if ($key === 'coupons' && $name === 'value' && (int) $v <= 0 && in_array($d['type'] ?? '', ['percent', 'fixed'], true)) {
+            throw new DomainException(($d['type'] === 'percent' ? 'Enter the percentage off' : 'Enter the amount off in cents') . ' — a coupon worth nothing would be accepted at checkout and give no discount.');
         }
         if ($name === 'min_order_cents' && $v === null) {
             $v = 0;

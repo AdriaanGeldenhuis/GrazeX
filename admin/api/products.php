@@ -10,6 +10,7 @@ require_once GX_ROOT . '/includes/admin_form.php';
 
 api_post();
 $admin = require_admin_api('products.manage');
+require_admin_division('feeds'); // feed products belong to GrazeX Feeds
 $in = input_all();
 
 if (($in['action'] ?? '') === 'delete') {
@@ -62,7 +63,7 @@ $d = validate_or_fail($in, [
     'reg_no' => 'nullable|max:50', 'meta_title' => 'nullable|max:191', 'meta_description' => 'nullable|max:300', 'sort_order' => 'nullable|int',
 ]);
 $id = (int) ($in['id'] ?? 0);
-$slug = slugify($d['slug'] ?: $d['name']);
+$slug = slugify($d['slug'] ?: $d['name'], 150);
 if (db_val('SELECT id FROM products WHERE slug = ? AND id <> ?', [$slug, $id])) {
     json_error(t('error.validation'), 422, ['slug' => 'Another product already uses this web address.']);
 }

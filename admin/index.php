@@ -26,8 +26,8 @@ $todo = [
     'pack' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('paid','awaiting_collection','processing') AND division_id IN ({$in})", $ids),
     'today' => (int) db_val("SELECT COUNT(*) FROM orders WHERE ((collection_date = CURDATE()) OR (delivery_date = CURDATE())) AND status NOT IN ('cancelled','expired','refunded','completed','collected') AND division_id IN ({$in})", $ids),
     'weigh' => (int) db_val("SELECT COUNT(*) FROM orders WHERE status IN ('reserved','deposit_paid') AND division_id IN ({$in})", $ids),
-    'low' => (int) db_val('SELECT COUNT(*) FROM product_variants v JOIN products p ON p.id = v.product_id WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold'),
-    'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new'"),
+    'low' => !admin_has_division('feeds') ? 0 : (int) db_val('SELECT COUNT(*) FROM product_variants v JOIN products p ON p.id = v.product_id WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold'),
+    'messages' => (int) db_val("SELECT COUNT(*) FROM enquiries WHERE status = 'new' AND (division_id IS NULL OR division_id IN ({$in}))", $ids),
 ];
 // 14-day sales bars per division
 $days = [];
@@ -42,12 +42,14 @@ foreach (db_all("SELECT DATE(placed_at) d, division_id, SUM(total_cents) s FROM 
 }
 $maxDay = max(1, ...array_values(array_map(static fn($d) => $d['feeds'] + $d['ranch'], $days)));
 $recent = db_all("SELECT o.*, c.first_name, c.last_name FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.division_id IN ({$in}) ORDER BY o.placed_at DESC LIMIT 8", $ids);
-$low = db_all('SELECT v.id, v.name, v.stock_qty, v.low_stock_threshold, p.name AS product_name, p.id AS product_id FROM product_variants v JOIN products p ON p.id = v.product_id
+$low = !admin_has_division('feeds') ? [] : db_all('SELECT v.id, v.name, v.stock_qty, v.low_stock_threshold, p.name AS product_name, p.id AS product_id FROM product_variants v JOIN products p ON p.id = v.product_id
                WHERE p.is_active = 1 AND v.is_active = 1 AND v.stock_qty <= v.low_stock_threshold ORDER BY v.stock_qty LIMIT 8');
 
 // Scheduled jobs (emails, reminders, clean-up) depend on the server cron; warn when it has stopped
 $lastCron = setting('last_cron_run');
 $cronLate = !$lastCron || strtotime($lastCron) < time() - 3 * 3600;
+// Emails waiting because the mail server cannot be reached or refuses the login (they go out once it answers again)
+$mailStuck = MailService::stuckReason();
 
 $admin = admin_start('Dashboard', 'dashboard', ['perm' => 'dashboard.view']);
 ?>
@@ -65,6 +67,13 @@ $admin = admin_start('Dashboard', 'dashboard', ['perm' => 'dashboard.view']);
   <div class="alert alert-warning" role="alert" data-cron-warning><svg class="icon"><use href="#i-clock"/></svg><div>
     <strong>Scheduled jobs are not running.</strong> <?= $lastCron ? 'The last run was ' . e(fmt_datetime($lastCron)) . '.' : 'They have never run on this server.' ?>
     Queued emails, payment reminders and clean-up wait until it runs. In Xneelo's Cronjob Manager, run <code>cron/run.php</code> every 2 hours (see the README).
+  </div></div>
+<?php endif; ?>
+
+<?php if ($mailStuck !== null): ?>
+  <div class="alert alert-warning" role="alert" data-mail-warning><svg class="icon"><use href="#i-mail"/></svg><div>
+    <strong>Emails are not going out.</strong> The mail server said: “<?= e(str_limit($mailStuck, 160)) ?>”.
+    Order emails and invoices are waiting and will be sent as soon as it works again — check the mailbox password and the <code>MAIL_*</code> settings on the server.
   </div></div>
 <?php endif; ?>
 

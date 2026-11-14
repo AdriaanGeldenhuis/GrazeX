@@ -48,11 +48,13 @@ async function trim(cache, max) {
 }
 
 /** Answer from the cache at once when we have it; refresh the copy in the background. */
-function staleWhileRevalidate(e, cacheName, max) {
+function staleWhileRevalidate(e, cacheName, max, askServer = false) {
   const req = e.request;
   e.respondWith(caches.open(cacheName).then(async (cache) => {
     const hit = await cache.match(req);
-    const net = fetch(req).then((res) => {
+    // askServer: a conditional request to the server instead of the browser's own cache. These files are sent as
+    // "unchanged for a year", so a plain fetch would hand back the old copy and a replaced logo would never show.
+    const net = fetch(req, askServer ? { cache: 'no-cache' } : undefined).then((res) => {
       if (res.ok && res.status === 200) {
         // The page never waits for (or breaks on) the cache write
         e.waitUntil(cache.put(req, res.clone()).then(() => trim(cache, max)).catch(() => {}));
@@ -95,7 +97,7 @@ self.addEventListener('fetch', (e) => {
       return;
     }
     // Unversioned files (brand images, fonts): kept, but refreshed so a replaced file shows up
-    staleWhileRevalidate(e, RUNTIME, RUNTIME_MAX);
+    staleWhileRevalidate(e, RUNTIME, RUNTIME_MAX, true);
     return;
   }
   // Uploaded photos

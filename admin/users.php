@@ -68,9 +68,10 @@ admin_start('Admin users', 'users', ['perm' => 'users.manage']);
     <div class="modal-head"><h3>Edit admin user</h3><button class="nav-icon-btn" type="button" data-modal-close aria-label="Close">✕</button></div>
     <div class="modal-body">
       <input type="hidden" name="id" value="">
-      <?= af_text('name', 'Name', '', ['required' => true]) ?>
-      <?= af_select('role_id', 'Role', array_column($roles, 'name', 'id'), '') ?>
-      <?= af_select('division_scope', 'Can see', ['all' => 'Feeds and Ranch', 'feeds' => 'Feeds only', 'ranch' => 'Ranch only'], 'all') ?>
+      <?php /* Own ids: the "Add" dialog on this page has the same fields, and a label must point at its own field */ ?>
+      <?= af_text('name', 'Name', '', ['required' => true, 'id' => 'ue-name']) ?>
+      <?= af_select('role_id', 'Role', array_column($roles, 'name', 'id'), '', ['id' => 'ue-role-id']) ?>
+      <?= af_select('division_scope', 'Can see', ['all' => 'Feeds and Ranch', 'feeds' => 'Feeds only', 'ranch' => 'Ranch only'], 'all', ['id' => 'ue-division-scope']) ?>
       <p class="hint">To change someone's email, add them again with the new address and disable the old login.</p>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" type="button" data-modal-close>Cancel</button><button class="btn btn-primary" type="submit">Save</button></div>

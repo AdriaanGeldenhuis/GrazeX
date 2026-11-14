@@ -49,6 +49,12 @@ final class MailService
                 db_exec("UPDATE email_queue SET status = 'sent', sent_at = NOW(), last_error = NULL WHERE id = ?", [$row['id']]);
                 $sent++;
             } catch (Throwable $e) {
+                if (self::serverDown($e)) {
+                    // The mail server (or its password), not this email: it keeps its tries and waits, and the run
+                    // stops here — every other email would fail the same way, each after a long timeout
+                    self::waitForServer((int) $row['id'], $e);
+                    break;
+                }
                 $attempts = (int) $row['attempts'] + 1;
                 db_exec('UPDATE email_queue SET status = ?, last_error = ?, send_after = NOW() + INTERVAL ? MINUTE WHERE id = ?',
                     [$attempts >= 5 ? 'failed' : 'queued', mb_substr($e->getMessage(), 0, 500), 5 * $attempts, $row['id']]);
@@ -72,9 +78,41 @@ final class MailService
             self::send($row);
             db_exec("UPDATE email_queue SET status = 'sent', sent_at = NOW() WHERE id = ?", [$queueId]);
         } catch (Throwable $e) {
+            if (self::serverDown($e)) {
+                self::waitForServer($queueId, $e);
+                return;
+            }
             db_exec("UPDATE email_queue SET status = 'queued', last_error = ?, send_after = NOW() + INTERVAL 5 MINUTE WHERE id = ?", [mb_substr($e->getMessage(), 0, 500), $queueId]);
             gx_log('warning', 'Immediate email failed', ['id' => $queueId, 'error' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * Did the send fail because the mail server could not be reached or refused the login (as opposed to a problem
+     * with this one email)? Such an outage must not use up an email's five tries: an hour without the mail server —
+     * or a mailbox password changed before the settings file — used to mark every waiting email as failed for good.
+     */
+    private static function serverDown(Throwable $e): bool
+    {
+        return (bool) preg_match('/SMTP connect\(\) failed|Could not connect to SMTP host|Could not authenticate/i', $e->getMessage());
+    }
+
+    /** Back in the queue with the try it just used returned, to go out when the mail server answers again. */
+    private static function waitForServer(int $queueId, Throwable $e): void
+    {
+        db_exec("UPDATE email_queue SET status = 'queued', attempts = GREATEST(attempts, 1) - 1, claimed_at = NULL, last_error = ?, send_after = NOW() + INTERVAL 10 MINUTE WHERE id = ?",
+            [mb_substr($e->getMessage(), 0, 500), $queueId]);
+        gx_log('warning', 'Mail server unavailable — email waits in the queue', ['id' => $queueId, 'error' => $e->getMessage()]);
+    }
+
+    /**
+     * For the admin dashboard: are emails waiting because the mail server cannot be reached? Returns the mail server's
+     * last answer, or null when nothing has been waiting for more than half an hour.
+     */
+    public static function stuckReason(): ?string
+    {
+        $row = db_one("SELECT last_error FROM email_queue WHERE status = 'queued' AND created_at < NOW() - INTERVAL 30 MINUTE AND last_error IS NOT NULL ORDER BY id LIMIT 1");
+        return $row ? (string) $row['last_error'] : null;
     }
 
     /** One-click unsubscribe headers (RFC 8058) for alert emails — Gmail and Yahoo require them for bulk mail. */
@@ -106,7 +144,9 @@ final class MailService
         $m->Timeout = 20;
         $m->CharSet = 'UTF-8';
         $m->setFrom((string) env('mail.from_email'), (string) env('mail.from_name', 'GrazeX'));
-        $m->addReplyTo((string) (setting('contact_email') ?: env('mail.from_email')), (string) env('mail.from_name', 'GrazeX'));
+        // Reply-To is the public email from Settings; one that is not a valid address must never stop the email
+        $replyTo = (string) (setting('contact_email') ?: env('mail.from_email'));
+        $m->addReplyTo(PHPMailer::validateAddress($replyTo) ? $replyTo : (string) env('mail.from_email'), (string) env('mail.from_name', 'GrazeX'));
         $m->addAddress($row['to_email'], (string) ($row['to_name'] ?? ''));
         $m->Subject = $row['subject'];
         foreach (self::extraHeaders($row) as $name => $value) {
@@ -117,7 +157,8 @@ final class MailService
         $m->AltBody = $row['body_text'] ?: trim(html_entity_decode(strip_tags(str_replace(['<br>', '</p>', '</h2>', '</li>'], "\n", $row['body_html']))));
         foreach (json_decode((string) $row['attachments'], true) ?: [] as $att) {
             $path = GX_ROOT . '/' . ltrim((string) ($att['path'] ?? ''), '/');
-            if (is_file($path) && str_starts_with(realpath($path) ?: '', realpath(GX_ROOT . '/storage') ?: '//')) {
+            $storage = realpath(GX_ROOT . '/storage');
+            if ($storage && is_file($path) && str_starts_with(realpath($path) ?: '', $storage . DIRECTORY_SEPARATOR)) {
                 $m->addAttachment($path, (string) ($att['name'] ?? basename($path)));
             }
         }

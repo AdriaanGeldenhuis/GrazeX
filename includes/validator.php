@@ -42,6 +42,22 @@ function validate(array $data, array $rules): array
             $errors[$field] = "{$label} is invalid.";
             continue;
         }
+        if (is_string($value) && !mb_check_encoding($value, 'UTF-8')) {
+            // Bytes that are not UTF-8 (text pasted from an old system): refuse them here — the clean-up below
+            // would otherwise turn the whole value into an empty string, even for a required field
+            $errors[$field] = "{$label} contains characters we cannot read. Please type it again.";
+            continue;
+        }
+        if (!$isNumeric && !in_array('bool', $ruleList, true) && !in_array('money', $ruleList, true)) {
+            // A JSON number or true/false where text is expected ({"name": 12345}, {"password": 12345678901}):
+            // text rules always hand on text — the string functions that follow are strict and would end in an error page
+            if (is_int($value) || is_float($value)) {
+                $value = (string) $value;
+            } elseif (is_bool($value)) {
+                $errors[$field] = "{$label} is invalid.";
+                continue;
+            }
+        }
 
         foreach ($ruleList as $rule) {
             [$name, $param] = array_pad(explode(':', $rule, 2), 2, null);

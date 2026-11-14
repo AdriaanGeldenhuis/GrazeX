@@ -269,7 +269,7 @@ body:not(.page-gateway):not(.page-store-home) .page-bg::after {
 .btn-ghost { --btn-bg: transparent; --btn-line: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 .btn-ghost:hover { --btn-bg: rgba(255, 255, 255, .07); }
 .btn-danger { --btn-bg: rgba(255, 95, 82, .14); --btn-fg: #ffb3ad; --btn-line: rgba(255, 95, 82, .42); }
-.btn-whatsapp { --btn-bg: linear-gradient(100deg, #0f7a3d, #18a957); --btn-fg: #fff; --btn-line: transparent; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 14px 36px rgba(15, 122, 61, .35); }
+.btn-whatsapp { --btn-bg: linear-gradient(100deg, #0f7a3d, #128045); --btn-fg: #fff; --btn-line: transparent; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 14px 36px rgba(15, 122, 61, .35); }
 .btn-sm { min-height: 38px; padding: 8px 14px; font-size: 13px; border-radius: 11px; }
 @media (max-width: 359px) { .btn-sm { white-space: normal; } } /* very narrow phones: wrap instead of overflowing the card */
 .btn-lg { min-height: 58px; padding: 16px 28px; font-size: 16px; border-radius: 16px; }
@@ -324,6 +324,8 @@ body:not(.page-gateway):not(.page-store-home) .page-bg::after {
 .option-card .oc-title { font-weight: 800; }
 .option-card .oc-text { color: var(--muted); font-size: 14px; }
 .option-card .oc-side { margin-left: auto; font-weight: 800; white-space: nowrap; }
+.option-card input:checked + .oc-radio { border-color: var(--accent); box-shadow: inset 0 0 0 5px var(--bg), inset 0 0 0 12px var(--accent); }
+.option-card input:focus-visible + .oc-radio { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .option-card:has(input:checked) { border-color: var(--accent); background: linear-gradient(120deg, rgba(var(--accent-rgb), .16), rgba(var(--accent-rgb), .04)); box-shadow: 0 0 0 1px var(--accent-line), 0 14px 40px rgba(var(--accent-rgb), .12); }
 .option-card:has(input:checked) .oc-radio { border-color: var(--accent); box-shadow: inset 0 0 0 5px var(--bg), inset 0 0 0 12px var(--accent); }
 .option-card:has(input:focus-visible) { outline: 2px solid var(--accent-2); outline-offset: 2px; }
@@ -518,6 +520,9 @@ body.has-announce.is-scrolled .site-nav, .is-scrolled .site-nav { top: calc(10px
 /* ---------- Toasts ---------- */
 .toast-stack { position: fixed; z-index: 200; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: grid; gap: 10px; width: min(440px, calc(100% - 24px)); pointer-events: none; }
 @media (min-width: 720px) { .toast-stack { left: auto; right: 24px; transform: none; bottom: 24px; } body:has(.drawer.is-open) .toast-stack { right: 464px; } }
+/* While a dialog is open the stack is lifted into the browser's top layer (core.js): keep our own position and box */
+.toast-stack:popover-open { top: auto; right: auto; height: auto; margin: 0; padding: 0; border: 0; background: none; color: inherit; overflow: visible; }
+@media (min-width: 720px) { .toast-stack:popover-open { right: 24px; } }
 .toast { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 16px; background: rgba(14, 17, 18, .88);
   -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid var(--line-strong);
   box-shadow: var(--glass-edge), var(--shadow-lg); font-size: 15px; font-weight: 600; animation: toastIn .45s var(--ease-out); }
@@ -532,9 +537,9 @@ body.has-announce.is-scrolled .site-nav, .is-scrolled .site-nav { top: calc(10px
 @keyframes toastOut { to { opacity: 0; transform: translateY(10px) scale(.98); } }
 
 /* ---------- Modal (uses <dialog>) & drawer ---------- */
-dialog.modal { width: min(560px, calc(100% - 24px)); max-height: calc(100vh - 40px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
+dialog.modal { width: min(560px, calc(100% - 24px)); max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
   background: rgba(13, 16, 17, .94); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); color: var(--text); box-shadow: var(--glass-edge), var(--shadow-lg); }
-dialog.modal::backdrop { background: rgba(0, 0, 0, .62); backdrop-filter: blur(6px); }
+dialog.modal::backdrop { background: rgba(0, 0, 0, .62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 /* A page (terms, privacy) in a dialog: the title and buttons stay put, the text scrolls */
 dialog.modal-page { width: min(720px, calc(100% - 24px)); }
 dialog.modal-page[open] { display: flex; flex-direction: column; overflow: hidden; }
@@ -546,7 +551,7 @@ dialog.modal[open] { animation: modalIn .4s var(--ease-out); }
 .modal-foot { display: flex; gap: 10px; justify-content: flex-end; padding: 16px 20px; border-top: 1px solid var(--line); }
 @keyframes modalIn { from { opacity: 0; transform: translateY(20px) scale(.97); } }
 
-.drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, .55); backdrop-filter: blur(5px); opacity: 0; visibility: hidden; transition: .35s; }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, .55); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); opacity: 0; visibility: hidden; transition: .35s; }
 .drawer { position: fixed; z-index: 81; top: 0; right: 0; bottom: 0; width: min(440px, 100%); display: grid; grid-template-rows: auto 1fr auto;
   background: radial-gradient(90% 40% at 100% 0%, rgba(var(--accent-rgb), .12), transparent 70%), rgba(10, 12, 13, .9);
   -webkit-backdrop-filter: blur(24px) saturate(1.3); backdrop-filter: blur(24px) saturate(1.3);

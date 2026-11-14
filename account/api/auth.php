@@ -7,6 +7,7 @@
  *   POST {action: forgot, email}
  *   POST {action: reset, token, password, password_confirm}
  *   POST {action: resend_verify}
+ *   POST {action: verify_email, token}   — the button on /account/verify.php (the emailed link itself changes nothing)
  */
 declare(strict_types=1);
 
@@ -17,6 +18,14 @@ require __DIR__ . '/../../includes/bootstrap.php';
 // has just logged the person back in — "Log out" must still log out. (A forged logout could only log someone out,
 // and cross-site requests carry no session or remember cookie: both are SameSite=Lax.)
 if (request_method() === 'POST' && (string) input('action', '') === 'logout') {
+    // The "keep me logged in" cookie may have logged the person in on THIS request (the old session had expired):
+    // that fresh session does not know the phone's push link yet, so the app sends its token and the phone is
+    // unlinked by it. detachToken() only touches a token that is linked to this customer.
+    $pushToken = trim((string) input('push_token', ''));
+    $cid = customer_id();
+    if ($cid && $pushToken !== '' && PushService::validToken($pushToken)) {
+        PushService::detachToken($pushToken, 'customer', $cid);
+    }
     logout_customer();
     json_ok(['redirect' => '/'], 'You are logged out.');
 }
@@ -102,6 +111,23 @@ switch ($action) {
         login_customer(db_one('SELECT * FROM customers WHERE id = ?', [$cid]), gx_in_app() ?: null);
         audit('customer.password_reset', 'customer', $cid);
         json_ok(['redirect' => '/account/'], 'Your password has been changed.');
+
+    case 'verify_email':
+        rate_limit_or_fail('verify_email', rate_limit_ip(), 30, 3600);
+        $cid = customer_token_consume((string) input('token', ''), 'verify_email');
+        if (!$cid) {
+            json_error('That confirmation link has expired or was already used. Log in and request a new one from your profile.', 410);
+        }
+        db_exec('UPDATE customers SET email_verified_at = COALESCE(email_verified_at, NOW()) WHERE id = ?', [$cid]);
+        $email = (string) db_val('SELECT email FROM customers WHERE id = ?', [$cid]);
+        // Alerts made in the account while the email was unproven are now confirmed by this link
+        db_exec('UPDATE livestock_alerts SET confirmed_at = NOW(), confirm_token = NULL WHERE customer_id = ? AND email = ? AND confirmed_at IS NULL', [$cid, $email]);
+        // Now that the address is proven, things sent from it without logging in join the account
+        db_exec('UPDATE livestock_alerts SET customer_id = ? WHERE customer_id IS NULL AND email = ?', [$cid, $email]);
+        db_exec('UPDATE enquiries SET customer_id = ? WHERE customer_id IS NULL AND email = ?', [$cid, $email]);
+        current_customer(true);
+        flash('success', 'Thanks — your email address is confirmed.');
+        json_ok(['redirect' => current_customer() ? '/account/' : '/account/login.php']);
 
     case 'resend_verify':
         $c = require_customer_api();

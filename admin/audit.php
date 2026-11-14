@@ -5,9 +5,12 @@ declare(strict_types=1);
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
+$perPage = 200;
+$pageNo = query_page();
+$pages = max(1, (int) ceil((int) db_val('SELECT COUNT(*) FROM audit_log') / $perPage));
 $rows = db_all("SELECT l.*, a.name AS admin_name, CONCAT(c.first_name, ' ', c.last_name) AS customer_name FROM audit_log l
                 LEFT JOIN admin_users a ON a.id = l.actor_id AND l.actor_type = 'admin'
-                LEFT JOIN customers c ON c.id = l.actor_id AND l.actor_type = 'customer' ORDER BY l.id DESC LIMIT 400");
+                LEFT JOIN customers c ON c.id = l.actor_id AND l.actor_type = 'customer' ORDER BY l.id DESC LIMIT {$perPage} OFFSET " . (($pageNo - 1) * $perPage));
 admin_start('Audit log', 'audit', ['perm' => 'audit.view']);
 ?>
 <div class="table-wrap"><table class="table dt dt-cards">
@@ -18,4 +21,5 @@ admin_start('Audit log', 'audit', ['perm' => 'audit.view']);
       <td data-label=""><?= e($r['entity_type'] ?? '') ?> <?= $r['entity_id'] ? '#' . (int) $r['entity_id'] : '' ?></td><td data-label=""><?= e($r['ip'] ?? '') ?></td></tr>
   <?php endforeach; ?></tbody>
 </table></div>
+<?= pagination($pageNo, $pages, '/admin/audit.php') ?>
 <?php admin_end(); ?>

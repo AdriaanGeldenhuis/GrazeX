@@ -345,6 +345,10 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (_: URISyntaxException) {
             Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) {
+            // A broken intent: link (a number that is not a number, a file: address, an app we may not start) throws other
+            // exceptions than the two above: it must never crash the app, least of all in the middle of a payment
+            Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
         }
     }
 

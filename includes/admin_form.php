@@ -54,7 +54,7 @@ function af_money(string $name, string $label, ?int $cents, array $o = []): stri
 
 function af_textarea(string $name, string $label, ?string $value = '', array $o = []): string
 {
-    return af_wrap($name, $label, '<textarea class="textarea" id="' . e(af_id($name)) . '" name="' . e($name) . '" rows="' . (int) ($o['rows'] ?? 3) . '"' . af_attrs($o) . '>' . e($value) . '</textarea>', $o);
+    return af_wrap($name, $label, '<textarea class="textarea" id="' . e($o['id'] ?? af_id($name)) . '" name="' . e($name) . '" rows="' . (int) ($o['rows'] ?? 3) . '"' . af_attrs($o) . '>' . e($value) . '</textarea>', $o);
 }
 
 function af_markdown(string $name, string $label, ?string $value = '', array $o = []): string
@@ -71,7 +71,7 @@ function af_markdown(string $name, string $label, ?string $value = '', array $o 
 /** $options: [value => label] */
 function af_select(string $name, string $label, array $options, mixed $value = '', array $o = []): string
 {
-    $html = '<select class="select" id="' . e(af_id($name)) . '" name="' . e($name) . '"' . af_attrs($o) . '>';
+    $html = '<select class="select" id="' . e($o['id'] ?? af_id($name)) . '" name="' . e($name) . '"' . af_attrs($o) . '>';
     if (isset($o['empty'])) {
         $html .= '<option value="">' . e($o['empty']) . '</option>';
     }

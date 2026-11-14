@@ -20,7 +20,7 @@
 ## Lêerboom (opsomming)
 
 ```
-/                     index.php (gateway) · 404.php · robots.php · sitemap.php · manifest.webmanifest · sw.js · .htaccess
+/                     index.php (gateway) · 404.php · robots.php · sitemap.php · manifest.webmanifest · sw.php (bedien as /sw.js) · .htaccess
 assets/               css/core.css, store.css, checkout.css, landing.css · js/core.js, cart.js, checkout.js, landing.js · fonts/ · img/brand/
 config/               app.php · env.example.php · env.php (NIE in git nie) · lang/en.php
 includes/             bootstrap.php, db.php, session.php, csrf.php, auth.php, admin_auth.php, rate_limit.php, validator.php, uploads.php, totp.php, view.php …
@@ -89,6 +89,7 @@ assetlinks.php        /.well-known/assetlinks.json vir die app se App Links (AND
 ### Voor jy live gaan
 - [ ] `APP_DEBUG=false` (of `app_debug => false`)
 - [ ] Demo-data verwyder (of produkte/lotte vervang met jou eie)
+  - `demo.sql` sit ook dinge by wat nie produkte of lotte is nie — kyk in Admin → *Lists & setup*: die koepon **WELCOME10** (10% af), die twee voorbeeld-afleweringsones (*Local delivery*, *Regional*) met hul dorpe, en drie voorbeeld-getuigskrifte.
 - [ ] Terms, Privacy en Returns deur jou **prokureur** nagegaan (Admin → Lists & setup → Pages)
 - [ ] BTW-status en die nulkoers-instelling deur jou **rekenmeester** bevestig
 - [ ] Die formaat van die Document of Identification (Stock Theft Act) bevestig

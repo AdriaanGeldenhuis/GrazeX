@@ -9,7 +9,7 @@ require __DIR__ . '/../includes/bootstrap.php';
 $categories = CatalogService::categories();
 $featured = CatalogService::products(['sort' => 'featured', 'per_page' => 8, 'in_stock' => true])['items'];
 $specials = CatalogService::products(['specials' => true, 'per_page' => 4])['items'];
-$faqs = db_all('SELECT question, answer FROM faqs WHERE is_active = 1 AND division_id = ? ORDER BY sort_order, id', [division_id('feeds')]);
+$faqs = db_all('SELECT question, answer FROM faqs WHERE is_active = 1 AND (division_id = ? OR division_id IS NULL) ORDER BY sort_order, id', [division_id('feeds')]);
 $testimonials = db_all('SELECT name, location, quote, rating FROM testimonials WHERE is_active = 1 AND (division_id = ? OR division_id IS NULL) ORDER BY sort_order LIMIT 3', [division_id('feeds')]);
 $catIcons = ['lick' => 'leaf', 'pellet' => 'bag', 'spark' => 'spark', 'bale' => 'grid', 'sprout' => 'leaf', 'tool' => 'settings'];
 

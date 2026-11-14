@@ -118,6 +118,10 @@ if (isset($all['expected_total']) && is_numeric($all['expected_total']) && (int)
 if (PricingService::divisionVatBp(division_id($division)) > 0 && $q['total'] > 500000 && empty($data['billing_address'])) {
     json_error(t('error.validation'), 422, ['billing_address' => 'Your billing address is required for tax invoices over R5 000.']);
 }
+// Yoco takes card payments from R2.00: a smaller card order could be placed but never paid
+if ($data['payment_method'] === 'yoco' && $q['due_now'] > 0 && $q['due_now'] < 200) {
+    json_error(t('error.validation'), 422, ['payment_method' => 'Card payments start at R2.00 — please choose another way to pay.']);
+}
 
 try {
     $order = OrderService::place($division, $data, $customer);

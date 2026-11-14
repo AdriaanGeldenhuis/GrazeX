@@ -18,7 +18,7 @@ if (!$ent) {
     admin_start('Lists & setup', 'setup');
     $groups = [];
     foreach ($entities as $k => $en) {
-        if (admin_can($en['perm'])) {
+        if (admin_can($en['perm']) && (empty($en['division']) || admin_has_division($en['division']))) {
             $groups[$en['group']][$k] = $en;
         }
     }
@@ -51,10 +51,15 @@ $fmt = static function (string $col, mixed $v, array $field) {
     };
 };
 
+if (!empty($ent['division'])) {
+    require_admin_division($ent['division']); // e.g. feed categories are Feeds, breeds are Ranch
+}
 admin_start($ent['title'], 'setup', ['perm' => $ent['perm']]);
 
 if ($id === null):
-    $rows = db_all('SELECT * FROM ' . $ent['table'] . ' ORDER BY ' . $ent['order'] . ' LIMIT 500'); ?>
+    // Rows of the other division are not listed for an admin limited to one division
+    [$mine, $mineParams] = isset($ent['fields']['division_id']) ? admin_division_sql('division_id') : ['1=1', []];
+    $rows = db_all('SELECT * FROM ' . $ent['table'] . ' WHERE ' . $mine . ' ORDER BY ' . $ent['order'] . ' LIMIT 500', $mineParams); ?>
   <div class="adm-bar">
     <a class="btn btn-sm btn-ghost" href="/admin/manage.php"><svg class="icon icon-sm"><use href="#i-arrow-left"/></svg>All lists</a>
     <?php if (empty($ent['no_create'])): ?><a class="btn btn-primary" href="/admin/manage.php?e=<?= e($key) ?>&amp;id=0"><svg class="icon"><use href="#i-plus"/></svg>Add</a><?php endif; ?>

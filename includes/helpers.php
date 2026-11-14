@@ -209,13 +209,16 @@ function fmt_datetime(?string $date): string
 // ---------------------------------------------------------------------
 // Strings & tokens
 // ---------------------------------------------------------------------
-function slugify(string $text): string
+function slugify(string $text, int $max = 0): string
 {
     $text = mb_strtolower(trim($text));
     $text = strtr($text, ['ê' => 'e', 'ë' => 'e', 'é' => 'e', 'è' => 'e', 'ô' => 'o', 'ö' => 'o', 'û' => 'u',
                           'ü' => 'u', 'î' => 'i', 'ï' => 'i', 'á' => 'a', 'â' => 'a', '&' => ' and ']);
-    $text = preg_replace('/[^a-z0-9]+/', '-', $text) ?? '';
-    return trim($text, '-') ?: 'item';
+    $text = trim(preg_replace('/[^a-z0-9]+/', '-', $text) ?? '', '-');
+    if ($max > 0 && strlen($text) > $max) {
+        $text = rtrim(substr($text, 0, $max), '-'); // the column's length (a longer value is a database error)
+    }
+    return $text ?: 'item';
 }
 
 function random_token(int $bytes = 32): string
@@ -340,7 +343,8 @@ function client_ip(): string
 
 function user_agent(): string
 {
-    return substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+    // Valid UTF-8, cut by characters: it is stored (activity log, remembered logins) and strict mode refuses stray bytes
+    return mb_substr(mb_scrub((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 'UTF-8'), 0, 255);
 }
 
 /**
@@ -447,7 +451,8 @@ function json_response(array $payload, int $status = 200): never
             header('X-CSRF-Token: ' . csrf_token());
         }
     }
-    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    // A stray non-UTF-8 byte (e.g. echoed back from the request) becomes "�" instead of an empty answer
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 
@@ -569,7 +574,7 @@ function audit(string $action, ?string $entityType = null, ?int $entityId = null
         db_exec('INSERT INTO audit_log (actor_type, actor_id, action, entity_type, entity_id, details, ip, user_agent)
                  VALUES (?,?,?,?,?,?,?,?)', [
             $actorType, $actorId, $action, $entityType, $entityId,
-            $details ? json_encode($details, JSON_UNESCAPED_UNICODE) : null,
+            $details ? json_encode($details, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) : null,
             GX_IS_CLI || $system ? null : client_ip(), GX_IS_CLI ? 'cli' : ($system ? 'system' : user_agent()),
         ]);
     } catch (Throwable $e) {

@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
+require_admin_division('ranch'); // livestock lots belong to GrazeX Ranch
 
 $id = query_int('id');
 $l = $id ? db_one('SELECT * FROM lots WHERE id = ?', [$id]) : null;

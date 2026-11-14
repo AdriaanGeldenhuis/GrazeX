@@ -75,6 +75,10 @@ try {
             if ($type === 'tax_invoice' && $o['payment_status'] === 'unpaid') {
                 json_error('Invoices are issued once payment is received.', 409);
             }
+            // One invoice per order: issued now it would carry the estimated weights, and "Weigh & finalise" would send that one
+            if ($type === 'tax_invoice' && (int) $o['division_id'] === division_id('ranch') && in_array($o['status'], ['reserved', 'deposit_paid'], true)) {
+                json_error('Livestock is invoiced when the order is weighed and finalised.', 409);
+            }
             $id = DocumentService::issue((int) $o['id'], $type, ['admin_id' => $aid]);
             json_ok(['redirect' => '/admin/api/documents.php?id=' . $id], 'Document ready.');
         default:

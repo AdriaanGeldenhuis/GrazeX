@@ -59,6 +59,58 @@ function admin_division_ids(): array
         : [division_id($a['division_scope'])];
 }
 
+/** May this admin work with a division's records ("Can see: Feeds only / Ranch only" in Admin users)? */
+function admin_has_division(string $code): bool
+{
+    return in_array(division_id($code), admin_division_ids(), true);
+}
+
+/**
+ * Guard for pages and APIs whose records belong to ONE division: feed products and feed stock (feeds),
+ * livestock lots (ranch), a division's business and bank details. Call it after require_admin(_api)().
+ */
+function require_admin_division(string $code): void
+{
+    if (admin_has_division($code)) {
+        return;
+    }
+    if (defined('GX_IS_API')) {
+        json_error('That belongs to a part of the business you do not have access to.', 403);
+    }
+    http_response_code(403);
+    require GX_ROOT . '/includes/layout/forbidden.php';
+    exit;
+}
+
+/** SQL for "this row's division is one the admin may see" (a row for both divisions, NULL, is visible to everyone). */
+function admin_division_sql(string $column): array
+{
+    $ids = admin_division_ids();
+    return ['(' . $column . ' IS NULL OR ' . $column . ' IN (' . db_placeholders($ids) . '))', $ids];
+}
+
+/**
+ * "Lists & setup": may this admin change a row that belongs to $divisionId (NULL = a row for both divisions)?
+ * An admin limited to one division changes only that division's rows — never the other's, and not shared ones.
+ */
+function admin_can_edit_division_row(?int $divisionId): bool
+{
+    $ids = admin_division_ids();
+    return count($ids) === count(GX_DIVISIONS) || ($divisionId !== null && in_array($divisionId, $ids, true));
+}
+
+/**
+ * The bell shows an alert only to admins who may act on it — the same rule as staff pushes (PushService::STAFF_TYPES):
+ * a "New order …" or "New message from …" title carries customer names and amounts.
+ * Returns [SQL to append to a WHERE on admin_notifications, its parameters].
+ */
+function admin_notification_filter(): array
+{
+    $need = PushService::STAFF_TYPES + ['low_stock' => 'inventory.manage', 'vat_farmer' => 'customers.manage'];
+    $hidden = array_keys(array_filter($need, static fn(string $perm): bool => !admin_can($perm)));
+    return $hidden ? [' AND type NOT IN (' . db_placeholders($hidden) . ')', $hidden] : ['', []];
+}
+
 function login_admin(array $admin): void
 {
     session_rotate();

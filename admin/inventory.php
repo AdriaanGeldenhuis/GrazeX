@@ -8,6 +8,14 @@ require __DIR__ . '/../includes/bootstrap.php';
 require GX_ROOT . '/includes/layout/admin-shell.php';
 
 $tab = in_array(query_str('tab'), ['stock', 'lots', 'receive', 'stocktake', 'ledger'], true) ? query_str('tab') : 'stock';
+// Feed stock is Feeds, livestock numbers are Ranch: an admin limited to one division only gets that division's tabs
+$seesFeeds = admin_has_division('feeds');
+$seesRanch = admin_has_division('ranch');
+$tabs = array_filter(['stock' => 'Feed stock', 'lots' => 'Livestock', 'receive' => 'Receive stock', 'stocktake' => 'Stock take', 'ledger' => 'Ledger'],
+    static fn(string $k): bool => $k === 'ledger' || ($k === 'lots' ? $seesRanch : $seesFeeds), ARRAY_FILTER_USE_KEY);
+if (!isset($tabs[$tab])) {
+    $tab = (string) array_key_first($tabs);
+}
 $variantFilter = query_int('variant');
 $filter = query_str('filter');
 $variants = db_all('SELECT v.*, p.name AS product_name, p.id AS product_id FROM product_variants v JOIN products p ON p.id = v.product_id
@@ -19,7 +27,7 @@ $takeItems = $openTake ? db_all('SELECT t.*, v.name, v.sku, p.name AS product_na
 $ledger = $tab === 'ledger' ? db_all('SELECT m.*, v.name AS variant_name, p.name AS product_name, l.title AS lot_title, l.lot_no, a.name AS admin_name, o.order_no
         FROM stock_movements m LEFT JOIN product_variants v ON v.id = m.variant_id LEFT JOIN products p ON p.id = v.product_id
         LEFT JOIN lots l ON l.id = m.lot_id LEFT JOIN admin_users a ON a.id = m.admin_id LEFT JOIN orders o ON o.id = m.order_id
-        ' . ($variantFilter ? 'WHERE m.variant_id = ' . $variantFilter : '') . ' ORDER BY m.id DESC LIMIT 300') : [];
+        WHERE m.division_id IN (' . db_placeholders(admin_division_ids()) . ')' . ($variantFilter ? ' AND m.variant_id = ' . $variantFilter : '') . ' ORDER BY m.id DESC LIMIT 300', admin_division_ids()) : [];
 $lots = $tab === 'lots' ? db_all("SELECT l.*, b.name AS breed_name FROM lots l JOIN breeds b ON b.id = l.breed_id WHERE l.status <> 'archived' ORDER BY l.id DESC") : [];
 $variantOpts = [];
 foreach (db_all('SELECT v.id, v.name, v.sku, p.name AS pn FROM product_variants v JOIN products p ON p.id = v.product_id WHERE v.is_active = 1 ORDER BY p.name, v.sort_order') as $v) {
@@ -28,14 +36,16 @@ foreach (db_all('SELECT v.id, v.name, v.sku, p.name AS pn FROM product_variants 
 
 admin_start('Inventory', 'inventory', ['perm' => 'inventory.manage']);
 ?>
+<?php if ($seesFeeds): ?>
 <div class="kpis">
   <div class="kpi"><div class="k-label">Units in stock</div><div class="k-value"><?= number_format((int) $value['units'], 0, '.', ' ') ?></div></div>
   <div class="kpi"><div class="k-label">Stock value (cost)</div><div class="k-value"><?= e(money((int) $value['cost'], false)) ?></div></div>
   <div class="kpi"><div class="k-label">Stock value (retail)</div><div class="k-value"><?= e(money((int) $value['retail'], false)) ?></div></div>
   <div class="kpi"><div class="k-label">Potential margin</div><div class="k-value"><?= e(money((int) $value['retail'] - (int) $value['cost'], false)) ?></div></div>
 </div>
+<?php endif; ?>
 <div class="tabs mb-3" role="tablist">
-  <?php foreach (['stock' => 'Feed stock', 'lots' => 'Livestock', 'receive' => 'Receive stock', 'stocktake' => 'Stock take', 'ledger' => 'Ledger'] as $k => $l): ?>
+  <?php foreach ($tabs as $k => $l): ?>
     <a class="tab" role="tab" aria-selected="<?= $tab === $k ? 'true' : 'false' ?>" href="/admin/inventory.php?tab=<?= e($k) ?>"><?= e($l) ?></a>
   <?php endforeach; ?>
 </div>

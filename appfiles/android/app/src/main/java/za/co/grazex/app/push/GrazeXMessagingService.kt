@@ -54,7 +54,8 @@ class GrazeXMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setContentIntent(pending)
             .setCategory(if (channel == Channels.LIVESTOCK) NotificationCompat.CATEGORY_RECOMMENDATION else NotificationCompat.CATEGORY_STATUS)
-            // On a locked screen only "GrazeX" shows (order numbers and amounts appear once the phone is unlocked)
+            // For people who chose "hide sensitive content" on the lock screen, only "GrazeX" shows there (the public
+            // version below). Android's default shows the full notification on a locked screen.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(
                 NotificationCompat.Builder(this, channel)

@@ -2,6 +2,7 @@
 /**
  * "Lists & setup" — simple tables managed by the generic editor (/admin/manage.php).
  * Each entity: title, table, perm, order, list (columns), fields (name => [type, label, rules, ...]).
+ * division ('feeds' | 'ranch'): the list belongs to that division — an admin limited to the other one cannot open it.
  * Field types: text, textarea, markdown, number, money, bool, select (options), fk (table/label), date, time,
  *              weekdays, image, lines (child table rows, one per line), slug (from), code (uppercase).
  */
@@ -12,7 +13,7 @@ defined('GX_ROOT') || exit;
 $divOpts = ['' => 'Both divisions', '1' => 'Feeds', '2' => 'Ranch'];
 
 return [
-    'categories' => ['title' => 'Feed categories', 'group' => 'Feeds', 'table' => 'categories', 'perm' => 'products.manage', 'order' => 'sort_order, name',
+    'categories' => ['title' => 'Feed categories', 'group' => 'Feeds', 'division' => 'feeds', 'table' => 'categories', 'perm' => 'products.manage', 'order' => 'sort_order, name',
         'list' => ['name', 'slug', 'sort_order', 'is_active'],
         'fields' => [
             'name' => ['text', 'Name', 'required|max:150'],
@@ -23,19 +24,19 @@ return [
             'sort_order' => ['number', 'Sort order', 'nullable|int'],
             'is_active' => ['bool', 'Visible', 'nullable'],
         ]],
-    'brands' => ['title' => 'Brands', 'group' => 'Feeds', 'table' => 'brands', 'perm' => 'products.manage', 'order' => 'name', 'list' => ['name', 'slug', 'is_active'],
+    'brands' => ['title' => 'Brands', 'group' => 'Feeds', 'division' => 'feeds', 'table' => 'brands', 'perm' => 'products.manage', 'order' => 'name', 'list' => ['name', 'slug', 'is_active'],
         'fields' => ['name' => ['text', 'Name', 'required|max:150'], 'slug' => ['slug', 'Web address', 'nullable|max:120', 'from' => 'name'],
                      'media_id' => ['image', 'Logo', 'nullable'], 'is_active' => ['bool', 'Active', 'nullable']]],
-    'species' => ['title' => 'Animals (for filters & calculator)', 'group' => 'Feeds', 'table' => 'species', 'perm' => 'products.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
+    'species' => ['title' => 'Animals (for filters & calculator)', 'group' => 'Feeds', 'division' => 'feeds', 'table' => 'species', 'perm' => 'products.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
         'fields' => ['name' => ['text', 'Name', 'required|max:100'], 'slug' => ['slug', 'Web address', 'nullable|max:60', 'from' => 'name'], 'sort_order' => ['number', 'Sort order', 'nullable|int']]],
-    'breeds' => ['title' => 'Breeds', 'group' => 'Ranch', 'table' => 'breeds', 'perm' => 'lots.manage', 'order' => 'sort_order, name', 'list' => ['name', 'kind', 'slug', 'is_active'],
+    'breeds' => ['title' => 'Breeds', 'group' => 'Ranch', 'division' => 'ranch', 'table' => 'breeds', 'perm' => 'lots.manage', 'order' => 'sort_order, name', 'list' => ['name', 'kind', 'slug', 'is_active'],
         'fields' => ['name' => ['text', 'Name', 'required|max:100'], 'kind' => ['text', 'Kind of animal (printed on the document of identification, e.g. Sheep, Goat, Cattle)', 'required|max:40', 'default' => 'Sheep'],
                      'slug' => ['slug', 'Web address', 'nullable|max:80', 'from' => 'name'],
                      'description' => ['markdown', 'About the breed (shown on lot pages)', 'nullable|max:5000'], 'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Active', 'nullable']]],
-    'livestock_categories' => ['title' => 'Livestock types', 'group' => 'Ranch', 'table' => 'livestock_categories', 'perm' => 'lots.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
+    'livestock_categories' => ['title' => 'Livestock types', 'group' => 'Ranch', 'division' => 'ranch', 'table' => 'livestock_categories', 'perm' => 'lots.manage', 'order' => 'sort_order', 'list' => ['name', 'slug', 'sort_order'],
         'fields' => ['name' => ['text', 'Name', 'required|max:100'], 'slug' => ['slug', 'Web address', 'nullable|max:80', 'from' => 'name'],
                      'description' => ['textarea', 'Description', 'nullable|max:1000'], 'sort_order' => ['number', 'Sort order', 'nullable|int']]],
-    'delivery_zones' => ['title' => 'Delivery zones', 'group' => 'Delivery & collection', 'table' => 'delivery_zones', 'perm' => 'delivery.manage', 'order' => 'sort_order, name',
+    'delivery_zones' => ['title' => 'Delivery zones', 'group' => 'Delivery & collection', 'division' => 'feeds', 'table' => 'delivery_zones', 'perm' => 'delivery.manage', 'order' => 'sort_order, name',
         'list' => ['name', 'fee_cents', 'free_over_cents', 'min_order_cents', 'delivery_days', 'is_active'],
         'fields' => [
             'name' => ['text', 'Zone name', 'required|max:100'],
@@ -86,7 +87,7 @@ return [
                      'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_published' => ['bool', 'Published', 'nullable']]],
     'menu_items' => ['title' => 'Footer menu', 'group' => 'Content', 'table' => 'menu_items', 'perm' => 'content.manage', 'order' => 'location, sort_order', 'list' => ['label', 'url', 'sort_order', 'is_active'],
         'fields' => ['location' => ['select', 'Menu', 'required', 'options' => ['footer' => 'Footer']], 'label' => ['text', 'Label', 'required|max:100'],
-                     'url' => ['text', 'Link (e.g. /pages/about)', 'required|max:255'], 'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Visible', 'nullable']]],
+                     'url' => ['text', 'Link (e.g. /pages/about or https://…)', 'required|max:255|regex:#^(?:https:/)?/(?![/\\\\])#i'], 'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Visible', 'nullable']]],
     'gallery_items' => ['title' => 'Photo gallery', 'group' => 'Content', 'table' => 'gallery_items', 'perm' => 'content.manage', 'order' => 'sort_order', 'list' => ['media_id', 'caption', 'division_id', 'is_active'],
         'fields' => ['media_id' => ['image', 'Photo', 'required|int'], 'caption' => ['text', 'Caption', 'nullable|max:255'], 'division_id' => ['select', 'Shown on', 'nullable', 'options' => $divOpts],
                      'sort_order' => ['number', 'Sort order', 'nullable|int'], 'is_active' => ['bool', 'Visible', 'nullable']]],

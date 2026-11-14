@@ -19,6 +19,8 @@ if (!preg_match('/^[A-Za-z0-9_]+_test$/', $testDb)) {
     exit(1);
 }
 $GLOBALS['GX_ENV']['db']['name'] = $testDb;
+// Never a real mail server: with the example settings every test email would log in to the live SMTP host
+$GLOBALS['GX_ENV']['mail']['host'] = '';
 
 // ---------------------------------------------------------------------
 // Worker mode (used by the concurrency test): place an order for the last unit
@@ -29,10 +31,10 @@ if ($worker === '--worker') {
     $_SESSION = ['customer_id' => $cid, 'customer_sv' => 1];
     try {
         CartService::add('feeds', $variantId, 1);
-        $slot = DeliveryService::collectionCalendar(1)[0];
+        // A slot that still has space — the first one fills up during the run (Saturday has a single slot of 10)
+        $free = slot(1);
         usleep(random_int(0, 20000));
-        $o = OrderService::place('feeds', ['billing_name' => 'W', 'payment_method' => 'eft', 'fulfilment' => 'collection',
-            'collection_date' => $slot['date'], 'collection_slot_id' => $slot['slots'][0]['id']], current_customer());
+        $o = OrderService::place('feeds', ['billing_name' => 'W', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + $free, current_customer());
         echo 'OK ' . $o['order_no'];
     } catch (Throwable $e) {
         echo 'FAIL ' . $e->getMessage();
@@ -53,10 +55,12 @@ if ($worker === '--worker2') {
                 CartService::setCoupon($div, (int) $w['coupon']);
             }
         }
-        $cal = DeliveryService::collectionCalendar(division_id($div))[0];
+        // Unless the test names a slot, take one that still has space (the first one fills up during the run)
+        $free = isset($w['date'], $w['slot']) ? null : slot(division_id($div));
         usleep(random_int(0, 20000));
         $o = OrderService::place($div, ['billing_name' => 'W', 'billing_address' => 'Farm', 'buyer_id_number' => '8001015009087', 'payment_method' => $w['method'] ?? 'eft',
-            'fulfilment' => 'collection', 'collection_date' => $w['date'] ?? $cal['date'], 'collection_slot_id' => $w['slot'] ?? $cal['slots'][0]['id']], current_customer());
+            'fulfilment' => 'collection', 'collection_date' => $w['date'] ?? $free['collection_date'],
+            'collection_slot_id' => $w['slot'] ?? $free['collection_slot_id']], current_customer());
         echo 'OK ' . $o['order_no'];
     } catch (Throwable $e) {
         echo 'FAIL ' . $e->getMessage();
@@ -531,6 +535,9 @@ check('livestock cannot be completed before "collected" (Document of Identificat
 step('collected (setup)', static fn() => OrderService::transition((int) $r2['id'], 'collected'));
 step('completed (setup)', static fn() => order_row((int) $r2['id'])['status'] === 'completed' ?: OrderService::transition((int) $r2['id'], 'completed'));
 check('livestock completes after collection', order_row((int) $r2['id'])['status'] === 'completed');
+$thanks = static fn(string $no): int => (int) db_val('SELECT COUNT(*) FROM email_queue WHERE subject LIKE ?', ['%' . $no . ' completed%']);
+check('… and the buyer is thanked once (at collection, with the document of identification), not again at completion',
+    $thanks($r2['order_no']) === 1, $thanks($r2['order_no']) . ' emails');
 
 as_customer($c3);
 $rfBefore = stock(12);
@@ -538,6 +545,7 @@ CartService::add('feeds', 12, 2);
 $rf = OrderService::place('feeds', ['billing_name' => 'Refund Me', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
 OrderService::recordPayment((int) $rf['id'], (int) $rf['total_cents'], 'cash');
 OrderService::transition((int) $rf['id'], 'completed');
+check('a completed feeds order is thanked once', $thanks($rf['order_no']) === 1, $thanks($rf['order_no']) . ' emails');
 step('refund via status change', static fn() => OrderService::transition((int) $rf['id'], 'refunded', 'Bags were damp'));
 $rf2 = order_row((int) $rf['id']);
 check('refund: status refunded + payment_status refunded', $rf2['status'] === 'refunded' && $rf2['payment_status'] === 'refunded', $rf2['status'] . '/' . $rf2['payment_status']);
@@ -653,6 +661,66 @@ check('a per-kg lot without an average weight is refused', $st === 422 && isset(
     'weighs' => ['1001' => ['weighed_on' => date('Y-m-d'), 'head_count' => 5, 'avg_weight_kg' => '31.5']]]);
 check('… but a weighing in the same save supplies it', $st === 200 && (float) db_val("SELECT avg_weight_kg FROM lots WHERE lot_no = 'T-2'") === 31.5, json_encode($res));
 
+// A new lot keeps the status that was chosen (adding its animals used to turn "Sold" into "Available")
+[$st, $res] = $adm->api('POST', '/admin/api/lots.php', ['title' => 'Already sold', 'lot_no' => 'T-3', 'breed_id' => 1, 'category_id' => 1, 'sex' => 'mixed',
+    'qty_total' => 12, 'pricing_mode' => 'per_head', 'price' => '1500.00', 'deposit_pct' => 20, 'status' => 'sold_out']);
+$soldLot = db_one("SELECT status, qty_available FROM lots WHERE lot_no = 'T-3'");
+check('a new lot saved as "Sold" stays sold (never on the board as available)', $st === 200 && ($soldLot['status'] ?? '') === 'sold_out'
+    && !in_array('T-3', array_column(LivestockService::lots(['per_page' => 48])['items'], 'lot_no'), true), $st . ' ' . json_encode([$soldLot, $res]));
+
+// Coupons: an empty value is 0 (free delivery); a discount coupon needs one
+$coupon = static fn(string $code, string $type, string $value): array => ['action' => 'save', 'e' => 'coupons', 'id' => 0, 'code' => $code, 'division_id' => '1', 'type' => $type, 'value' => $value, 'is_active' => 1];
+[$st, $res] = $adm->api('POST', '/admin/api/manage.php', $coupon('FREESHIP', 'free_delivery', ''));
+check('a free-delivery coupon saves with the value left empty', $st === 200 && (int) db_val("SELECT COUNT(*) FROM coupons WHERE code = 'FREESHIP' AND value = 0") === 1, $st . ' ' . json_encode($res));
+[$st, $res] = $adm->api('POST', '/admin/api/manage.php', $coupon('NOTHING', 'percent', ''));
+check('… but a % off coupon without a value is refused', $st === 422 && !db_val("SELECT 1 FROM coupons WHERE code = 'NOTHING'"), $st . ' ' . json_encode($res));
+db_exec("DELETE FROM coupons WHERE code = 'FREESHIP'");
+
+// Settings: what the form shows is enforced on the server (the form is sent without browser validation)
+$settingNow = static fn(string $k): ?string => ($v = db_val('SELECT setting_value FROM settings WHERE setting_key = ?', [$k])) === null ? null : (string) $v;
+$mailWas = $settingNow('contact_email');
+[$st, $res] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['contact_email' => 'info@grazex.co.za / sales@grazex.co.za']]);
+check('a mistyped public email is refused (it is the Reply-To of every email)', $st === 422 && $settingNow('contact_email') === $mailWas, $st . ' ' . json_encode($res));
+[$st] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['email_hourly_cap' => '0']]);
+check('… as is an email limit of 0 an hour (nothing would be sent)', $st === 422 && (int) $settingNow('email_hourly_cap') > 0, (string) $st);
+$runWas = $settingNow('last_expiry_run');
+[$st] = $adm->api('POST', '/admin/api/settings.php', ['s' => ['last_expiry_run' => '1', 'business_hours' => (string) $settingNow('business_hours')]]);
+check('the settings form cannot overwrite the site\'s own bookkeeping', $st === 200 && $settingNow('last_expiry_run') === $runWas, $st . ' ' . $settingNow('last_expiry_run'));
+
+// Recording a payment: at most what is still outstanding
+as_customer($c3);
+CartService::add('feeds', 6, 2);
+$rp = OrderService::place('feeds', ['billing_name' => 'Record Pay', 'payment_method' => 'cash_on_collection', 'fulfilment' => 'collection'] + slot(1), current_customer());
+$rpHalf = intdiv((int) $rp['total_cents'], 2);
+$rand = static fn(int $cents): string => number_format($cents / 100, 2, '.', '');
+[$st] = $adm->api('POST', '/admin/api/payments.php', ['action' => 'record', 'order_id' => $rp['id'], 'amount' => $rand($rpHalf), 'method' => 'cash']);
+[$st2, $res2] = $adm->api('POST', '/admin/api/payments.php', ['action' => 'record', 'order_id' => $rp['id'], 'amount' => $rand((int) $rp['total_cents']), 'method' => 'cash']);
+check('recording the full total again on a part-paid order is refused', $st === 200 && $st2 === 422 && (int) order_row((int) $rp['id'])['amount_paid_cents'] === $rpHalf,
+    "$st $st2 " . json_encode($res2) . ' paid ' . order_row((int) $rp['id'])['amount_paid_cents']);
+[$st] = $adm->api('POST', '/admin/api/payments.php', ['action' => 'record', 'order_id' => $rp['id'], 'amount' => $rand((int) $rp['total_cents'] - $rpHalf), 'method' => 'cash']);
+check('… and the rest is accepted', $st === 200 && order_row((int) $rp['id'])['payment_status'] === 'paid', (string) $st);
+
+// A reply to an enquiry is only "sent" when an email really went into the queue
+db_exec("UPDATE email_templates SET is_active = 0 WHERE template_key = 'enquiry_reply'");
+$enq = db_insert("INSERT INTO enquiries (type, name, email, message) VALUES ('contact', 'Reply Test', 'reply@test.local', 'Hello?')");
+[$st] = $adm->api('POST', '/admin/api/messages.php', ['action' => 'reply', 'id' => $enq, 'reply' => 'Hi there']);
+check('a reply is not reported as sent while its email is switched off', $st === 409 && db_val('SELECT status FROM enquiries WHERE id = ?', [$enq]) === 'new', (string) $st);
+db_exec("UPDATE email_templates SET is_active = 1 WHERE template_key = 'enquiry_reply'");
+[$st] = $adm->api('POST', '/admin/api/messages.php', ['action' => 'reply', 'id' => $enq, 'reply' => 'Hi there']);
+check('… and goes out once it is on', $st === 200 && db_val('SELECT status FROM enquiries WHERE id = ?', [$enq]) === 'replied'
+    && (bool) db_val("SELECT 1 FROM email_queue WHERE to_email = 'reply@test.local'"), (string) $st);
+db_exec('DELETE FROM enquiries WHERE id = ?', [$enq]);
+
+// Livestock is invoiced on the weighed total — never earlier on the estimate (one invoice per order)
+as_customer($c4);
+CartService::add('ranch', (int) db_val("SELECT id FROM lots WHERE status IN ('available','reserved') AND qty_available > 0 AND deposit_pct > 0 ORDER BY qty_available DESC LIMIT 1"), 1);
+$rv = OrderService::place('ranch', ['billing_name' => 'Early Invoice', 'billing_address' => 'Farm 2', 'buyer_id_number' => '8001015009087',
+    'payment_method' => 'eft', 'fulfilment' => 'collection'] + slot(2), current_customer());
+OrderService::recordPayment((int) $rv['id'], (int) $rv['deposit_due_cents'], 'eft');
+[$st, $res] = $adm->api('POST', '/admin/api/orders.php', ['action' => 'document', 'type' => 'tax_invoice', 'id' => $rv['id']]);
+check('a livestock order cannot be invoiced before it is weighed', $st === 409
+    && !db_val("SELECT 1 FROM documents WHERE order_id = ? AND doc_type IN ('tax_invoice','invoice')", [$rv['id']]), $st . ' ' . json_encode($res));
+
 $staff = new TestHttp($base);
 $staff->page('/admin/login.php');
 $staff->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'staff@test.local', 'password' => $ownerPw]);
@@ -688,6 +756,8 @@ yoco_pending($cc, 'ch_open');
 check('customer cannot cancel while a card payment is in progress', $st === 409);
 $html = $cust->page('/account/order.php?no=' . rawurlencode($cc['order_no']));
 check('… and the order page explains instead of showing a Cancel button', !str_contains($html, 'Cancel this order') && str_contains($html, 'card payment for this order is in progress'));
+check('… and offers EFT as well ("Pay another way" leads to this page): bank details and the proof-of-payment form',
+    str_contains($html, 'id="pop-form"') && str_contains($html, '62000000001') && str_contains($html, '/payments/pay.php?t='));
 db_exec("UPDATE payments SET created_at = NOW() - INTERVAL 2 HOUR WHERE provider_checkout_id = 'ch_open'");
 [$st] = $cust->api('POST', '/account/api/orders.php', ['action' => 'cancel', 'order_no' => $cc['order_no']]);
 check('… but can once that checkout has lapsed', $st === 200);
@@ -702,6 +772,20 @@ $rts = (string) time();
 $rsig = base64_encode(hash_hmac('sha256', "evt_refund_r.{$rts}.{$rbody}", base64_decode(substr((string) env('yoco.test_webhook_secret'), 6)), true));
 $hook->raw('/payments/api/yoco-webhook.php', $rbody, ['webhook-id: evt_refund_r', 'webhook-timestamp: ' . $rts, 'webhook-signature: v1,' . $rsig]);
 check('Yoco refund webhook marks the order refunded', order_row((int) $yr['id'])['payment_status'] === 'refunded');
+// Only part of a card payment refunded in the Yoco portal (one damaged bag): the payment and the order still stand
+as_customer($c3);
+CartService::add('feeds', 6, 2);
+$yp = OrderService::place('feeds', ['billing_name' => 'Yoco Part Refund', 'payment_method' => 'yoco', 'fulfilment' => 'collection'] + slot(1), current_customer());
+$ypPay = yoco_pending($yp, 'ch_part_refund');
+webhook_post($hook, 'evt_paid_pr', 'ch_part_refund', (int) $yp['total_cents']);
+$pbody = json_encode(['id' => 'evt_refund_pr', 'type' => 'refund.succeeded', 'payload' => ['amount' => 500, 'metadata' => ['checkoutId' => 'ch_part_refund']]]);
+$pts = (string) time();
+$psig = base64_encode(hash_hmac('sha256', "evt_refund_pr.{$pts}.{$pbody}", base64_decode(substr((string) env('yoco.test_webhook_secret'), 6)), true));
+[$st] = $hook->raw('/payments/api/yoco-webhook.php', $pbody, ['webhook-id: evt_refund_pr', 'webhook-timestamp: ' . $pts, 'webhook-signature: v1,' . $psig]);
+$ypRow = db_one('SELECT status, notes FROM payments WHERE id = ?', [$ypPay]);
+check('a part refund at Yoco leaves the payment and the order as paid', $st === 200 && $ypRow['status'] === 'succeeded'
+    && order_row((int) $yp['id'])['payment_status'] === 'paid', $st . ' ' . json_encode($ypRow) . ' ' . order_row((int) $yp['id'])['payment_status']);
+check('… notes the amount on the payment and tells the admin', str_contains((string) $ypRow['notes'], 'R 5.00') && notified('refund', 'part refund'), (string) $ypRow['notes']);
 
 
 
@@ -1103,11 +1187,75 @@ $ro->page('/admin/');
 $ro->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
 check('"mark all read" leaves other divisions\' notifications alone', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$feedsNote]) === 0);
 
+// "Ranch only" covers everything that belongs to one division — not only orders, payments and documents
+$divForm = static function (string $code, string $bankNo): array {
+    $dv = db_one('SELECT * FROM divisions WHERE code = ?', [$code]);
+    return ['action' => 'division', 'code' => $code, 'legal_name' => $dv['legal_name'] ?: 'GrazeX', 'bank_account_no' => $bankNo, 'bank_name' => $dv['bank_name'],
+            'bank_account_name' => $dv['bank_account_name'], 'bank_branch_code' => $dv['bank_branch_code'], 'vat_registered' => (int) $dv['vat_registered'], 'vat_no' => $dv['vat_no'],
+            'order_prefix' => $dv['order_prefix'], 'invoice_prefix' => $dv['invoice_prefix'], 'credit_prefix' => $dv['credit_prefix'], 'receipt_prefix' => $dv['receipt_prefix']];
+};
+$bankOf = static fn(string $code): string => (string) db_val('SELECT bank_account_no FROM divisions WHERE code = ?', [$code]);
+$feedsBank = $bankOf('feeds');
+[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('feeds', '99990000111'));
+check('a Ranch-only admin cannot change the Feeds bank details', $st === 403 && $bankOf('feeds') === $feedsBank, $st . ' ' . $bankOf('feeds'));
+[$st] = $ro->api('POST', '/admin/api/settings.php', $divForm('ranch', $bankOf('ranch')));
+check('… but can save the Ranch business details', $st === 200, (string) $st);
+$roSettings = $ro->page('/admin/settings.php');
+check('… and the Feeds business tab is not offered', str_contains($roSettings, 'tab=ranch') && !str_contains($roSettings, 'tab=feeds'));
+[$st] = $ro->headers('/admin/settings.php?tab=feeds');
+check('… nor opened by its address', $st === 403, (string) $st);
+$scopeStock = stock(6);
+[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust', 'variant_id' => 6, 'change' => '+5 scope test']);
+check('a Ranch-only admin cannot adjust feed stock', $st === 403 && stock(6) === $scopeStock, $st . ' ' . stock(6));
+[$st] = $ro->api('POST', '/admin/api/inventory.php', ['action' => 'adjust_lot', 'lot_id' => 1, 'change' => 'not a number']);
+check('… but reaches livestock adjustments (a mistyped change is a plain validation error)', $st === 422, (string) $st);
+[$st] = $ro->api('POST', '/admin/api/products.php', ['action' => 'delete', 'id' => 0]);
+[$stPage] = $ro->headers('/admin/products.php');
+[$stLots] = $ro->headers('/admin/lots.php');
+check('… cannot open or change feed products, but can open livestock', $st === 403 && $stPage === 403 && $stLots === 200, "$st $stPage $stLots");
+[$st] = $ro->headers('/admin/reports.php?export=stock');
+check('… cannot export the feed stock valuation', $st === 403, (string) $st);
+$roInv = $ro->page('/admin/inventory.php');
+check('… and Inventory opens on Livestock, without the feed stock value', str_contains($roInv, 'tab=lots') && !str_contains($roInv, 'tab=receive') && !str_contains($roInv, 'Stock value (cost)'));
+[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'categories', 'id' => 0, 'name' => 'Scope test category']);
+check('… cannot add a feed category', $st === 403 && !db_val("SELECT 1 FROM categories WHERE name = 'Scope test category'"), (string) $st);
+[$st] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '1', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
+[$st2] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '', 'question' => 'Scope test FAQ?', 'answer' => 'No.']);
+[$st3] = $ro->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'faqs', 'id' => 0, 'division_id' => '2', 'question' => 'Scope test FAQ?', 'answer' => 'Yes.']);
+check('… may add an FAQ for Ranch only (not for Feeds, not for both)', $st === 403 && $st2 === 403 && $st3 === 200
+    && (int) db_val("SELECT COUNT(*) FROM faqs WHERE question = 'Scope test FAQ?'") === 1, "$st $st2 $st3");
+db_exec("DELETE FROM faqs WHERE question = 'Scope test FAQ?'");
+$msgFeeds = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (1, 'contact', 'Feeds Asker', 'feedsasker@test.local', 'A feeds question')");
+$msgRanch = db_insert("INSERT INTO enquiries (division_id, type, name, email, message) VALUES (2, 'contact', 'Ranch Asker', 'ranchasker@test.local', 'A ranch question')");
+$roMsgs = $ro->page('/admin/messages.php?id=' . $msgFeeds);
+check('… sees Ranch messages, not Feeds ones', str_contains($roMsgs, 'Ranch Asker') && !str_contains($roMsgs, 'Feeds Asker'));
+check('… and a message that is not on the page is not marked read by its address', db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new');
+[$st] = $ro->api('POST', '/admin/api/messages.php', ['action' => 'archive', 'id' => $msgFeeds]);
+check('… and cannot archive or answer a Feeds message', $st === 404 && db_val('SELECT status FROM enquiries WHERE id = ?', [$msgFeeds]) === 'new', (string) $st);
+db_exec('DELETE FROM enquiries WHERE id IN (?, ?)', [$msgFeeds, $msgRanch]);
+// The bell: an alert is for admins who may act on it (titles carry customer names and amounts)
+$privNote = db_insert("INSERT INTO admin_notifications (division_id, type, title) VALUES (NULL, 'privacy', 'Account deletion request — Jane Doe (jane@test.local)')");
+[, $bellStaff] = $staff->api('GET', '/admin/api/notifications.php');
+[, $bellOwner] = $adm->api('GET', '/admin/api/notifications.php');
+$titles = static fn(array $r): array => array_column($r['data']['items'] ?? [], 'title');
+check('the bell hides alerts the admin has no permission to act on', !in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellStaff), true)
+    && in_array('Account deletion request — Jane Doe (jane@test.local)', $titles($bellOwner), true), json_encode([$titles($bellStaff), $titles($bellOwner)]));
+$staff->api('POST', '/admin/api/notifications.php', ['action' => 'read_all']);
+check('… and "mark all read" leaves them unread for those who can', (int) db_val('SELECT is_read FROM admin_notifications WHERE id = ?', [$privNote]) === 0);
+db_exec('DELETE FROM admin_notifications WHERE id = ?', [$privNote]);
+
 section('Security: input, uploads and links');
 $pub = new TestHttp($base);
 $pub->page('/pages/contact.php');
 [$st] = $pub->api('POST', '/pages/api/contact.php', ['name' => ['x'], 'email' => 'a@test.local', 'phone' => '0821234567', 'message' => 'Hello there, a question.']);
 check('a list where text is expected is a validation error, not a crash', $st === 422, (string) $st);
+[$utfClean, $utfErr] = validate(['name' => "Jan\xC3\x28 Smit", 'farm' => 'Renée se plaas'], ['name' => 'required|max:100', 'farm' => 'required|max:100']);
+check('text that is not valid UTF-8 is a validation error, never saved as an empty value',
+    isset($utfErr['name']) && !array_key_exists('name', $utfClean) && $utfClean['farm'] === 'Renée se plaas', json_encode([array_keys($utfErr), array_keys($utfClean)]));
+// Sent as a form post (the empty file list makes it multipart): JSON cannot carry the Latin-1 "é" byte
+[$st, $res] = $pub->api('POST', '/pages/api/contact.php', ['name' => "Caf\xE9 Boer", 'email' => 'a@test.local', 'phone' => '0821234567', 'message' => 'Hello there, a question.'], []);
+check('… and the form says so (the name field is flagged, nothing is saved)', $st === 422 && isset($res['errors']['name'])
+    && !db_val("SELECT 1 FROM enquiries WHERE email = 'a@test.local'"), $st . ' ' . json_encode($res, JSON_INVALID_UTF8_SUBSTITUTE));
 [$st] = $pub->api('GET', '/feeds/api/products.php?page=99999999999999999999');
 check('a huge page number does not break the catalogue', $st === 200, (string) $st);
 [$st] = $pub->api('GET', '/ranch/api/lots.php?page=9223372036854775807');
@@ -1428,7 +1576,16 @@ check('unverified account: data export does not include guest alerts/enquiries f
     $st === 200 && ($res['data']['download']['livestock_alerts'] ?? null) === [] && ($res['data']['download']['enquiries'] ?? null) === [], $st . ' ' . json_encode($res));
 check('unverified account: alerts page does not list them', !str_contains($vh->page('/account/alerts.php'), 'Pause'));
 $vtok = customer_token_create($vid, 'verify_email', 60);
-$vh->page('/account/verify.php?token=' . $vtok);
+// Opening the link (as a mail scanner does) must not confirm anything: only the button on that page does
+$vPage = $vh->page('/account/verify.php?token=' . $vtok);
+check('opening the confirmation link does not confirm the email by itself (mail scanners open links)',
+    db_val('SELECT email_verified_at FROM customers WHERE id = ?', [$vid]) === null && str_contains($vPage, 'data-action="verify_email"')
+    && (int) db_val("SELECT COUNT(*) FROM livestock_alerts WHERE email = 'victim@test.local' AND customer_id IS NOT NULL") === 0);
+[$st, $res] = $vh->api('POST', '/account/api/auth.php', ['action' => 'verify_email', 'token' => $vtok]);
+check('… the button on that page does', $st === 200 && ($res['data']['redirect'] ?? '') === '/account/'
+    && db_val('SELECT email_verified_at FROM customers WHERE id = ?', [$vid]) !== null, $st . ' ' . json_encode($res));
+[$st] = $vh->api('POST', '/account/api/auth.php', ['action' => 'verify_email', 'token' => $vtok]);
+check('… once (a used link is refused)', $st === 410, (string) $st);
 check('verifying the email links the guest alert and enquiry to the account',
     (int) db_val("SELECT customer_id FROM livestock_alerts WHERE email = 'victim@test.local'") === $vid && (int) db_val("SELECT customer_id FROM enquiries WHERE email = 'victim@test.local'") === $vid);
 [$st, $res] = $vh->api('POST', '/account/api/privacy.php', ['action' => 'export']);
@@ -1532,6 +1689,13 @@ for ($i = 0; $i < 3; $i++) {
     LivestockService::subscribe('capped@test.local', null, null, null, false);
 }
 check('… and the address still has its full daily allowance afterwards', (int) db_val("SELECT COUNT(*) FROM email_queue WHERE to_email = 'capped@test.local'") === 3);
+// An address that is over its own daily limit must not eat the site's hourly allowance (40 an hour for everyone)
+$greedy = db_one("SELECT * FROM livestock_alerts WHERE email = 'capped@test.local' ORDER BY id DESC LIMIT 1");
+for ($i = 0; $i < 10; $i++) {
+    LivestockService::requestConfirmation($greedy, 'alert_confirm_greedy', 40);
+}
+$greedyHits = (int) db_val('SELECT hits FROM rate_limits WHERE bucket = ?', [hash('sha256', 'alert_confirm_greedy|all')]);
+check('one address asking again and again cannot use up the site\'s hourly confirmations', $greedyHits === 1, $greedyHits . ' site hits for 10 requests');
 // A pending confirmation link is not replaced by repeated sign-ups once the daily email limit is reached
 for ($i = 0; $i < 3; $i++) {
     LivestockService::subscribe('pending@test.local', null, null, null, false);
@@ -1818,6 +1982,101 @@ $hf = $pv->page('/pages/contact.php');
 check('footer shows old-style menu links in the pretty form', str_contains($hf, 'href="/pages/about"') && !str_contains($hf, 'slug=about'));
 db_exec("UPDATE menu_items SET url = '/pages/about' WHERE url = '/pages/page.php?slug=about'");
 
+section('Review fixes: storefront, forms and lists');
+$bothFaq = db_insert("INSERT INTO faqs (division_id, question, answer, is_active) VALUES (NULL, 'Do both shops share this answer?', 'Yes.', 1)");
+check('an FAQ saved for both divisions shows on Feeds and on Ranch', str_contains($pub->page('/feeds/'), 'Do both shops share this answer?')
+    && str_contains($pub->page('/ranch/'), 'Do both shops share this answer?'));
+db_exec('DELETE FROM faqs WHERE id = ?', [$bothFaq]);
+$lp = db_one("SELECT id, slug FROM lots WHERE slug = 'already-sold-t-3'"); // the lot saved as "Sold" earlier (an earlier test renumbers it)
+db_exec('INSERT INTO weigh_sessions (lot_id, weighed_on, head_count, avg_weight_kg, total_weight_kg) VALUES (?, ?, 12, 42.0, 504), (?, ?, 12, 40.5, 486)',
+    [$lp['id'], date('Y-m-d', strtotime('-14 days')), $lp['id'], date('Y-m-d')]);
+db_exec("INSERT INTO lot_health_records (lot_id, record_date, type, product_used, withdrawal_until) VALUES (?, ?, 'dosing', 'Test dose', ?)",
+    [$lp['id'], date('Y-m-d', strtotime('-7 days')), date('Y-m-d')]);
+$lotHtml = $pub->page(lot_url($lp['slug']));
+check('a withdrawal period that ends today is still active today', str_contains($lotHtml, 'badge-warning">Active') && !str_contains($lotHtml, 'badge-success">Cleared'));
+check('a lot that lost weight is not shown as a gain', str_contains($lotHtml, '−1.5 kg') && !str_contains($lotHtml, '+-') && !str_contains($lotHtml, 'rose from'));
+check('a per-head price with cents keeps its cents', LivestockService::priceLabel(['pricing_mode' => 'per_head', 'price_cents' => 125050, 'avg_weight_kg' => null])['main'] === 'R 1 250.50'
+    && LivestockService::priceLabel(['pricing_mode' => 'per_head', 'price_cents' => 150000, 'avg_weight_kg' => null])['main'] === 'R 1 500');
+
+// JSON numbers where text is expected: taken as text (they used to end in an error page)
+[$st, $res] = $pub->api('POST', '/pages/api/contact.php', ['name' => 12345, 'email' => 'numbers@test.local', 'message' => 'hello there']);
+check('a number where text is expected is taken as text, not an error page', $st === 200 && (string) db_val("SELECT name FROM enquiries WHERE email = 'numbers@test.local'") === '12345',
+    $st . ' ' . json_encode($res));
+db_exec("DELETE FROM enquiries WHERE email = 'numbers@test.local'");
+$np = new TestHttp($base);
+$np->page('/account/login.php');
+[$st] = $np->api('POST', '/account/api/auth.php', ['action' => 'login', 'email' => 'nobody-numeric@test.local', 'password' => 12345678901]);
+check('… a numeric password is a wrong password (422)', $st === 422, (string) $st);
+$np->page('/admin/login.php');
+[$st] = $np->api('POST', '/admin/api/auth.php', ['action' => 'login', 'email' => 'nobody-numeric@test.local', 'password' => 12345678901]);
+check('… on the admin login too', in_array($st, [401, 422], true), (string) $st);
+[$utfClean, $utfErr] = validate(['name' => true], ['name' => 'required|max:100']);
+check('… and true/false where text is expected is refused', isset($utfErr['name']));
+
+$_SERVER['HTTP_USER_AGENT'] = "Mozilla/5.0 \xff\xfe Broken";
+check('a browser name with stray bytes is stored as valid text', mb_check_encoding(user_agent(), 'UTF-8') && str_contains(user_agent(), 'Mozilla/5.0'));
+unset($_SERVER['HTTP_USER_AGENT']);
+$longSlug = slugify(str_repeat('Long product name ', 20), 150);
+check('a web address made from a long name fits its column', strlen($longSlug) <= 150 && !str_ends_with($longSlug, '-') && slugify('Short name', 150) === 'short-name', $longSlug);
+
+$usedSlot = (int) db_val('SELECT collection_slot_id FROM orders WHERE collection_slot_id IS NOT NULL ORDER BY id DESC LIMIT 1');
+[$st, $res] = $adm->api('POST', '/admin/api/manage.php', ['action' => 'delete', 'e' => 'collection_slots', 'id' => $usedSlot]);
+check('a collection time that orders use cannot be deleted (it would vanish from those orders)', $st === 409
+    && (bool) db_val('SELECT 1 FROM collection_slots WHERE id = ?', [$usedSlot]) && (bool) db_val('SELECT 1 FROM orders WHERE collection_slot_id = ?', [$usedSlot]), $st . ' ' . json_encode($res));
+[$st] = $adm->api('POST', '/admin/api/manage.php', ['action' => 'save', 'e' => 'menu_items', 'id' => 0, 'location' => 'footer', 'label' => 'Elsewhere', 'url' => '//evil.example/x', 'is_active' => 1]);
+check('a footer link must be a page on this site or an https:// address', $st === 422 && !db_val("SELECT 1 FROM menu_items WHERE label = 'Elsewhere'"), (string) $st);
+
+$mdHtml = markdown("## Delivery\nWe deliver on Tuesdays.\n\nIntro line\n### Returns\nWithin 7 days.");
+check('a heading directly above its paragraph is a heading (no "##" printed on the page)', str_contains($mdHtml, '<h3>Delivery</h3>') && str_contains($mdHtml, '<h4>Returns</h4>')
+    && !str_contains($mdHtml, '#') && str_contains($mdHtml, '<p>We deliver on Tuesdays.</p>'), $mdHtml);
+$usersHtml = $adm->page('/admin/users.php');
+check('every field id on the admin users page is used once (each label points at its own field)', substr_count($usersHtml, 'id="f-name"') === 1
+    && substr_count($usersHtml, 'id="ue-name"') === 1 && substr_count($usersHtml, 'for="ue-role-id"') === 1 && substr_count($usersHtml, 'id="f-division-scope"') === 1);
+[$stDocs] = $cust->headers('/account/documents.php?page=2');
+[$stAudit] = $adm->headers('/admin/audit.php?page=2');
+check('the documents page and the audit log open on any page number', $stDocs === 200 && $stAudit === 200, "$stDocs $stAudit");
+$auditRows = (int) db_val('SELECT COUNT(*) FROM audit_log');
+check('the audit log offers its older pages', $auditRows <= 200 || str_contains($adm->page('/admin/audit.php'), '/admin/audit.php?page=2'), (string) $auditRows);
+
+// The mail server is down (nothing listens on this port): waiting emails keep their tries and the run stops at the first
+$mailWas = $GLOBALS['GX_ENV']['mail'];
+$GLOBALS['GX_ENV']['mail'] = ['host' => '127.0.0.1', 'port' => 2599, 'user' => 'orders@test.local', 'pass' => 'x', 'secure' => 'ssl', 'from_email' => 'orders@test.local', 'from_name' => 'GrazeX'] + $mailWas;
+db_exec("UPDATE email_queue SET status = 'sent', sent_at = NOW() WHERE status = 'queued'"); // only the two below are waiting
+$down1 = MailService::queue('down1@test.local', 'Down One', 'Waiting 1', '<p>x</p>');
+$down2 = MailService::queue('down2@test.local', 'Down Two', 'Waiting 2', '<p>x</p>');
+$sentNow = MailService::processQueue(5);
+$d1 = db_one('SELECT status, attempts, last_error FROM email_queue WHERE id = ?', [$down1]);
+$d2 = db_one('SELECT status, attempts, last_error FROM email_queue WHERE id = ?', [$down2]);
+check('with the mail server down an email keeps waiting and loses none of its five tries', $sentNow === 0 && $d1['status'] === 'queued' && (int) $d1['attempts'] === 0
+    && $d1['last_error'] !== null, json_encode($d1));
+check('… and the run stops at the first one (no long timeout per waiting email)', $d2['status'] === 'queued' && (int) $d2['attempts'] === 0 && $d2['last_error'] === null, json_encode($d2));
+db_exec('UPDATE email_queue SET send_after = NOW() - INTERVAL 1 MINUTE WHERE id = ?', [$down1]);
+MailService::sendNow($down1);
+check('… also when an email is sent straight away', (int) db_val('SELECT attempts FROM email_queue WHERE id = ?', [$down1]) === 0);
+db_exec('UPDATE email_queue SET created_at = NOW() - INTERVAL 1 HOUR WHERE id = ?', [$down1]);
+check('… and the dashboard tells the admin that emails are not going out', MailService::stuckReason() !== null && str_contains($adm->page('/admin/'), 'data-mail-warning'), (string) MailService::stuckReason());
+db_exec('DELETE FROM email_queue WHERE id IN (?, ?)', [$down1, $down2]);
+check('… the warning goes when nothing is waiting any more', MailService::stuckReason() === null && !str_contains($adm->page('/admin/'), 'data-mail-warning'));
+$GLOBALS['GX_ENV']['mail'] = $mailWas;
+
+// A card order under R2.00 cannot be paid at Yoco: it is refused at checkout instead of being placed and left to expire
+as_customer($c3);
+CartService::clear('feeds');
+$co->api('POST', '/feeds/api/cart.php', ['action' => 'add', 'target_id' => 6, 'qty' => 1]);
+[, $tinyQ] = $co->api('POST', '/feeds/api/checkout.php', ['action' => 'quote', 'fulfilment' => 'collection', 'payment_method' => 'yoco']);
+$tinyCoupon = db_insert("INSERT INTO coupons (code, type, value, division_id, is_active) VALUES ('ALMOSTFREE', 'fixed', ?, 1, 1)", [(int) ($tinyQ['data']['total'] ?? 0) - 100]);
+db_exec('UPDATE carts SET coupon_id = ? WHERE customer_id = ? AND division_id = 1', [$tinyCoupon, $c3['id']]);
+$tinySlot = slot(1);
+$tinyOrders = (int) db_val('SELECT COUNT(*) FROM orders WHERE customer_id = ?', [$c3['id']]);
+[$st, $res] = $co->api('POST', '/feeds/api/checkout.php', ['action' => 'place', 'billing_name' => 'Tiny Card', 'billing_phone' => '0821234567', 'fulfilment' => 'collection',
+    'payment_method' => 'yoco', 'accept_terms' => 1, 'collection_date' => $tinySlot['collection_date'], 'collection_slot_id' => $tinySlot['collection_slot_id']]);
+check('a card order of R1.00 is refused at checkout (card payments start at R2.00)', $st === 422 && isset($res['errors']['payment_method'])
+    && (int) db_val('SELECT COUNT(*) FROM orders WHERE customer_id = ?', [$c3['id']]) === $tinyOrders, $st . ' ' . json_encode($res));
+db_exec('UPDATE carts SET coupon_id = NULL WHERE customer_id = ? AND division_id = 1', [$c3['id']]);
+db_exec('DELETE FROM coupons WHERE id = ?', [$tinyCoupon]);
+as_customer($c3);
+CartService::clear('feeds');
+
 section('Phase 5: accessibility, speed and small UX (server side)');
 $fh5 = $pv->page('/feeds/');
 check('closed cart drawer is inert and a real modal when open', (bool) preg_match('#<aside class="drawer" id="cart-drawer"[^>]*aria-modal="true"[^>]*inert>#', $fh5));
@@ -1954,6 +2213,9 @@ $stillIn = static function (TestHttp $h): bool {
     return $st === 200;
 };
 $rmCid = $mkRemember('remember@test.local');
+$mkRemember('badua@test.local');
+$badUa = $loginAs('badua@test.local', true, ["User-Agent: Broken\xff\xfeBrowser/1.0"]);
+check('"keep me logged in" works for a browser whose name has stray bytes', $badUa->cookie('GXREMEMBER') !== null && $stillIn($badUa));
 $rm = $loginAs('remember@test.local', true);
 $rmSet = implode(' | ', array_filter($rm->lastHeaders['set-cookie'] ?? [], static fn($c) => str_starts_with($c, 'GXREMEMBER=')));
 check('"Keep me logged in" sets a 60-day HttpOnly, SameSite=Lax cookie', preg_match('/^GXREMEMBER=[a-f0-9]{24}\.[a-f0-9]{64};/', $rmSet) === 1
@@ -2056,15 +2318,23 @@ $adm6->api('POST', '/admin/api/customers.php', ['action' => 'unblock', 'id' => $
 section('Phase 6: push notifications');
 $fbFile = GX_ROOT . '/storage/private/firebase-service-account.json';
 $fbTokenFile = GX_ROOT . '/storage/private/fcm-access-token.json';
-$fbBackup = is_file($fbFile) ? (string) file_get_contents($fbFile) : null;
-// Put a real service-account file back even if the run stops half-way
-register_shutdown_function(static function () use ($fbFile, $fbTokenFile, $fbBackup): void {
+// A real service-account file is kept next to it while the tests use a fake one — on disk, so even a run that is
+// killed loses nothing: the next run finds the copy and puts it back
+$fbKeep = $fbFile . '.tests-backup';
+$fbBackup = is_file($fbKeep) ? (string) file_get_contents($fbKeep) : (is_file($fbFile) ? (string) file_get_contents($fbFile) : null);
+if ($fbBackup !== null && !is_file($fbKeep)) {
+    file_put_contents($fbKeep, $fbBackup);
+    chmod($fbKeep, 0600);
+}
+// Put the real file back even if the run stops half-way
+register_shutdown_function(static function () use ($fbFile, $fbTokenFile, $fbBackup, $fbKeep): void {
     @unlink($fbFile);
     @unlink($fbTokenFile);
     if ($fbBackup !== null) {
         file_put_contents($fbFile, $fbBackup);
         chmod($fbFile, 0600);
     }
+    @unlink($fbKeep);
 });
 @unlink($fbFile);
 @unlink($fbTokenFile);
@@ -2151,7 +2421,7 @@ $fcmMsg = json_decode((string) ($fcmCalls[1]['body'] ?? '{}'), true)['message'] 
 check('the FCM v1 message: data-only, to this token, opens the order', str_ends_with($fcmCalls[1]['url'] ?? '', '/v1/projects/grazex-test/messages:send')
     && in_array('Authorization: Bearer ya29.test-1', $fcmCalls[1]['headers'] ?? [], true) && ($fcmMsg['token'] ?? '') === $pTok && !isset($fcmMsg['notification'])
     && ($fcmMsg['data']['url'] ?? '') === '/account/order.php?no=GXF-PUSH1' && ($fcmMsg['data']['channel'] ?? '') === 'orders'
-    && ($fcmMsg['android']['collapse_key'] ?? '') === 'order-GXF-PUSH1' && array_filter($fcmMsg['data'] ?? [], 'is_string') === ($fcmMsg['data'] ?? []), json_encode($fcmMsg));
+    && !isset($fcmMsg['android']['collapse_key']) && ($fcmMsg['data']['tag'] ?? '') === 'order-GXF-PUSH1' && array_filter($fcmMsg['data'] ?? [], 'is_string') === ($fcmMsg['data'] ?? []), json_encode($fcmMsg));
 $fcmCalls = [];
 PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-PUSH1']);
 check('the Google access token is cached (no second token request) in a private file', count($fcmCalls) === 1 && !str_contains($fcmCalls[0]['url'], 'oauth2')
@@ -2308,6 +2578,24 @@ db_exec("INSERT INTO push_queue (device_id, title, body) VALUES (?, 'waiting', '
 [$st] = $ph->api('POST', '/account/api/auth.php', ['action' => 'logout']);
 check('logging out unlinks the phone and drops pushes still waiting for it', $st === 200 && !db_val('SELECT 1 FROM push_devices WHERE id = ?', [$pDev['id']])
     && !db_val("SELECT 1 FROM push_queue WHERE title = 'waiting'"));
+// The page was left open until the session expired: "Log out" is then the first request of a new session (the
+// remember cookie logs in on that same request), which does not know the phone yet — the app sends its token
+$lateCid = $mkRemember('latelogout@test.local');
+$late = $loginAs('latelogout@test.local', true);
+$late->page('/account/');
+$lateTok = 'dLate6:APA91b' . str_repeat('Lt8', 40);
+$late->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => $lateTok]);
+$lateDev = (int) db_val('SELECT id FROM push_devices WHERE token_hash = ? AND customer_id = ?', [hash('sha256', $lateTok), $lateCid]);
+$late->dropCookie(GX_SESSION_NAME);
+[$st] = $late->api('POST', '/account/api/auth.php', ['action' => 'logout', 'push_token' => $lateTok]);
+check('logging out from a page left open past the session still unlinks the phone', $lateDev > 0 && $st === 200
+    && !db_val('SELECT 1 FROM push_devices WHERE id = ? AND customer_id IS NOT NULL', [$lateDev]) && PushService::toCustomer($lateCid, 'order_ready', ['order_no' => 'GXF-LATE']) === 0);
+$otherTok = 'dOther6:APA91b' . str_repeat('Ot8', 40);
+$otherDev = PushService::register($otherTok, 'customer', $pushCid, (int) db_val('SELECT session_version FROM customers WHERE id = ?', [$pushCid]));
+$late2 = $loginAs('latelogout@test.local', true);
+[$st] = $late2->api('POST', '/account/api/auth.php', ['action' => 'logout', 'push_token' => $otherTok]);
+check('… and a token that belongs to another customer is left alone', $st === 200 && (int) db_val('SELECT customer_id FROM push_devices WHERE id = ?', [$otherDev]) === $pushCid);
+db_exec('DELETE FROM push_devices WHERE id = ?', [$otherDev]);
 // A phone used by a customer and a staff member: the customer's logout drops only the customer's pushes
 $shTok = 'dBoth6:APA91b' . str_repeat('Bo3', 40);
 $bothC = $mkRemember('pushboth@test.local');

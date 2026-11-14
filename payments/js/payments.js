@@ -5,13 +5,17 @@
 
   // pay.php: forward to Yoco from our own page
   const go = document.getElementById('pay-go');
-  if (go && go.dataset.redirect) {
+  // Not when the customer came BACK to this page from Yoco: forwarding again would trap the Back button
+  // (the page has its own "Pay now" button and a link back to the order)
+  const nav = performance.getEntriesByType?.('navigation')[0];
+  if (go && go.dataset.redirect && !(nav && nav.type === 'back_forward')) {
     setTimeout(() => window.location.assign(go.dataset.redirect), 900);
   }
 
   // return.php: wait for the webhook
   const box = document.getElementById('pay-status');
   if (!box || box.dataset.result !== 'success') return;
+  box.setAttribute('role', 'status'); // "Confirming…" → "Payment received" is read out by screen readers
   const show = (state) => box.querySelectorAll('[data-state]').forEach((el) => { el.hidden = el.dataset.state !== state; });
   const started = Date.now();
   let tries = 0;

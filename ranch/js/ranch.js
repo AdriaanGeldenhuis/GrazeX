@@ -19,17 +19,17 @@
       if (p.get('sort') === 'featured') p.delete('sort');
       if (page > 1) p.set('page', page);
       ctrl?.abort();
-      ctrl = new AbortController();
+      const mine = (ctrl = new AbortController());
       results.classList.add('is-busy');
       try {
-        const data = await GX.api('/ranch/api/lots.php?' + p.toString(), { signal: ctrl.signal });
+        const data = await GX.api('/ranch/api/lots.php?' + p.toString(), { signal: mine.signal });
         results.innerHTML = data.html;
         $('[data-result-count]').textContent = `${data.total} lot${data.total === 1 ? '' : 's'}`;
         history.replaceState(null, '', '/ranch/livestock.php' + (p.toString() ? '?' + p : ''));
         $$('.reveal', results).forEach((el) => el.classList.add('is-visible'));
         if (scroll) results.scrollIntoView({ behavior: GX.reduceMotion ? 'auto' : 'smooth' });
       } catch (e) { if (e.name !== 'AbortError') console.error(e); }
-      results.classList.remove('is-busy');
+      if (ctrl === mine) results.classList.remove('is-busy'); // a newer request is still loading otherwise
     };
     GX.on(form, 'click', '[data-filter]', (e, chip) => {
       const name = chip.dataset.filter;

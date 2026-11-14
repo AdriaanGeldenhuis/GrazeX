@@ -256,7 +256,8 @@ function stream_private_file(string $relPath, string $downloadName, bool $downlo
 {
     $abs = realpath(GX_ROOT . '/' . $relPath);
     $root = realpath(GX_ROOT . '/storage/private');
-    if (!$abs || !$root || !str_starts_with($abs, $root) || !is_file($abs)) {
+    // The folder itself plus a separator: a sibling such as storage/private-old must never match
+    if (!$abs || !$root || !str_starts_with($abs, $root . DIRECTORY_SEPARATOR) || !is_file($abs)) {
         http_response_code(404);
         exit('File not found.');
     }

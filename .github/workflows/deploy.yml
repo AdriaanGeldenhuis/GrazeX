@@ -16,6 +16,8 @@ jobs:
 
   deploy:
     needs: test
+    # Only main goes live: "Run workflow" on another branch runs its tests but deploys nothing
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
