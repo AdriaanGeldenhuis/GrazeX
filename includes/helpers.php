@@ -447,7 +447,8 @@ function json_response(array $payload, int $status = 200): never
             header('X-CSRF-Token: ' . csrf_token());
         }
     }
-    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    // A stray non-UTF-8 byte (e.g. echoed back from the request) becomes "�" instead of an empty answer
+    echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 

@@ -1114,6 +1114,13 @@ $pub = new TestHttp($base);
 $pub->page('/pages/contact.php');
 [$st] = $pub->api('POST', '/pages/api/contact.php', ['name' => ['x'], 'email' => 'a@test.local', 'phone' => '0821234567', 'message' => 'Hello there, a question.']);
 check('a list where text is expected is a validation error, not a crash', $st === 422, (string) $st);
+[$utfClean, $utfErr] = validate(['name' => "Jan\xC3\x28 Smit", 'farm' => 'Renée se plaas'], ['name' => 'required|max:100', 'farm' => 'required|max:100']);
+check('text that is not valid UTF-8 is a validation error, never saved as an empty value',
+    isset($utfErr['name']) && !array_key_exists('name', $utfClean) && $utfClean['farm'] === 'Renée se plaas', json_encode([array_keys($utfErr), array_keys($utfClean)]));
+// Sent as a form post (the empty file list makes it multipart): JSON cannot carry the Latin-1 "é" byte
+[$st, $res] = $pub->api('POST', '/pages/api/contact.php', ['name' => "Caf\xE9 Boer", 'email' => 'a@test.local', 'phone' => '0821234567', 'message' => 'Hello there, a question.'], []);
+check('… and the form says so (the name field is flagged, nothing is saved)', $st === 422 && isset($res['errors']['name'])
+    && !db_val("SELECT 1 FROM enquiries WHERE email = 'a@test.local'"), $st . ' ' . json_encode($res, JSON_INVALID_UTF8_SUBSTITUTE));
 [$st] = $pub->api('GET', '/feeds/api/products.php?page=99999999999999999999');
 check('a huge page number does not break the catalogue', $st === 200, (string) $st);
 [$st] = $pub->api('GET', '/ranch/api/lots.php?page=9223372036854775807');
