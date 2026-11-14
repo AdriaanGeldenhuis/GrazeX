@@ -8,5 +8,6 @@
       window.GX.toast('Owner account created. Welcome to GrazeX!');
       setTimeout(() => { location.href = data.redirect || '/'; }, 900);
     },
+    leaves: true,
   });
 })();

@@ -28,7 +28,7 @@ $variantsJson = array_map(static fn($v) => [
     'id' => (int) $v['id'], 'name' => $v['name'], 'sku' => $v['sku'], 'stock' => max(0, (int) $v['stock_qty']),
     'low' => (int) $v['low_stock_threshold'], 'price' => (int) $v['effective'], 'regular' => (int) $v['price_cents'],
     'special' => (bool) $v['on_special'], 'special_to' => $v['on_special'] && $v['special_to'] ? fmt_date($v['special_to']) : null,
-    'kg' => (int) $v['weight_grams'] > 0 ? round((int) $v['weight_grams'] / 1000, 1) : null,
+    'kg' => (int) $v['weight_grams'] > 0 ? (int) $v['weight_grams'] / 1000 : null, // exact: the page works out the price per kg from it
     'tiers' => array_map(static fn($t) => ['min' => (int) $t['min_qty'], 'price' => (int) $t['price_cents']], $v['tiers']),
 ], $p['variants']);
 $url = app_url(product_url($p['slug']));

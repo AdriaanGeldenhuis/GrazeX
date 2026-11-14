@@ -51,7 +51,10 @@
       const fresh = res.headers.get('X-CSRF-Token');
       const meta = GX.$('meta[name="csrf-token"]');
       if (fresh && meta && meta.content !== fresh) meta.content = fresh;
-      data = await res.json().catch(() => ({ ok: false, error: 'Unexpected response from the server.' }));
+      data = await res.json().catch((err) => {
+        if (err.name === 'AbortError') throw err; // cancelled while the answer was still arriving: nothing went wrong
+        return { ok: false, error: 'Unexpected response from the server.' };
+      });
     } catch (err) {
       if (err.name === 'AbortError') throw err;
       data = { ok: false, error: navigator.onLine ? 'Network error. Please try again.' : 'You appear to be offline.' };
@@ -87,6 +90,16 @@
     el.innerHTML = `<span class="t-icon">${sym}</span><span class="t-body">${GX.esc(message)}</span>` +
       (opts.action ? `<a class="t-action" href="${GX.esc(opts.href || '#')}">${GX.esc(opts.action)}</a>` : '');
     stack.appendChild(el);
+    // A modal <dialog> and its backdrop are in the browser's "top layer", above everything on the page — this stack too.
+    // While one is open the stack joins the top layer as its newest item, or the message would sit dimmed and blurred
+    // behind the backdrop (an error after "Send" in a dialog was unreadable).
+    if (stack.showPopover && document.querySelector('dialog[open]')) {
+      try {
+        stack.popover = 'manual';
+        if (stack.matches(':popover-open')) stack.hidePopover();
+        stack.showPopover();
+      } catch (_) { /* older browser: the message is also shown inside the dialog (bindForm) */ }
+    }
     const close = () => { el.classList.add('is-leaving'); setTimeout(() => el.remove(), 320); };
     // Time to read it: longer with a button (e.g. "Checkout"), and paused while the pointer or keyboard focus is on it
     let left = opts.timeout || (type === 'error' ? 6000 : opts.action ? 7000 : 3800);
@@ -169,7 +182,11 @@
   };
   GX.on(document, 'click', '[data-modal-open]', (e, t) => { e.preventDefault(); GX.modal.open(t.dataset.modalOpen); });
   GX.on(document, 'click', '[data-modal-close]', (e, t) => { e.preventDefault(); t.closest('dialog')?.close(); });
-  document.addEventListener('click', (e) => { if (e.target.tagName === 'DIALOG') e.target.close(); });
+  // A click on the backdrop closes the dialog — a real click: pressed AND released there. (Selecting text in a field
+  // and letting go outside the box also lands a "click" on the dialog; that must not close it and lose the typing.)
+  let pressedOn = null;
+  document.addEventListener('pointerdown', (e) => { pressedOn = e.target; }, true);
+  document.addEventListener('click', (e) => { if (e.target.tagName === 'DIALOG' && pressedOn === e.target) e.target.close(); });
 
   /** Promise-based confirm dialog. */
   GX.confirm = function (message, { title = 'Are you sure?', ok = 'Yes, continue', danger = false } = {}) {
@@ -217,12 +234,16 @@
   GX.clearErrors = (form) => {
     GX.$$('.field.has-error', form).forEach((f) => f.classList.remove('has-error'));
     GX.$$('.field-error', form).forEach((el) => el.remove());
+    GX.$$('[aria-invalid]', form).forEach((el) => el.removeAttribute('aria-invalid')); // corrected fields are not announced as invalid any more
   };
   GX.showErrors = (form, errors) => {
     let first = null;
     Object.entries(errors || {}).forEach(([name, msg]) => {
-      const input = form.querySelector(`[name="${CSS.escape(name)}"]`);
-      const field = input?.closest('.field') || input?.parentElement;
+      // Several inputs can share a name (radio groups): the one that is on screen — the first may sit in a hidden block
+      // (e.g. the time slots of another day), where the message would never be seen
+      const inputs = Array.from(form.querySelectorAll(`[name="${CSS.escape(name)}"]`));
+      const input = inputs.find((el) => el.closest('[hidden]') === null) || inputs[0];
+      const field = input?.closest('.field, .slot-list, .option-cards') || input?.parentElement;
       if (!field) return;
       field.classList.add('has-error');
       const p = document.createElement('div');
@@ -238,7 +259,7 @@
 
   /**
    * Bind a <form data-api="/area/api/x.php"> for fetch submission.
-   * Options: onSuccess(data, form), body(form) → custom JSON body.
+   * Options: onSuccess(data, form), body(form) → custom JSON body, leaves: true when onSuccess always goes to another page.
    */
   GX.bindForm = function (form, opts = {}) {
     if (!form || form._gxBound) return;
@@ -248,10 +269,14 @@
       GX.clearErrors(form);
       const btn = form.querySelector('[type="submit"]');
       GX.setLoading(btn, true);
+      let leaving = false;
       try {
         const url = form.dataset.api || form.action;
         const body = opts.body ? opts.body(form) : Object.fromEntries(new FormData(form).entries());
         const data = await GX.api(url, { method: 'POST', body, quiet: true });
+        // A redirect or reload follows: the button stays off until the page goes, so a second click in that half
+        // second cannot send the form again (stock received twice, an address added twice)
+        leaving = !!data.redirect || form.dataset.reload !== undefined || opts.leaves === true;
         if (opts.onSuccess) opts.onSuccess(data, form);
         else {
           if (data.message) GX.toast(data.message);
@@ -261,11 +286,22 @@
         if (err.name === 'AbortError') return;
         GX.showErrors(form, err.errors);
         GX.toast(err.message, 'error');
+        // In a dialog, on a browser that cannot lift the toast above the dialog's backdrop: say it in the dialog too
+        const dlg = form.closest('dialog');
+        if (dlg && !('showPopover' in HTMLElement.prototype)) {
+          const p = document.createElement('div');
+          p.className = 'field-error';
+          p.setAttribute('role', 'alert');
+          p.textContent = err.message;
+          (form.querySelector('.modal-body') || form).prepend(p);
+        }
       } finally {
-        GX.setLoading(btn, false);
+        if (!leaving) GX.setLoading(btn, false);
+        else setTimeout(() => GX.setLoading(btn, false), 8000); // still here after 8 s (the next page failed to load): usable again
       }
     });
     form.addEventListener('input', (e) => {
+      e.target.removeAttribute?.('aria-invalid');
       const f = e.target.closest('.field.has-error');
       if (f) { f.classList.remove('has-error'); f.querySelector('.field-error')?.remove(); }
     });
@@ -327,7 +363,9 @@
     if ('IntersectionObserver' in window && !reduceMotion) {
       const io = new IntersectionObserver((entries) => entries.forEach((en) => {
         if (en.isIntersecting) { en.target.classList.add('is-visible'); io.unobserve(en.target); }
-      }), { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+      // threshold 0 with a bottom margin: "12% of the element visible" can never be reached by a block that is much
+      // taller than the screen (a long About text on a phone), which then stayed invisible
+      }), { threshold: 0, rootMargin: '0px 0px -10% 0px' });
       reveals.forEach((el) => io.observe(el));
     } else {
       reveals.forEach((el) => el.classList.add('is-visible'));

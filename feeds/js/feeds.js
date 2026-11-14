@@ -12,15 +12,17 @@
   $$('[data-suggest]').forEach((box) => {
     const input = $('[data-suggest-input]', box);
     const list = $('[data-suggest-list]', box);
-    let ctrl = null, active = -1;
-    const close = () => { list.hidden = true; active = -1; };
+    let ctrl = null, active = -1, dismissed = null;
+    // Closing also cancels a suggestion request that is still on its way (it would reopen the list a moment later)
+    const close = () => { ctrl?.abort(); list.hidden = true; active = -1; };
     const run = GX.debounce(async () => {
       const q = input.value.trim();
-      if (q.length < 2) return close();
+      if (q.length < 2 || q === dismissed) return close();
       ctrl?.abort();
       ctrl = new AbortController();
       try {
         const data = await GX.api('/feeds/api/search.php?q=' + encodeURIComponent(q), { quiet: true, signal: ctrl.signal });
+        if (input.value.trim() !== q || q === dismissed) return; // the box changed, or this search was sent with Enter
         if (!data.items.length) {
           list.innerHTML = `<a href="${GX.esc(data.all_url || '/feeds/shop.php')}"><span class="s-name">No matches — search all products</span></a>`;
         } else {
@@ -34,8 +36,10 @@
         list.hidden = false;
       } catch (_) { /* ignore aborted */ }
     }, 220);
-    input.addEventListener('input', run);
+    input.addEventListener('input', () => { dismissed = null; run(); });
     input.addEventListener('keydown', (e) => {
+      // Enter runs the search itself: suggestions for these words are no longer wanted
+      if (e.key === 'Enter' && active < 0) { dismissed = input.value.trim(); close(); }
       const links = $$('a', list);
       if (list.hidden || !links.length) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -72,10 +76,10 @@
       const p = params();
       if (page > 1) p.set('page', page);
       ctrl?.abort();
-      ctrl = new AbortController();
+      const mine = (ctrl = new AbortController());
       results.classList.add('is-busy');
       try {
-        const data = await GX.api('/feeds/api/products.php?' + p.toString(), { signal: ctrl.signal });
+        const data = await GX.api('/feeds/api/products.php?' + p.toString(), { signal: mine.signal });
         results.innerHTML = data.html;
         $('[data-result-count]').textContent = `${data.total} product${data.total === 1 ? '' : 's'}`;
         // The address bar shows the category's own address (/feeds/category/x), with any other filters after it
@@ -85,7 +89,7 @@
         $$('.reveal', results).forEach((el) => el.classList.add('is-visible'));
         if (scroll) results.scrollIntoView({ behavior: GX.reduceMotion ? 'auto' : 'smooth', block: 'start' });
       } catch (e) { if (e.name !== 'AbortError') console.error(e); }
-      results.classList.remove('is-busy');
+      if (ctrl === mine) results.classList.remove('is-busy'); // a newer request is still loading otherwise
     };
     GX.on(form, 'click', '[data-filter]', (e, chip) => {
       const name = chip.dataset.filter;
@@ -135,6 +139,12 @@
       $('[data-line-total]').textContent = GX.money(unit * q);
       addBtn.dataset.target = current.id;
       addBtn.disabled = current.stock <= 0;
+      const stickyBuy = $('[data-scroll-buy]'); // the phone's sticky bar: off (and saying why) when the size is out of stock
+      if (stickyBuy) {
+        stickyBuy.dataset.label = stickyBuy.dataset.label || stickyBuy.textContent;
+        stickyBuy.disabled = current.stock <= 0;
+        stickyBuy.textContent = current.stock <= 0 ? 'Out of stock' : stickyBuy.dataset.label;
+      }
 
       const tiersEl = $('[data-tiers]');
       if (current.tiers.length) {

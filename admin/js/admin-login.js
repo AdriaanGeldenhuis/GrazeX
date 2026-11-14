@@ -19,6 +19,7 @@
   GX.bindForm(f, {
     body: (form) => Object.assign(Object.fromEntries(new FormData(form).entries()), { action: form.dataset.step }),
     onSuccess(d) { location.href = d.redirect || '/admin/'; },
+    leaves: true,
   });
   f.dataset.api = '/admin/api/auth.php';
   document.querySelector('[data-cancel-2fa]')?.addEventListener('click', async () => {

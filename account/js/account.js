@@ -38,16 +38,21 @@
   // Generic action buttons: <button data-act="/account/api/orders.php" data-payload='{"action":"cancel"}' data-confirm="...">
   GX.on(document, 'click', '[data-act]', async (e, b) => {
     e.preventDefault();
+    if (b.dataset.busy) return; // already on its way (a link such as "Reorder feed" cannot be disabled: a double tap doubled the cart)
     if (b.dataset.confirm && !(await GX.confirm(b.dataset.confirm, { ok: b.dataset.ok || 'Yes', danger: b.dataset.danger !== undefined }))) return;
+    b.dataset.busy = '1';
     GX.setLoading(b, true);
+    let leaving = false;
     try {
       const d = await GX.api(b.dataset.act, { body: JSON.parse(b.dataset.payload || '{}') });
       if (d.message) GX.toast(d.message);
+      leaving = !d.download; // a redirect or reload follows: stay busy until the page goes
       if (d.redirect) location.href = d.redirect;
       else if (d.download) { downloadJson(d.download, d.filename || 'data.json'); }
       else setTimeout(() => location.reload(), 500);
     } catch (_) { /* toast shown */ }
-    GX.setLoading(b, false);
+    const free = () => { GX.setLoading(b, false); delete b.dataset.busy; };
+    if (!leaving) free(); else setTimeout(free, 8000);
   });
 
   function downloadJson(obj, name) {

@@ -10,6 +10,10 @@
   const API = `/${division}/api/cart.php`;
 
   function render(data) {
+    // The lines are replaced below: remember which control had the keyboard focus and give it back afterwards
+    const had = document.activeElement;
+    const lineId = had?.closest?.('.cart-line')?.dataset.item;
+    const control = had?.dataset?.step ? `[data-step="${had.dataset.step}"]` : had?.matches?.('[data-cart-qty]') ? '[data-cart-qty]' : null;
     GX.setCartCount(data.count || 0);
     GX.$$('[data-cart-body]').forEach((el) => {
       // Full cart page keeps the non-compact layout
@@ -17,6 +21,9 @@
       el.innerHTML = data.body;
     });
     GX.$$('[data-cart-foot]').forEach((el) => { if (el.dataset.full !== '1') el.innerHTML = data.foot; });
+    if (lineId && control && had.closest('[data-cart-body]')) {
+      document.querySelector(`[data-cart-body] .cart-line[data-item="${CSS.escape(lineId)}"] ${control}`)?.focus();
+    }
     document.dispatchEvent(new CustomEvent('cart:updated', { detail: data }));
   }
 

@@ -46,25 +46,30 @@
     if (e.key === '/' && !e.target.closest('input, textarea, select, [contenteditable]')) { e.preventDefault(); $('[data-adm-search]')?.focus(); }
   });
   const bellPanel = $('[data-adm-bell-panel]');
+  const bellBtn = $('[data-adm-bell]');
+  // The bell button says whether its panel is open (screen readers), and Escape closes it
+  const setBell = (open) => { if (bellPanel) bellPanel.hidden = !open; bellBtn?.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+  bellBtn?.setAttribute('aria-expanded', 'false');
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && bellPanel && !bellPanel.hidden) { setBell(false); bellBtn?.focus(); } });
   GX.on(document, 'click', '[data-adm-bell]', async () => {
     if (!bellPanel) return;
-    if (!bellPanel.hidden) { bellPanel.hidden = true; return; }
+    if (!bellPanel.hidden) { setBell(false); return; }
     bellPanel.innerHTML = '<p class="muted small" style="padding:12px">Loading…</p>';
-    bellPanel.hidden = false;
+    setBell(true);
     try {
       const d = await GX.api('/admin/api/notifications.php');
       bellPanel.innerHTML = (d.items.length ? d.items.map((n) => `<a href="${GX.esc(n.link || '#')}" class="${n.is_read ? '' : 'unread'}">
           <strong>${GX.esc(n.title)}</strong><br><span class="small muted">${GX.esc(n.body || '')}</span><br><span class="tiny dim">${GX.esc(n.when)}</span></a>`).join('')
         : '<p class="muted small" style="padding:12px">No notifications yet.</p>')
         + '<button class="btn btn-sm btn-block mt-1" type="button" data-bell-read>Mark all as read</button>';
-    } catch (_) { bellPanel.hidden = true; }
+    } catch (_) { setBell(false); }
   });
   GX.on(document, 'click', '[data-bell-read]', async () => {
     await GX.api('/admin/api/notifications.php', { body: { action: 'read_all' } });
-    bellPanel.hidden = true;
+    setBell(false);
     $('[data-adm-bell] .cart-count')?.remove();
   });
-  document.addEventListener('click', (e) => { if (bellPanel && !bellPanel.hidden && !e.target.closest('[data-adm-bell-panel], [data-adm-bell]')) bellPanel.hidden = true; });
+  document.addEventListener('click', (e) => { if (bellPanel && !bellPanel.hidden && !e.target.closest('[data-adm-bell-panel], [data-adm-bell]')) setBell(false); });
 
   /* ---------- FormData → nested object (supports a[b][0][c] names) ----------
      Only "name[]" builds a list. Numeric keys such as weights[<order_item_id>] stay keyed by that id
@@ -122,7 +127,6 @@
   window.addEventListener('beforeunload', (e) => {
     if ($$('form[data-admin-form][data-dirty="1"]').length) { e.preventDefault(); e.returnValue = ''; }
   });
-  document.addEventListener('submit', (e) => { if (e.target.matches('form[data-admin-form]')) e.target.dataset.dirty = ''; }, true);
 
   /* ---------- Action buttons: <button data-admin-act="/admin/api/x.php" data-payload='{}' [data-confirm] [data-prompt]> ---------- */
   GX.on(document, 'click', '[data-admin-act]', async (e, b) => {
@@ -138,9 +142,12 @@
       payload[b.dataset.promptField || 'note'] = v;
     }
     GX.setLoading(b, true);
+    let leaving = false;
     const run = async (body) => {
       const d = await GX.api(b.dataset.adminAct, { body, quiet: true });
       if (sentForm) b.form.dataset.dirty = ''; // the form's fields were sent: no "leave page?" prompt on the reload
+      // A reload or redirect follows: the button stays off until then (a second click would repeat the action)
+      leaving = !!d.redirect || b.dataset.noReload === undefined;
       GX.toast(d.message || 'Done');
       if (d.redirect) location.href = d.redirect;
       else if (b.dataset.noReload === undefined) setTimeout(() => location.reload(), 450);
@@ -157,7 +164,8 @@
         GX.toast(err.message, 'error');
       }
     }
-    GX.setLoading(b, false);
+    if (!leaving) GX.setLoading(b, false);
+    else setTimeout(() => GX.setLoading(b, false), 8000);
   });
 
   /* ---------- Modal forms: <form data-modal-form data-api> inside <dialog> ---------- */
@@ -169,6 +177,7 @@
         f.closest('dialog')?.close();
         if (data.redirect) location.href = data.redirect; else setTimeout(() => location.reload(), 400);
       },
+      leaves: true,
     });
   });
 
@@ -230,7 +239,7 @@
         const h = document.createElement('input');
         h.type = 'hidden'; h.name = `${name}[]`; h.value = it.dataset.id; h.dataset.mediaHidden = '1';
         mgr.appendChild(h);
-        it.querySelector('.mi-first')?.toggleAttribute('hidden', i !== 0);
+        it.querySelector('.mi-first.badge-solid')?.toggleAttribute('hidden', i !== 0);
       });
       mgr.closest('form')?.setAttribute('data-dirty', '1');
     };
@@ -264,7 +273,9 @@
         over.parentNode.insertBefore(drag, (e.clientX - r.left) > r.width / 2 ? over.nextSibling : over);
       }
     });
-    grid.addEventListener('drop', (e) => { e.preventDefault(); sync(); drag = null; });
+    grid.addEventListener('drop', (e) => e.preventDefault());
+    // The tiles are already in their new order while dragging: store it wherever the photo is let go (also just outside the grid)
+    grid.addEventListener('dragend', () => { if (drag) { sync(); drag = null; } });
     sync();
     mgr.closest('form')?.removeAttribute('data-dirty');
   });
