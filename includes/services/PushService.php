@@ -426,10 +426,9 @@ final class PushService
         if ($row['tag'] !== null) {
             $data['tag'] = (string) $row['tag'];
         }
+        // No collapse_key: FCM keeps at most four different keys per phone while it is offline, and every order has
+        // its own tag — a fifth alert would be dropped. The app replaces a notification by data.tag itself.
         $message = ['token' => (string) $row['token'], 'data' => $data, 'android' => ['priority' => 'HIGH', 'ttl' => '86400s']];
-        if ($row['tag'] !== null) {
-            $message['android']['collapse_key'] = (string) $row['tag'];
-        }
         return self::http('https://fcm.googleapis.com/v1/projects/' . rawurlencode($creds['project_id']) . '/messages:send',
             ['Authorization: Bearer ' . $accessToken, 'Content-Type: application/json; charset=utf-8'],
             json_encode(['message' => $message], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));

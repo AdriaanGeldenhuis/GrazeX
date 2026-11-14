@@ -2304,7 +2304,7 @@ $fcmMsg = json_decode((string) ($fcmCalls[1]['body'] ?? '{}'), true)['message'] 
 check('the FCM v1 message: data-only, to this token, opens the order', str_ends_with($fcmCalls[1]['url'] ?? '', '/v1/projects/grazex-test/messages:send')
     && in_array('Authorization: Bearer ya29.test-1', $fcmCalls[1]['headers'] ?? [], true) && ($fcmMsg['token'] ?? '') === $pTok && !isset($fcmMsg['notification'])
     && ($fcmMsg['data']['url'] ?? '') === '/account/order.php?no=GXF-PUSH1' && ($fcmMsg['data']['channel'] ?? '') === 'orders'
-    && ($fcmMsg['android']['collapse_key'] ?? '') === 'order-GXF-PUSH1' && array_filter($fcmMsg['data'] ?? [], 'is_string') === ($fcmMsg['data'] ?? []), json_encode($fcmMsg));
+    && !isset($fcmMsg['android']['collapse_key']) && ($fcmMsg['data']['tag'] ?? '') === 'order-GXF-PUSH1' && array_filter($fcmMsg['data'] ?? [], 'is_string') === ($fcmMsg['data'] ?? []), json_encode($fcmMsg));
 $fcmCalls = [];
 PushService::toCustomer($pushCid, 'order_ready', ['order_no' => 'GXF-PUSH1']);
 check('the Google access token is cached (no second token request) in a private file', count($fcmCalls) === 1 && !str_contains($fcmCalls[0]['url'], 'oauth2')
@@ -2468,6 +2468,24 @@ $bothId = PushService::register($shTok, 'customer', $bothC, 1);
 PushService::register($shTok, 'admin', $adm6Id, 1);
 db_exec("INSERT INTO push_queue (device_id, channel, title, body, status) VALUES (?, 'orders', 'cust-row', 'x', 'sent'), (?, 'staff', 'staff-row', 'x', 'sent')", [$bothId, $bothId]);
 PushService::detach($bothId, 'customer');
+// The page was left open until the session expired: "Log out" is then the first request of a new session (the
+// remember cookie logs in on that same request), which does not know the phone yet — the app sends its token
+$lateCid = $mkRemember('latelogout@test.local');
+$late = $loginAs('latelogout@test.local', true);
+$late->page('/account/');
+$lateTok = 'dLate6:APA91b' . str_repeat('Lt8', 40);
+$late->api('POST', '/account/api/push.php', ['action' => 'register', 'token' => $lateTok]);
+$lateDev = (int) db_val('SELECT id FROM push_devices WHERE token_hash = ? AND customer_id = ?', [hash('sha256', $lateTok), $lateCid]);
+$late->dropCookie(GX_SESSION_NAME);
+[$st] = $late->api('POST', '/account/api/auth.php', ['action' => 'logout', 'push_token' => $lateTok]);
+check('logging out from a page left open past the session still unlinks the phone', $lateDev > 0 && $st === 200
+    && !db_val('SELECT 1 FROM push_devices WHERE id = ? AND customer_id IS NOT NULL', [$lateDev]) && PushService::toCustomer($lateCid, 'order_ready', ['order_no' => 'GXF-LATE']) === 0);
+$otherTok = 'dOther6:APA91b' . str_repeat('Ot8', 40);
+$otherDev = PushService::register($otherTok, 'customer', $pushCid, (int) db_val('SELECT session_version FROM customers WHERE id = ?', [$pushCid]));
+$late2 = $loginAs('latelogout@test.local', true);
+[$st] = $late2->api('POST', '/account/api/auth.php', ['action' => 'logout', 'push_token' => $otherTok]);
+check('… and a token that belongs to another customer is left alone', $st === 200 && (int) db_val('SELECT customer_id FROM push_devices WHERE id = ?', [$otherDev]) === $pushCid);
+db_exec('DELETE FROM push_devices WHERE id = ?', [$otherDev]);
 check('… on a phone also used by staff, only the customer\'s notifications go; the staff link stays', (bool) db_val('SELECT 1 FROM push_devices WHERE id = ? AND admin_user_id = ? AND customer_id IS NULL', [$bothId, $adm6Id])
     && !db_val("SELECT 1 FROM push_queue WHERE title = 'cust-row'") && (bool) db_val("SELECT 1 FROM push_queue WHERE title = 'staff-row'"));
 // A password change in the app keeps this phone linked (with the new login version)

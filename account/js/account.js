@@ -27,7 +27,11 @@
   // Logout
   GX.on(document, 'click', '[data-logout]', async (e) => {
     e.preventDefault();
-    const d = await GX.api('/account/api/auth.php', { body: { action: 'logout' } });
+    // In the app: the phone's push token, so this phone stops getting the account's notifications even when the
+    // page had been open for days (see account/api/auth.php)
+    let pushToken;
+    try { pushToken = localStorage.getItem('gx-push-customer') || undefined; } catch (_) { /* no storage */ }
+    const d = await GX.api('/account/api/auth.php', { body: { action: 'logout', push_token: pushToken } });
     location.href = d.redirect || '/';
   });
 

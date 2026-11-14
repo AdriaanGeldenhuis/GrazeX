@@ -18,6 +18,14 @@ require __DIR__ . '/../../includes/bootstrap.php';
 // has just logged the person back in — "Log out" must still log out. (A forged logout could only log someone out,
 // and cross-site requests carry no session or remember cookie: both are SameSite=Lax.)
 if (request_method() === 'POST' && (string) input('action', '') === 'logout') {
+    // The "keep me logged in" cookie may have logged the person in on THIS request (the old session had expired):
+    // that fresh session does not know the phone's push link yet, so the app sends its token and the phone is
+    // unlinked by it. detachToken() only touches a token that is linked to this customer.
+    $pushToken = trim((string) input('push_token', ''));
+    $cid = customer_id();
+    if ($cid && $pushToken !== '' && PushService::validToken($pushToken)) {
+        PushService::detachToken($pushToken, 'customer', $cid);
+    }
     logout_customer();
     json_ok(['redirect' => '/'], 'You are logged out.');
 }
@@ -104,14 +112,6 @@ switch ($action) {
         audit('customer.password_reset', 'customer', $cid);
         json_ok(['redirect' => '/account/'], 'Your password has been changed.');
 
-    case 'resend_verify':
-        $c = require_customer_api();
-        rate_limit_or_fail('resend_verify', 'c' . $c['id'], 3, 3600);
-        if (!$c['email_verified_at']) {
-            $token = customer_token_create((int) $c['id'], 'verify_email', 60 * 24 * 7);
-            $link = app_url('/account/verify.php?token=' . $token);
-            NotificationService::email('verify_email', $c['email'], $c['first_name'], ['first_name' => $c['first_name'], 'link' => $link], null, [], ['label' => 'Confirm my email', 'url' => $link]);
-        }
     case 'verify_email':
         rate_limit_or_fail('verify_email', rate_limit_ip(), 30, 3600);
         $cid = customer_token_consume((string) input('token', ''), 'verify_email');
@@ -129,6 +129,14 @@ switch ($action) {
         flash('success', 'Thanks — your email address is confirmed.');
         json_ok(['redirect' => current_customer() ? '/account/' : '/account/login.php']);
 
+    case 'resend_verify':
+        $c = require_customer_api();
+        rate_limit_or_fail('resend_verify', 'c' . $c['id'], 3, 3600);
+        if (!$c['email_verified_at']) {
+            $token = customer_token_create((int) $c['id'], 'verify_email', 60 * 24 * 7);
+            $link = app_url('/account/verify.php?token=' . $token);
+            NotificationService::email('verify_email', $c['email'], $c['first_name'], ['first_name' => $c['first_name'], 'link' => $link], null, [], ['label' => 'Confirm my email', 'url' => $link]);
+        }
         json_ok([], 'Check your inbox for the confirmation link.');
 
     default:
