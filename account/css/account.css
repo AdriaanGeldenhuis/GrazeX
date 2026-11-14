@@ -58,9 +58,10 @@
 .bank-box div { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
 .bank-box dt { color: var(--muted); }
 .bank-box dd { margin: 0; font-weight: 800; text-align: right; }
-.copy-btn { border: 0; background: none; color: var(--accent-2); font-weight: 800; font-size: 12px; padding: 0 0 0 6px; }
+.copy-btn { border: 0; background: none; color: var(--accent-2); font-weight: 800; font-size: 12px; padding: 0 10px; min-height: 40px; margin: -11px -10px -11px 0; } /* a finger-sized target that does not make the row taller */
 .drop { display: grid; place-items: center; gap: 6px; padding: 22px; border-radius: 16px; border: 2px dashed var(--line-strong); text-align: center; cursor: pointer; transition: .2s; }
 .drop:hover, .drop.is-over { border-color: var(--accent); background: var(--accent-soft); }
+.drop:focus-within { outline: 2px solid var(--accent-2); outline-offset: 2px; border-color: var(--accent); } /* the file input inside is invisible: show keyboard focus on the box */
 .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .doc-list { list-style: none; display: grid; gap: 8px; }
 .doc-list a { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: rgba(8, 10, 11, .45); font-weight: 700; font-size: 14px; transition: border-color .2s; }
