@@ -47,7 +47,7 @@ if ($d['pricing_mode'] === 'per_kg' && (float) ($d['avg_weight_kg'] ?? 0) <= 0) 
     }
 }
 $id = (int) ($in['id'] ?? 0);
-$slug = slugify($d['slug'] ?: $d['title'] . ' ' . $d['lot_no']);
+$slug = slugify($d['slug'] ?: $d['title'] . ' ' . $d['lot_no'], 145); // 150 minus room for the "-xxxx" added when taken
 if (db_val('SELECT id FROM lots WHERE slug = ? AND id <> ?', [$slug, $id])) {
     $slug .= '-' . strtolower(substr(random_token(2), 0, 4));
 }

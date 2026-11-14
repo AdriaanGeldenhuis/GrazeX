@@ -29,6 +29,7 @@ require GX_ROOT . '/includes/env.php';
 // Local test harness only: tests/dev-router.php (never deployed) points the built-in server at the throwaway test database
 if (defined('GX_TEST_DB_NAME') && PHP_SAPI === 'cli-server') {
     $GLOBALS['GX_ENV']['db']['name'] = GX_TEST_DB_NAME;
+    $GLOBALS['GX_ENV']['mail']['host'] = ''; // the test server never talks to a real mail server
 }
 if (!$GLOBALS['GX_ENV_REPORT'] && PHP_SAPI !== 'cli') {
     http_response_code(503);

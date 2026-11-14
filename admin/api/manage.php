@@ -88,7 +88,7 @@ try {
             'bool' => af_bool($in[$name] ?? 0),
             'weekdays' => implode(',', array_values(array_unique(array_filter(array_map('intval', (array) ($in[$name] ?? [])), static fn($n) => $n >= 1 && $n <= 7)))),
             'image' => ((int) ($in[$name] ?? 0)) ?: null,
-            'slug' => slugify((string) (($in[$name] ?? '') ?: ($in[$f['from']] ?? 'item'))),
+            'slug' => slugify((string) (($in[$name] ?? '') ?: ($in[$f['from']] ?? 'item')), preg_match('/max:(\d+)/', $f[2] ?? '', $mm) ? (int) $mm[1] : 120),
             'code' => strtoupper((string) ($d[$name] ?? '')),
             'date' => $d[$name] ?: null,
             'lines' => null,
