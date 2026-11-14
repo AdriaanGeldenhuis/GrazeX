@@ -50,6 +50,12 @@ if (($in['action'] ?? '') === 'delete') {
     if (!empty($ent['no_delete'])) {
         json_error('These items cannot be deleted.', 409);
     }
+    // What orders point at is switched off, never deleted: the database would not refuse — it would quietly blank
+    // the collection time / place or the coupon on every order that uses it
+    $orderLink = ['collection_slots' => 'collection_slot_id', 'collection_points' => 'collection_point_id', 'coupons' => 'coupon_id'][$table] ?? null;
+    if ($orderLink !== null && db_val("SELECT 1 FROM orders WHERE {$orderLink} = ? LIMIT 1", [$id])) {
+        json_error('Orders use this item — deleting it would remove it from those orders. Switch it off instead (untick Active).', 409);
+    }
     try {
         db_exec("DELETE FROM {$table} WHERE id = ?", [$id]);
     } catch (PDOException $e) {
