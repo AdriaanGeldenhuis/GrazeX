@@ -708,6 +708,20 @@ $rts = (string) time();
 $rsig = base64_encode(hash_hmac('sha256', "evt_refund_r.{$rts}.{$rbody}", base64_decode(substr((string) env('yoco.test_webhook_secret'), 6)), true));
 $hook->raw('/payments/api/yoco-webhook.php', $rbody, ['webhook-id: evt_refund_r', 'webhook-timestamp: ' . $rts, 'webhook-signature: v1,' . $rsig]);
 check('Yoco refund webhook marks the order refunded', order_row((int) $yr['id'])['payment_status'] === 'refunded');
+// Only part of a card payment refunded in the Yoco portal (one damaged bag): the payment and the order still stand
+as_customer($c3);
+CartService::add('feeds', 6, 2);
+$yp = OrderService::place('feeds', ['billing_name' => 'Yoco Part Refund', 'payment_method' => 'yoco', 'fulfilment' => 'collection'] + slot(1), current_customer());
+$ypPay = yoco_pending($yp, 'ch_part_refund');
+webhook_post($hook, 'evt_paid_pr', 'ch_part_refund', (int) $yp['total_cents']);
+$pbody = json_encode(['id' => 'evt_refund_pr', 'type' => 'refund.succeeded', 'payload' => ['amount' => 500, 'metadata' => ['checkoutId' => 'ch_part_refund']]]);
+$pts = (string) time();
+$psig = base64_encode(hash_hmac('sha256', "evt_refund_pr.{$pts}.{$pbody}", base64_decode(substr((string) env('yoco.test_webhook_secret'), 6)), true));
+[$st] = $hook->raw('/payments/api/yoco-webhook.php', $pbody, ['webhook-id: evt_refund_pr', 'webhook-timestamp: ' . $pts, 'webhook-signature: v1,' . $psig]);
+$ypRow = db_one('SELECT status, notes FROM payments WHERE id = ?', [$ypPay]);
+check('a part refund at Yoco leaves the payment and the order as paid', $st === 200 && $ypRow['status'] === 'succeeded'
+    && order_row((int) $yp['id'])['payment_status'] === 'paid', $st . ' ' . json_encode($ypRow) . ' ' . order_row((int) $yp['id'])['payment_status']);
+check('… notes the amount on the payment and tells the admin', str_contains((string) $ypRow['notes'], 'R 5.00') && notified('refund', 'part refund'), (string) $ypRow['notes']);
 
 
 

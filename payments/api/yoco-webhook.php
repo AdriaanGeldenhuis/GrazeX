@@ -63,7 +63,19 @@ if ($payment) {
             $result = 'failed';
             break;
         case 'refund.succeeded':
-            db_exec("UPDATE payments SET status = 'refunded', notes = CONCAT(COALESCE(notes,''), ' Refund confirmed by Yoco.') WHERE id = ?", [$payment['id']]);
+            $refunded = (int) ($payload['amount'] ?? 0);
+            if ($refunded > 0 && $refunded < (int) $payment['amount_cents']) {
+                // Only part of the payment went back (e.g. one damaged bag): the payment and the order still stand.
+                // Marking them "refunded" would drop the whole amount from the reports and show the order as refunded.
+                db_exec("UPDATE payments SET notes = LEFT(CONCAT(COALESCE(notes,''), ?), 500) WHERE id = ?",
+                    [' Part refund of ' . money($refunded) . ' confirmed by Yoco.', $payment['id']]);
+                NotificationService::admin('refund', 'Yoco part refund confirmed for ' . $payment['reference'],
+                    money($refunded) . ' of ' . money((int) $payment['amount_cents']) . ' refunded. The payment still counts in full — issue a credit note if the invoice must change.',
+                    '/admin/order.php?id=' . $payment['order_id'], (int) $payment['division_id'], false);
+                $result = 'partly refunded';
+                break;
+            }
+            db_exec("UPDATE payments SET status = 'refunded', notes = LEFT(CONCAT(COALESCE(notes,''), ' Refund confirmed by Yoco.'), 500) WHERE id = ?", [$payment['id']]);
             db_exec("UPDATE orders SET payment_status = 'refunded' WHERE id = ? AND amount_paid_cents > 0
                      AND NOT EXISTS (SELECT 1 FROM payments WHERE order_id = ? AND status = 'succeeded')", [$payment['order_id'], $payment['order_id']]);
             NotificationService::admin('refund', 'Yoco refund confirmed for ' . $payment['reference'], money((int) ($payload['amount'] ?? 0)) . ' refunded.',
