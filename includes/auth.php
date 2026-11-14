@@ -321,7 +321,12 @@ function attempt_customer_login(string $email, string $password): ?array
     if (!$row || !$ok || $row['status'] !== 'active') {
         return null;
     }
-    if (password_needs_rehash($row['password_hash'], defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_BCRYPT)) {
+    // Same algorithm and cost as customer_password_hash() — without the cost, PHP < 8.4 (default cost 10)
+    // would see every cost-12 hash as outdated and rewrite it on each login
+    $rehash = defined('PASSWORD_ARGON2ID')
+        ? password_needs_rehash($row['password_hash'], PASSWORD_ARGON2ID)
+        : password_needs_rehash($row['password_hash'], PASSWORD_BCRYPT, ['cost' => 12]);
+    if ($rehash) {
         db_exec('UPDATE customers SET password_hash = ? WHERE id = ?', [customer_password_hash($password), $row['id']]);
     }
     return $row;
