@@ -29,10 +29,10 @@ if ($worker === '--worker') {
     $_SESSION = ['customer_id' => $cid, 'customer_sv' => 1];
     try {
         CartService::add('feeds', $variantId, 1);
-        $slot = DeliveryService::collectionCalendar(1)[0];
+        // A slot that still has space — the first one fills up during the run (Saturday has a single slot of 10)
+        $free = slot(1);
         usleep(random_int(0, 20000));
-        $o = OrderService::place('feeds', ['billing_name' => 'W', 'payment_method' => 'eft', 'fulfilment' => 'collection',
-            'collection_date' => $slot['date'], 'collection_slot_id' => $slot['slots'][0]['id']], current_customer());
+        $o = OrderService::place('feeds', ['billing_name' => 'W', 'payment_method' => 'eft', 'fulfilment' => 'collection'] + $free, current_customer());
         echo 'OK ' . $o['order_no'];
     } catch (Throwable $e) {
         echo 'FAIL ' . $e->getMessage();
@@ -53,10 +53,12 @@ if ($worker === '--worker2') {
                 CartService::setCoupon($div, (int) $w['coupon']);
             }
         }
-        $cal = DeliveryService::collectionCalendar(division_id($div))[0];
+        // Unless the test names a slot, take one that still has space (the first one fills up during the run)
+        $free = isset($w['date'], $w['slot']) ? null : slot(division_id($div));
         usleep(random_int(0, 20000));
         $o = OrderService::place($div, ['billing_name' => 'W', 'billing_address' => 'Farm', 'buyer_id_number' => '8001015009087', 'payment_method' => $w['method'] ?? 'eft',
-            'fulfilment' => 'collection', 'collection_date' => $w['date'] ?? $cal['date'], 'collection_slot_id' => $w['slot'] ?? $cal['slots'][0]['id']], current_customer());
+            'fulfilment' => 'collection', 'collection_date' => $w['date'] ?? $free['collection_date'],
+            'collection_slot_id' => $w['slot'] ?? $free['collection_slot_id']], current_customer());
         echo 'OK ' . $o['order_no'];
     } catch (Throwable $e) {
         echo 'FAIL ' . $e->getMessage();
